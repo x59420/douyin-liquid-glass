@@ -35,7 +35,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                             try {
                                 Object a = param.args[0];
                                 if (a instanceof Activity) {
-                                    DockController.onActivity((Activity) a);
+                                    installAll((Activity) a);
                                 }
                             } catch (Throwable t) {
                                 Dydock.error("resume 钩子", t);
@@ -54,7 +54,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                     try {
                         Object a = param.thisObject;
                         if (a instanceof Activity) {
-                            DockController.onActivity((Activity) a);
+                            installAll((Activity) a);
                         }
                     } catch (Throwable t) {
                         Dydock.error("onResume 钩子", t);
@@ -74,6 +74,20 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                 }
             });
         } catch (Throwable ignored) {
+        }
+    }
+
+    /** 底栏和顶栏各自独立，谁出岔子都不许影响另一边 */
+    private static void installAll(Activity act) {
+        try {
+            DockController.onActivity(act);
+        } catch (Throwable t) {
+            Dydock.error("底栏入口", t);
+        }
+        try {
+            TopBarController.onActivity(act);
+        } catch (Throwable t) {
+            Dydock.error("顶栏入口", t);
         }
     }
 

@@ -65,6 +65,7 @@ final class Backdrop {
     private int blurRadius = 6;
     private int meanAlpha;
     private String note = "未采集";
+    private boolean excludeSelf;
 
     Backdrop() {
         clear.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
@@ -80,6 +81,17 @@ final class Backdrop {
         releaseLayers();
         releaseBitmaps();
         note = "换采集根";
+    }
+
+    /**
+     * 采集时把「我们自己当背景用的玻璃」静音。
+     *
+     * 顶栏的玻璃是设在宿主控件背景上的，采集又要从宿主树里画 ——
+     * 不静音它就会把自己画进自己的背景，一层层叠成光晕。
+     * 这是同一个同步绘制过程里的开关，中间不会渲染一帧，所以不会闪。
+     */
+    void setExcludeSelf() {
+        excludeSelf = true;
     }
 
     View content() {
@@ -109,6 +121,11 @@ final class Backdrop {
             if (l.valid) return true;
         }
         return false;
+    }
+
+    /** 有没有一帧可用的画面（没有就别指望玻璃透出东西来） */
+    boolean hasFrame() {
+        return bitmap() != null;
     }
 
     int luma() {
@@ -179,6 +196,7 @@ final class Backdrop {
         // 2. UI 层。视频已经把这一条铺满的时候就不用画树了 ——
         //    抖音首页每 1.2 秒重画一遍整棵信息流，卡顿就是这么来的
         boolean covered = videoCoversAll(sw, sh);
+        if (excludeSelf) GlassStripDrawable.suppress(true);
         try {
             Canvas uc = new Canvas(ui);
             uc.drawColor(0, PorterDuff.Mode.CLEAR);
@@ -192,6 +210,8 @@ final class Backdrop {
         } catch (Throwable t) {
             // 宿主树里常有 SurfaceView / 硬件位图，软件画布画到一半失败是常态
             Dydock.warnOnce("ui-draw", "UI 层绘制中断（通常无害）: " + t);
+        } finally {
+            if (excludeSelf) GlassStripDrawable.suppress(false);
         }
 
         // 3. 请求新帧

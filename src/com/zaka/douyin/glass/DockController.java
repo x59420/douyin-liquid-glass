@@ -2,11 +2,14 @@ package com.zaka.douyin.glass;
 
 import android.app.Activity;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.view.ViewTreeObserver;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 
 import java.util.ArrayList;
@@ -16,18 +19,17 @@ import java.util.List;
 import java.util.WeakHashMap;
 
 /**
- * 只做一件事：把官方底栏那一条换成两块悬浮玻璃。
+ * 把官方底栏那一条换成两块悬浮玻璃。
  *
- * 不去扫别的控件、不碰别的页面 —— 这是上一版满屏黑块的根源：
- * 它在整棵视图树上到处套玻璃，每套一块就多一块深色矩形，
- * 页面一切换，那些矩形还没跟上，看着就是到处叠黑块。
+ * 只认「首页那几个大 tab」所在的底栏：
+ *   1. 只看底边、只看高度 34~110dp、宽度够宽、里面 4~6 个可点的等宽子项
+ *   2. 里面**有输入框的一律不算**（聊天页底部的输入条以前就被误认成底栏）
+ *   3. 当前页被另一整屏内容盖住时（同一个 Activity 里叠上来的聊天页/详情页），玻璃一起收
  *
- * 这一版的做法只有四步：
- *   1. 在 content 里认一下官方底栏（只看底边、只看有 4~6 个可点子项的那一层）
- *   2. 把官方底栏 alpha 设 0（布局不动、点击照旧，页面切换还是抖音自己干）
- *   3. 在 DecorView 上盖一层全屏 overlay，只在底栏那一条的两个位置画玻璃
- *   4. 背景（玻璃底下看到的画面）只采底栏那一条，采集根是 content，
- *      跟 overlay 是兄弟节点，不会把玻璃画进自己底下去
+ * 顺序上有一条死规矩：**先把玻璃挂上、确认它真的画出来了，才去藏官方底栏**。
+ * 老版本反过来，中间任何一步出岔子，官方底栏已经透明、玻璃又没上来，
+ * 用户看到的就是「dock 整条不见了」。现在另外还带一个看门狗：
+ * 两秒内玻璃没画出来，立刻把官方底栏还原。
  */
 final class DockController {
 
@@ -48,8 +50,14 @@ final class DockController {
             DONE.put(act, Boolean.TRUE);
             attempt(act, 0);
         } catch (Throwable t) {
-            Dydock.error("处理 Activity", t);
+            Dydock.error("底栏:处理 Activity", t);
         }
+    }
+
+    private static boolean looksLikeChat(Activity act) {
+        String n = act.getClass().getName().toLowerCase();
+        return n.contains(".chat") || n.contains("chatroom") || n.contains(".im.")
+                || n.endsWith("detailactivity") || n.contains("webviewactivity");
     }
 
     private static void attempt(final Activity act, final int n) {
@@ -58,14 +66,19 @@ final class DockController {
             public void run() {
                 try {
                     if (act.isFinishing()) return;
+                    if (looksLikeChat(act)) {
+                        Dydock.log("底栏:这不是主界面（" + act.getClass().getSimpleName() + "），跳过");
+                        return;
+                    }
                     if (install(act)) return;
                     if (n < MAX_ATTEMPTS) {
                         attempt(act, n + 1);
                     } else if (n == MAX_ATTEMPTS) {
-                        Dydock.warn("没认出底栏（这个页面可能不是主界面，或这次没进主界面）");
+                        Dydock.warn("底栏:没认出底栏（这个页面可能不是首页）");
                     }
                 } catch (Throwable t) {
-                    Dydock.error("安装底栏", t);
+                    Dydock.error("底栏:安装", t);
+                    if (n < MAX_ATTEMPTS) attempt(act, n + 1);
                 }
             }
         }, n == 0 ? 120L : RETRY_MS);
@@ -83,7 +96,7 @@ final class DockController {
 
         List<View> items = Finder.tabItems(dock);
         if (items.size() < 4) {
-            Dydock.warn("底栏认出 " + items.size() + " 个子项，不够 4 个，这次不动");
+            Dydock.warn("底栏:认出 " + items.size() + " 个子项，不够 4 个，这次不动");
             return false;
         }
 
@@ -96,13 +109,11 @@ final class DockController {
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
         backdrop.setBlurDp(9f, density);
+        backdrop.setExcludeSelf();
         backdrop.capture();
 
         final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
-
-        // 官方底栏：藏画面，留布局和点击
-        dock.setAlpha(0f);
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
@@ -110,30 +121,43 @@ final class DockController {
         overlay.setBand(rectInWindow(dock));
 
         final View[] dockRef = new View[]{dock};
+        final boolean[] live = new boolean[]{true};
+        final int[] tries = new int[]{0};
+        final List<View> cleared = new ArrayList<View>();
+        final List<Drawable> saved = new ArrayList<Drawable>();
+
         content.getViewTreeObserver().addOnGlobalLayoutListener(
                 new ViewTreeObserver.OnGlobalLayoutListener() {
                     @Override
                     public void onGlobalLayout() {
+                        if (!live[0]) return;
                         try {
                             View d = dockRef[0];
                             if (d == null || !d.isAttachedToWindow()) {
                                 // 宿主把底栏整个换掉了：重新认一次，别让点击转发到死视图上
                                 ViewGroup fresh = Finder.findDock(content);
-                                if (fresh == null) return;
+                                if (fresh == null) {
+                                    overlay.setVisibility(View.GONE);
+                                    return;
+                                }
                                 List<View> its = Finder.tabItems(fresh);
-                                if (its.size() < 4) return;
+                                if (its.size() < 4) {
+                                    overlay.setVisibility(View.GONE);
+                                    return;
+                                }
                                 View p = Finder.pickPlus(its);
                                 List<View> lf = new ArrayList<View>(its);
                                 if (p != null) lf.remove(p);
                                 fresh.setAlpha(0f);
                                 dockRef[0] = fresh;
                                 overlay.setTabs(lf, p);
+                                d = fresh;
                             }
-                            d = dockRef[0];
                             // 抖音自己会在切页时给底栏做透明度动画，压回去
                             if (d.getAlpha() != 0f) d.setAlpha(0f);
-                            // 宿主把底栏藏起来（全屏播放那种）的时候，玻璃也一起收起来
-                            overlay.setVisibility(d.isShown() ? View.VISIBLE : View.GONE);
+                            // 底栏被藏起来（全屏播放）、或者整页被聊天/详情页盖住时，玻璃跟着收
+                            boolean show = d.isShown() && !coveredByFullscreenPage(d, content);
+                            overlay.setVisibility(show ? View.VISIBLE : View.GONE);
                             overlay.setBand(rectInWindow(d));
                         } catch (Throwable t) {
                             Dydock.warnOnce("layout", "跟随底栏位置失败: " + t);
@@ -141,11 +165,96 @@ final class DockController {
                     }
                 });
 
+        // 官方底栏藏画面，留布局和点击；小白条那一带的底色也一起清掉才像悬浮
+        clearBackdropAround(dock, content, cleared, saved);
+        dock.setAlpha(0f);
+
+        // 看门狗：玻璃迟迟没画出来，就把官方底栏还回去，绝不留一条空白。
+        // 底栏本身被宿主藏着的时候（全屏播放）先不动，等它露出来再算。
+        MAIN.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (overlay.hasDrawn()) return;
+                View d0 = dockRef[0];
+                if (d0 != null && !d0.isShown() && tries[0]++ < 6) {
+                    MAIN.postDelayed(this, 1000L);
+                    return;
+                }
+                live[0] = false;
+                Dydock.warn("底栏:玻璃没画出来，把官方底栏还原");
+                View d = dockRef[0];
+                if (d != null) d.setAlpha(1f);
+                for (int i = 0; i < cleared.size(); i++) {
+                    try {
+                        cleared.get(i).setBackground(saved.get(i));
+                    } catch (Throwable ignored) {
+                    }
+                }
+                try {
+                    ViewParent p = overlay.getParent();
+                    if (p instanceof ViewGroup) ((ViewGroup) p).removeView(overlay);
+                } catch (Throwable ignored) {
+                }
+            }
+        }, 2000L);
+
         Dydock.log("底栏已接管：" + left.size() + " 个图标"
                 + (plus != null ? " ＋ 独立一块" : "")
-                + "，底栏 " + dockRef[0].getWidth() + "x" + dockRef[0].getHeight()
-                + "（" + dockRef[0].getClass().getSimpleName() + "）");
+                + "，底栏 " + dock.getWidth() + "x" + dock.getHeight()
+                + "（" + dock.getClass().getSimpleName() + "）");
         return true;
+    }
+
+    /**
+     * 把底栏那一带的底色去掉。
+     *
+     * 只处理高度跟底栏差不多（≤ 2.4 倍）的容器，绝不碰整页背景，
+     * 原背景存起来，看门狗还原时一起还回去。
+     */
+    private static void clearBackdropAround(View dock, View content,
+                                            List<View> cleared, List<Drawable> saved) {
+        View v = dock;
+        for (int i = 0; i < 3 && v != null && v != content; i++) {
+            try {
+                if (v.getBackground() != null && v.getHeight() <= dock.getHeight() * 2.4f + 8) {
+                    cleared.add(v);
+                    saved.add(v.getBackground());
+                    v.setBackground(null);
+                }
+            } catch (Throwable t) {
+                Dydock.warnOnce("clear-bg", "清底色失败: " + t);
+            }
+            ViewParent p = v.getParent();
+            v = p instanceof View ? (View) p : null;
+        }
+    }
+
+    /**
+     * 同一个 Activity 里叠上来一整屏内容（聊天页、详情页）时，
+     * 底栏虽然在树里还「可见」，但其实已经被盖住了 —— 这种情况玻璃要收起来。
+     */
+    private static boolean coveredByFullscreenPage(View v, View content) {
+        try {
+            int cw = content.getWidth();
+            int ch = content.getHeight();
+            if (cw <= 0 || ch <= 0) return false;
+            View cur = v;
+            while (cur != null && cur != content) {
+                ViewParent p = cur.getParent();
+                if (!(p instanceof ViewGroup)) break;
+                ViewGroup g = (ViewGroup) p;
+                int idx = g.indexOfChild(cur);
+                for (int i = idx + 1; i < g.getChildCount(); i++) {
+                    View s = g.getChildAt(i);
+                    if (s == null || s.getVisibility() != View.VISIBLE || s.getAlpha() < 0.05f) continue;
+                    if (!(s instanceof ViewGroup) || ((ViewGroup) s).getChildCount() == 0) continue;
+                    if (s.getWidth() >= cw * 0.92f && s.getHeight() >= ch * 0.80f) return true;
+                }
+                cur = g;
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
     }
 
     private static Rect rectInWindow(View v) {
@@ -166,17 +275,17 @@ final class DockController {
             if (rw <= 0 || rh <= 0) return null;
             ViewGroup[] best = new ViewGroup[1];
             float[] bestScore = new float[]{-1f};
-            walk(root, root, rw, rh, best, bestScore, 0, new int[]{1200});
+            walk(root, rw, rh, best, bestScore, 0, new int[]{1400});
             return best[0];
         }
 
-        private static void walk(View root, View v, int rw, int rh,
+        private static void walk(View root, int rw, int rh,
                                  ViewGroup[] best, float[] bestScore, int depth, int[] budget) {
-            if (v == null || depth > MAX_DEPTH || budget[0] <= 0) return;
+            if (root == null || depth > MAX_DEPTH || budget[0] <= 0) return;
             budget[0]--;
 
-            if (v instanceof ViewGroup && v != root && v.isShown()) {
-                ViewGroup g = (ViewGroup) v;
+            if (root instanceof ViewGroup && root != null && root.isShown()) {
+                ViewGroup g = (ViewGroup) root;
                 float density = g.getResources().getDisplayMetrics().density;
                 int w = g.getWidth();
                 int h = g.getHeight();
@@ -184,13 +293,20 @@ final class DockController {
                 int[] l = new int[2];
                 g.getLocationInWindow(l);
                 int[] rl = new int[2];
-                root.getLocationInWindow(rl);
-                int top = l[1] - rl[1];
-                int bottom = top + h;
+                View top = root;
+                // 用根视图的窗口位置换算相对坐标
+                ViewParent p = top.getParent();
+                while (p instanceof View) {
+                    top = (View) p;
+                    p = top.getParent();
+                }
+                top.getLocationInWindow(rl);
+                int relTop = l[1] - rl[1];
+                int bottom = relTop + h;
 
-                boolean inBottom = bottom > rh * 0.74f && top > rh * 0.55f;
+                boolean inBottom = bottom > rh * 0.74f && relTop > rh * 0.55f;
                 boolean sizeOk = hDp >= 34f && hDp <= 110f && w >= rw * 0.55f;
-                if (inBottom && sizeOk) {
+                if (inBottom && sizeOk && !hasInput(g)) {
                     List<View> items = tabItems(g);
                     if (items.size() >= 4 && items.size() <= 6) {
                         // 越靠下、子项越规整，分越高
@@ -203,12 +319,32 @@ final class DockController {
                 }
             }
 
+            if (root instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) root;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    walk(g.getChildAt(i), rw, rh, best, bestScore, depth + 1, budget);
+                }
+            }
+        }
+
+        /** 里面带输入框的一律不是底栏（聊天页的输入条就是这么被误认的） */
+        private static boolean hasInput(View v) {
+            return hasInput(v, 0);
+        }
+
+        private static boolean hasInput(View v, int depth) {
+            if (depth > 8) return false;
+            if (v instanceof EditText) return true;
+            String n = v.getClass().getName();
+            if (n.contains("EditText") || n.contains("EditTextProxy")) return true;
             if (v instanceof ViewGroup) {
                 ViewGroup g = (ViewGroup) v;
                 for (int i = 0; i < g.getChildCount(); i++) {
-                    walk(root, g.getChildAt(i), rw, rh, best, bestScore, depth + 1, budget);
+                    View c = g.getChildAt(i);
+                    if (c != null && hasInput(c, depth + 1)) return true;
                 }
             }
+            return false;
         }
 
         /** 底栏里那一排可点的子项，按从左到右排好 */
