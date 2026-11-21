@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.zaka.douyin.glass"
-    android:versionCode="100"
-    android:versionName="0.0.1">
+    android:versionCode="200"
+    android:versionName="0.0.2">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="34" />
 
@@ -14,7 +14,7 @@
 
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription"
-            android:value="dydock —— 只改抖音底栏：左边 4 个图标一块悬浮液态玻璃，右边 ＋ 单独一块。" />
+            android:value="dydock —— 抖音底栏与顶栏的悬浮液态玻璃。" />
         <meta-data android:name="xposedminversion" android:value="93" />
         <meta-data android:name="xposedscope" android:value="com.ss.android.ugc.aweme" />
     </application>

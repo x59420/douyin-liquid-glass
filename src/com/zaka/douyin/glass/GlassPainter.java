@@ -88,9 +88,54 @@ final class GlassPainter {
             surface(canvas, b, luma, press);
 
             // 4. 高光（45°）
-            highlight(canvas, b, r, density);
+            highlight(canvas, b, r, density, luma);
 
             // 5. 内阴影
+            inner(canvas, b, r, density);
+        } finally {
+            canvas.restoreToCount(save);
+        }
+    }
+
+    /**
+     * 一块「照样能看见」的磨砂玻璃。
+     *
+     * 没有背景可采的时候用它：宁可厚一点、实一点，也绝不能让这块东西
+     * 在画面上变得看不见 —— 老版本在这里只糊了一层 8% 的白，
+     * 白底页面上玻璃和图标一起消失，看着就是「dock 不见了」。
+     *
+     * @param luma 底下大致亮度（拿不到就给 128，按暗底处理）
+     */
+    static void drawFrosted(Canvas canvas, RectF b, float rad, float density, int luma) {
+        if (canvas == null || b == null || b.width() <= 0 || b.height() <= 0) return;
+        float r = Math.max(0f, Math.min(rad, Math.min(b.width(), b.height()) / 2f));
+        boolean light = luma >= 140;
+
+        int save = canvas.save();
+        try {
+            PATH.reset();
+            PATH.addRoundRect(b, r, r, Path.Direction.CW);
+            canvas.clipPath(PATH);
+
+            FILL.setShader(null);
+            FILL.setColorFilter(null);
+            FILL.setColor(light ? 0xE8EFEFEF : 0xC8181818);
+            canvas.drawRect(b, FILL);
+
+            AMBIENT.setShader(new LinearGradient(
+                    b.left, b.top, b.right, b.bottom,
+                    light ? 0x33FFFFFF : 0x26FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+            canvas.drawRect(b, AMBIENT);
+            AMBIENT.setShader(null);
+
+            RIM.setStyle(Paint.Style.STROKE);
+            RIM.setStrokeWidth(Math.max(1f, 0.75f * density));
+            RIM.setShader(null);
+            RIM.setColor(light ? 0x33FFFFFF : 0x4DFFFFFF);
+            RECT.set(b);
+            RECT.inset(0.5f * density, 0.5f * density);
+            canvas.drawRoundRect(RECT, r, r, RIM);
+
             inner(canvas, b, r, density);
         } finally {
             canvas.restoreToCount(save);
@@ -191,7 +236,7 @@ final class GlassPainter {
         FILL.setShader(null);
         FILL.setColorFilter(null);
         // 暗底提亮，亮底压一点点，让它始终「贴在画面上」而不是贴一张纸
-        int base = luma < 118 ? 0x1AFFFFFF : 0x0D000000;
+        int base = luma < 118 ? 0x1AFFFFFF : 0x1C000000;
         FILL.setColor(base);
         canvas.drawRect(b, FILL);
         if (press > 0.01f) {
@@ -202,11 +247,13 @@ final class GlassPainter {
 
     // ---------------------------------------------------------------- 高光
 
-    private static void highlight(Canvas canvas, RectF b, float r, float density) {
+    private static void highlight(Canvas canvas, RectF b, float r, float density, int luma) {
+        // 亮底上白边会糊成一片，压一点亮度、补一条极淡的暗边，轮廓才立得住
+        boolean light = luma >= 140;
         // 朝光侧泛白：从左上到右下的一条渐变，越靠边越亮
         AMBIENT.setShader(new LinearGradient(
                 b.left, b.top, b.right, b.bottom,
-                0x2EFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+                light ? 0x1FFFFFFF : 0x2EFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
         canvas.drawRect(b, AMBIENT);
         AMBIENT.setShader(null);
 
@@ -215,7 +262,8 @@ final class GlassPainter {
         RIM.setStrokeWidth(Math.max(1f, 0.5f * density));
         RIM.setShader(new LinearGradient(
                 b.left, b.top, b.right, b.bottom,
-                0x66FFFFFF, 0x0DFFFFFF, Shader.TileMode.CLAMP));
+                light ? 0x3D000000 : 0x66FFFFFF,
+                light ? 0x0A000000 : 0x0DFFFFFF, Shader.TileMode.CLAMP));
         RECT.set(b);
         canvas.drawRoundRect(RECT, r, r, RIM);
         RIM.setShader(null);
