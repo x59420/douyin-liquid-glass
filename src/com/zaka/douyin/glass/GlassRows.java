@@ -273,7 +273,9 @@ final class GlassRows {
         bar.rowTaken = true;
         GlassStripDrawable glass = new GlassStripDrawable(row, bar.backdrop, density, 1000f, 0f);
         glass.setWindow(win);
-        bar.slots.add(new Slot(row, glass));
+        Slot slot = new Slot(row, glass);
+        slot.trackWindow(group, row, density);
+        bar.slots.add(slot);
     }
 
     /** 一组控件在 row 本地坐标里的外接矩形（外扩 2dp） */
@@ -546,6 +548,7 @@ final class GlassRows {
             int r = Integer.MIN_VALUE, b = Integer.MIN_VALUE;
             int[] wl = new int[2];
             for (Slot s : slots) {
+                s.refreshWindow();
                 s.view.getLocationInWindow(wl);
                 l = Math.min(l, wl[0]);
                 t = Math.min(t, wl[1]);
@@ -576,6 +579,11 @@ final class GlassRows {
         private Drawable original;
         private long lastFix;
 
+        /** 挂在整行上的那块玻璃：记住这一组是哪几个控件，位置变了要跟着挪 */
+        private List<View> windowGroup;
+        private ViewGroup windowRow;
+        private float windowDensity;
+
         Slot(View view, GlassStripDrawable glass) {
             this.view = view;
             this.glass = glass;
@@ -599,6 +607,20 @@ final class GlassRows {
                 view.invalidate();
             } catch (Throwable ignored) {
             }
+        }
+
+
+        void trackWindow(List<View> group, ViewGroup row, float density) {
+            windowGroup = group;
+            windowRow = row;
+            windowDensity = density;
+        }
+
+        /** 行里的位置变了（横竖屏、tab 滑动）：这块玻璃跟着重新对齐 */
+        void refreshWindow() {
+            if (windowGroup == null || windowRow == null) return;
+            RectF r = boundsIn(windowGroup, windowRow, windowDensity);
+            if (r != null) glass.setWindow(r);
         }
 
         void invalidate() {
