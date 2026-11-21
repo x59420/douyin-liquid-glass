@@ -65,6 +65,27 @@ public final class GlassEntry implements IXposedHookLoadPackage {
             Dydock.warn("挂 Activity.onResume 失败: " + t);
         }
 
+        // 页面销毁：把玻璃拆掉、官方底栏的透明度还回去。
+        // 少了这一步，被复用的界面就会带着上一页的玻璃和透明底栏 —— 就是用户说的残影。
+        try {
+            XposedHelpers.findAndHookMethod(Activity.class, "onDestroy", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        Object a = param.thisObject;
+                        if (a instanceof Activity) {
+                            DockController.release((Activity) a);
+                            GlassRows.release((Activity) a);
+                        }
+                    } catch (Throwable t) {
+                        Dydock.error("销毁收尾", t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Dydock.warn("挂 Activity.onDestroy 失败: " + t);
+        }
+
         // 应用起来就记一笔，方便看日志
         try {
             XposedHelpers.findAndHookMethod(Application.class, "onCreate", new XC_MethodHook() {
@@ -85,7 +106,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
             Dydock.error("底栏入口", t);
         }
         try {
-            TopBarController.onActivity(act);
+            GlassRows.onActivity(act);
         } catch (Throwable t) {
             Dydock.error("顶栏入口", t);
         }

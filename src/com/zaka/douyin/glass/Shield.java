@@ -61,6 +61,12 @@ final class Shield {
         if (s.getWidth() <= 0 || s.getHeight() <= 0) return false;
         if (!(s instanceof ViewGroup)) return false;
 
+        // 真浮层自己会铺一层底（白底/黑底/遮罩）。信息流那种容器是透明的，
+        // 它就算铺满整屏也挡不住底下的底栏 —— 把它当遮挡就会误杀，
+        // 0.0.3 的 dock 整条消失就是这么来的。
+        android.graphics.drawable.Drawable bg = s.getBackground();
+        if (bg == null) return false;
+
         Rect r = rectOf(s);
         if (r.width() < page.width() * 0.92f) return false;
         if (r.height() < page.height() * 0.85f) return false;

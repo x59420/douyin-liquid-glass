@@ -36,6 +36,8 @@ final class GlassStripDrawable extends Drawable {
     private final float insetDp;
 
     private final RectF box = new RectF();
+    /** 只画 owner 里的这一块（相对 owner 左上角）——「几个控件摊在一行上」时合成一整块用 */
+    private RectF window;
 
     GlassStripDrawable(View owner, Backdrop backdrop, float density, float radiusDp, float insetDp) {
         this.owner = owner;
@@ -43,6 +45,10 @@ final class GlassStripDrawable extends Drawable {
         this.density = density;
         this.radiusDp = radiusDp;
         this.insetDp = insetDp;
+    }
+
+    void setWindow(RectF r) {
+        window = r == null ? null : new RectF(r);
     }
 
     @Override
@@ -54,7 +60,11 @@ final class GlassStripDrawable extends Drawable {
         Rect b = getBounds();
         if (b.width() <= 0 || b.height() <= 0) return;
         float pad = insetDp * density;
-        box.set(b.left + pad, b.top + pad, b.right - pad, b.bottom - pad);
+        if (window != null) {
+            box.set(window);
+        } else {
+            box.set(b.left + pad, b.top + pad, b.right - pad, b.bottom - pad);
+        }
         if (box.width() <= 0 || box.height() <= 0) return;
         if (v.getAlpha() < 0.05f) return;
 
