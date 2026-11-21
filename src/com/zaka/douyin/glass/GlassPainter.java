@@ -47,6 +47,9 @@ final class GlassPainter {
     private static final int[] LOC = new int[2];
 
     private static ColorMatrixColorFilter vibrant;
+    /** 着色器编译不便宜，按源串缓存，每帧只改 uniform */
+    private static RuntimeShader sRefract;
+    private static RuntimeShader sDisperse;
 
     private GlassPainter() {
     }
@@ -116,8 +119,7 @@ final class GlassPainter {
             MAT.postTranslate((LOC[0] - region.left) * kx, (LOC[1] - region.top) * ky);
             content.setLocalMatrix(MAT);
 
-            RuntimeShader shader = new RuntimeShader(
-                    dispersion ? GlassShader.REFRACTION_DISPERSION : GlassShader.REFRACTION);
+            RuntimeShader shader = shader(dispersion);
             shader.setInputShader("content", content);
             shader.setFloatUniform("size", b.width(), b.height());
             shader.setFloatUniform("offset", -b.left, -b.top);
@@ -142,6 +144,15 @@ final class GlassPainter {
             FILL.setShader(null);
             FILL.setColorFilter(null);
         }
+    }
+
+    private static RuntimeShader shader(boolean dispersion) {
+        if (dispersion) {
+            if (sDisperse == null) sDisperse = new RuntimeShader(GlassShader.REFRACTION_DISPERSION);
+            return sDisperse;
+        }
+        if (sRefract == null) sRefract = new RuntimeShader(GlassShader.REFRACTION);
+        return sRefract;
     }
 
     private static void crop(Canvas canvas, RectF b, Backdrop bd, View owner) {

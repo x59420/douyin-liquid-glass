@@ -71,15 +71,19 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final Runnable pump = new Runnable() {
         @Override
         public void run() {
-            backdrop.pumpVideo();
+            if (getVisibility() == VISIBLE && isAttachedToWindow()) {
+                backdrop.pumpVideo();
+            }
             timer.postDelayed(this, 90L);
         }
     };
     private final Runnable recapture = new Runnable() {
         @Override
         public void run() {
-            backdrop.capture();
-            invalidate();
+            if (getVisibility() == VISIBLE && isAttachedToWindow()) {
+                backdrop.capture();
+                invalidate();
+            }
             timer.postDelayed(this, 1200L);
         }
     };
