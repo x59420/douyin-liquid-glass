@@ -109,16 +109,32 @@ final class DockController {
         ((ViewGroup) decor).addView(overlay, lp);
         overlay.setBand(rectInWindow(dock));
 
-        final View dockRef = dock;
+        final View[] dockRef = new View[]{dock};
         content.getViewTreeObserver().addOnGlobalLayoutListener(
                 new ViewTreeObserver.OnGlobalLayoutListener() {
                     @Override
                     public void onGlobalLayout() {
                         try {
-                            if (!dockRef.isAttachedToWindow()) return;
+                            View d = dockRef[0];
+                            if (d == null || !d.isAttachedToWindow()) {
+                                // 宿主把底栏整个换掉了：重新认一次，别让点击转发到死视图上
+                                ViewGroup fresh = Finder.findDock(content);
+                                if (fresh == null) return;
+                                List<View> its = Finder.tabItems(fresh);
+                                if (its.size() < 4) return;
+                                View p = Finder.pickPlus(its);
+                                List<View> lf = new ArrayList<View>(its);
+                                if (p != null) lf.remove(p);
+                                fresh.setAlpha(0f);
+                                dockRef[0] = fresh;
+                                overlay.setTabs(lf, p);
+                            }
+                            d = dockRef[0];
                             // 抖音自己会在切页时给底栏做透明度动画，压回去
-                            if (dockRef.getAlpha() != 0f) dockRef.setAlpha(0f);
-                            overlay.setBand(rectInWindow(dockRef));
+                            if (d.getAlpha() != 0f) d.setAlpha(0f);
+                            // 宿主把底栏藏起来（全屏播放那种）的时候，玻璃也一起收起来
+                            overlay.setVisibility(d.isShown() ? View.VISIBLE : View.GONE);
+                            overlay.setBand(rectInWindow(d));
                         } catch (Throwable t) {
                             Dydock.warnOnce("layout", "跟随底栏位置失败: " + t);
                         }
@@ -127,8 +143,8 @@ final class DockController {
 
         Dydock.log("底栏已接管：" + left.size() + " 个图标"
                 + (plus != null ? " ＋ 独立一块" : "")
-                + "，底栏 " + dockRef.getWidth() + "x" + dockRef.getHeight()
-                + "（" + dockRef.getClass().getSimpleName() + "）");
+                + "，底栏 " + dockRef[0].getWidth() + "x" + dockRef[0].getHeight()
+                + "（" + dockRef[0].getClass().getSimpleName() + "）");
         return true;
     }
 

@@ -53,6 +53,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private int selected;
     private boolean downInLeft;
+    private int pendingIndex;
     private boolean downInPlus;
     private boolean dragging;
     private float downX;
@@ -285,6 +286,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downY = y;
                     dragging = false;
                     int i = slotAt(x);
+                    pendingIndex = i;
                     pos.snapTo(clampIndex(pos.value));
                     pos.to(i, 900f, 45f);
                     selected = i;
@@ -325,13 +327,15 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
                 if (downInLeft) {
+                    boolean cancelled = e.getActionMasked() == MotionEvent.ACTION_CANCEL;
+                    // 拖动过就落到手指停下的那一格；只是点一下就是按下时那一格
+                    int target = dragging ? clampIndex(pos.value) : pendingIndex;
                     downInLeft = false;
                     press.to(0f, 600f, 42f);
-                    int target = clampIndex(pos.value);
                     dragging = false;
                     pos.to(target, 700f, 34f);
                     selected = target;
-                    clickTab(target);
+                    if (!cancelled) clickTab(target);
                     startLoop();
                     return true;
                 }
