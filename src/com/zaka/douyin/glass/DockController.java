@@ -5,6 +5,7 @@ import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
@@ -122,9 +123,11 @@ final class DockController {
 
         final View[] dockRef = new View[]{dock};
         final boolean[] live = new boolean[]{true};
-        final int[] tries = new int[]{0};
+        
         final List<View> cleared = new ArrayList<View>();
         final List<Drawable> saved = new ArrayList<Drawable>();
+        final boolean[] hidden = new boolean[]{false};
+        final long[] graceFrom = new long[]{SystemClock.uptimeMillis()};
 
         content.getViewTreeObserver().addOnGlobalLayoutListener(
                 new ViewTreeObserver.OnGlobalLayoutListener() {
@@ -153,12 +156,33 @@ final class DockController {
                                 overlay.setTabs(lf, p);
                                 d = fresh;
                             }
-                            // 抖音自己会在切页时给底栏做透明度动画，压回去
-                            if (d.getAlpha() != 0f) d.setAlpha(0f);
+                            // 藏官方底栏这件事必须「玻璃真的画出来了」才做。
+                            // 没画出来就先让官方底栏露在那儿兜着，别给用户一片空白；
+                            // 等玻璃画出来再自动切过去。
+                            boolean drewOk = overlay.hasDrawn();
+                            if (drewOk) {
+                                if (!hidden[0]) {
+                                    applyHide(d, cleared, saved);
+                                    hidden[0] = true;
+                                }
+                            } else if (hidden[0]
+                                    && SystemClock.uptimeMillis() - graceFrom[0] > 1500L) {
+                                applyShow(d, cleared, saved);
+                                hidden[0] = false;
+                                graceFrom[0] = SystemClock.uptimeMillis();
+                            }
                             // 底栏被藏起来（全屏播放）、或者整页被聊天/详情页盖住时，玻璃跟着收
-                            boolean show = d.isShown() && !coveredByFullscreenPage(d, content);
-                            overlay.setVisibility(show ? View.VISIBLE : View.GONE);
-                            overlay.setBand(rectInWindow(d));
+                            boolean show = d.isShown() && !Shield.covered(d, content);
+                            int want = show ? View.VISIBLE : View.GONE;
+                            boolean wasHidden = overlay.getVisibility() != View.VISIBLE;
+                            if (overlay.getVisibility() != want) overlay.setVisibility(want);
+                            // 刚从「收起」回到可见：位置和背景都重算一遍再画，不然会等下一帧
+                            if (show && (wasHidden || !overlay.hasDrawn())) {
+                                overlay.setBand(rectInWindow(d));
+                                overlay.invalidate();
+                            } else {
+                                overlay.setBand(rectInWindow(d));
+                            }
                         } catch (Throwable t) {
                             Dydock.warnOnce("layout", "跟随底栏位置失败: " + t);
                         }
@@ -167,18 +191,30 @@ final class DockController {
 
         // 官方底栏藏画面，留布局和点击；小白条那一带的底色也一起清掉才像悬浮
         clearBackdropAround(dock, content, cleared, saved);
-        dock.setAlpha(0f);
+        applyHide(dock, cleared, saved);
+        hidden[0] = true;
+        graceFrom[0] = SystemClock.uptimeMillis();
 
-        // 看门狗：玻璃迟迟没画出来，就把官方底栏还回去，绝不留一条空白。
-        // 底栏本身被宿主藏着的时候（全屏播放）先不动，等它露出来再算。
+        // 看门狗：玻璃**明明可见却迟迟没画出来**，才把官方底栏还回去，绝不留一条空白。
+        //
+        // 注意别搞反了：如果玻璃是我们自己收起来的（底栏被藏起来、或者整页被聊天页
+        // 盖住），那「没画出来」是正常的，不算失败 —— 老版本不分情况一律还原，
+        // 结果就是用户正常停在首页，两秒后 dock 啪一下变回官方原样。
         MAIN.postDelayed(new Runnable() {
+            private int idle;
+
             @Override
             public void run() {
                 if (overlay.hasDrawn()) return;
                 View d0 = dockRef[0];
-                if (d0 != null && !d0.isShown() && tries[0]++ < 6) {
-                    MAIN.postDelayed(this, 1000L);
-                    return;
+                boolean waiting = overlay.getVisibility() != View.VISIBLE
+                        || d0 == null || !d0.isShown()
+                        || overlay.getWidth() <= 0 || overlay.getHeight() <= 0;
+                if (waiting) {
+                    if (idle++ < 20) {
+                        MAIN.postDelayed(this, 1000L);
+                        return;
+                    }
                 }
                 live[0] = false;
                 Dydock.warn("底栏:玻璃没画出来，把官方底栏还原");
@@ -196,7 +232,7 @@ final class DockController {
                 } catch (Throwable ignored) {
                 }
             }
-        }, 2000L);
+        }, 2500L);
 
         Dydock.log("底栏已接管：" + left.size() + " 个图标"
                 + (plus != null ? " ＋ 独立一块" : "")
@@ -229,32 +265,26 @@ final class DockController {
         }
     }
 
-    /**
-     * 同一个 Activity 里叠上来一整屏内容（聊天页、详情页）时，
-     * 底栏虽然在树里还「可见」，但其实已经被盖住了 —— 这种情况玻璃要收起来。
-     */
-    private static boolean coveredByFullscreenPage(View v, View content) {
+    /** 把官方底栏那一带的画面藏起来（布局和点击都还在） */
+    private static void applyHide(View dock, List<View> cleared, List<Drawable> saved) {
         try {
-            int cw = content.getWidth();
-            int ch = content.getHeight();
-            if (cw <= 0 || ch <= 0) return false;
-            View cur = v;
-            while (cur != null && cur != content) {
-                ViewParent p = cur.getParent();
-                if (!(p instanceof ViewGroup)) break;
-                ViewGroup g = (ViewGroup) p;
-                int idx = g.indexOfChild(cur);
-                for (int i = idx + 1; i < g.getChildCount(); i++) {
-                    View s = g.getChildAt(i);
-                    if (s == null || s.getVisibility() != View.VISIBLE || s.getAlpha() < 0.05f) continue;
-                    if (!(s instanceof ViewGroup) || ((ViewGroup) s).getChildCount() == 0) continue;
-                    if (s.getWidth() >= cw * 0.92f && s.getHeight() >= ch * 0.80f) return true;
-                }
-                cur = g;
+            if (dock.getAlpha() != 0f) dock.setAlpha(0f);
+            for (int i = 0; i < cleared.size(); i++) {
+                cleared.get(i).setBackground(null);
             }
         } catch (Throwable ignored) {
         }
-        return false;
+    }
+
+    /** 把官方底栏原样还回去（玻璃没画出来时的兜底） */
+    private static void applyShow(View dock, List<View> cleared, List<Drawable> saved) {
+        try {
+            if (dock.getAlpha() != 1f) dock.setAlpha(1f);
+            for (int i = 0; i < cleared.size() && i < saved.size(); i++) {
+                cleared.get(i).setBackground(saved.get(i));
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static Rect rectInWindow(View v) {

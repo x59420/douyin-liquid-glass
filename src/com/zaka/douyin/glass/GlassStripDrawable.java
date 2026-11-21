@@ -48,11 +48,15 @@ final class GlassStripDrawable extends Drawable {
     @Override
     public void draw(Canvas canvas) {
         if (suppressed > 0) return;
+        View v = owner;
+        // 宿主把这个控件藏起来 / 挪出屏幕 / 缩成 0 的时候，玻璃不能还浮在那儿画
+        if (v == null || !v.isShown() || v.getWidth() <= 0 || v.getHeight() <= 0) return;
         Rect b = getBounds();
         if (b.width() <= 0 || b.height() <= 0) return;
         float pad = insetDp * density;
         box.set(b.left + pad, b.top + pad, b.right - pad, b.bottom - pad);
         if (box.width() <= 0 || box.height() <= 0) return;
+        if (v.getAlpha() < 0.05f) return;
 
         float rad = Math.min(radiusDp * density, box.height() / 2f);
         try {

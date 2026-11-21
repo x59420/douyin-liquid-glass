@@ -157,12 +157,30 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         if (r.equals(band) && !leftPill.isEmpty()) return;
         band.set(r);
         layoutPills();
+        syncRegion();
+        invalidate();
+    }
+
+    /**
+     * 挂上来的头一帧，View 还没测量完，getLocationInWindow 拿到的是 (0,0)；
+     * 等真正布局好之后重量一次，免得玻璃整体偏一段。
+     */
+    @Override
+    protected void onSizeChanged(int w, int h, int ow, int oh) {
+        super.onSizeChanged(w, h, ow, oh);
+        if (band.isEmpty()) return;
+        layoutPills();
+        syncRegion();
+        invalidate();
+    }
+
+    private void syncRegion() {
+        if (leftPill.isEmpty()) return;
         backdrop.setRegion(new Rect(
                 Math.round(leftPill.left + winLoc[0]) - Math.round(30 * density),
                 Math.round(leftPill.top + winLoc[1]) - Math.round(26 * density),
                 Math.round(plusPill.right + winLoc[0]) + Math.round(30 * density),
                 Math.round(leftPill.bottom + winLoc[1]) + Math.round(22 * density)));
-        invalidate();
     }
 
     /** 玻璃有没有真的画出来过（没画出来就得把官方底栏还回去） */
@@ -195,6 +213,21 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float bottom = bandTop + bandH - 6f * density;
         float top = bottom - pillH;
 
+        // 抬高 + 放大之后别顶出屏幕（顶出去会被裁掉，看着就像没显示）
+        int vh = getHeight();
+        if (vh > 0) {
+            float lo = 2f * density;
+            float hi = vh - 2f * density;
+            if (bottom > hi) {
+                bottom = hi;
+                top = bottom - pillH;
+            }
+            if (top < lo) {
+                top = lo;
+                bottom = top + pillH;
+            }
+        }
+
         leftPill.set(startX, top, startX + leftW, bottom);
         plusPill.set(startX + leftW + gap, top + (pillH - plusSize) / 2f,
                 startX + leftW + gap + plusSize, top + (pillH + plusSize) / 2f);
@@ -221,7 +254,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         if (count <= 0 || leftPill.isEmpty()) return;
-        drewOnce = true;
 
         float a = Math.max(0f, Math.min(1f, appear.value));
         float k = 0.90f + 0.10f * a;
@@ -250,6 +282,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         drawIcons(canvas, a, p, ink);
         drawPlus(canvas, a, pp, ink);
         drawBadges(canvas, a);
+        // 真的把玻璃画到画布上了才算数 —— 出现动画还没启动（整块全透明）时不算
+        drewOnce = true;
     }
 
     private void drawPane(Canvas canvas, RectF b, float rad, boolean framed,
@@ -261,7 +295,14 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                 canvas.saveLayerAlpha(b.left - 2, b.top - 2, b.right + 2, b.bottom + 2, alpha);
             }
             if (framed) {
-                GlassPainter.draw(canvas, b, rad, backdrop, this, press, dispersion, luma, density);
+                try {
+                    GlassPainter.draw(canvas, b, rad, backdrop, this, press, dispersion, luma, density);
+                } catch (Throwable t) {
+                    // 着色器在一些机型/系统版本上会直接抛（AGSL 编不过、RuntimeShader 不支持）。
+                    // 以前这一下会把整块玻璃带走 —— 退回磨砂，至少看得见。
+                    Dydock.warnOnce("pane-gl", "折射绘制失败，退回磨砂: " + t);
+                    GlassPainter.drawFrosted(canvas, b, rad, density, luma);
+                }
             } else {
                 GlassPainter.drawFrosted(canvas, b, rad, density, luma);
             }

@@ -2,6 +2,7 @@ package com.zaka.douyin.glass;
 
 import android.app.Activity;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
@@ -91,10 +92,15 @@ final class TopBarController {
         backdrop.setRegion(row.region(content, density));
         backdrop.capture();
 
-        final List<View> owned = new ArrayList<View>();
-        attach(row.left, backdrop, density, 24f, 0f, owned);
-        attach(row.middle, backdrop, density, 18f, 0f, owned);
-        attach(row.right, backdrop, density, 24f, 0f, owned);
+        final List<Slot> owned = new ArrayList<Slot>();
+        final boolean[] on = new boolean[]{true};
+
+        Slot left = new Slot(row.left);
+        Slot middle = new Slot(row.middle);
+        Slot right = new Slot(row.right);
+        attach(left, backdrop, density, 24f, owned);
+        attach(middle, backdrop, density, 18f, owned);
+        attach(right, backdrop, density, 24f, owned);
         if (owned.isEmpty()) return false;
 
         final Handler timer = new Handler(Looper.getMainLooper());
@@ -102,25 +108,48 @@ final class TopBarController {
             @Override
             public void run() {
                 try {
-                    if (!row.middle.isAttachedToWindow()) return;
-                    backdrop.setRegion(row.region(content, density));
-                    backdrop.capture();
-                    for (View v : owned) v.invalidate();
+                    boolean alive = on[0] ? stillTopBar(row, content) : topBarBack(row, content);
+                    if (on[0] && !alive) {
+                        // 进了搜索页 / 详情页 / 聊天页：把原来那块底色还回去，
+                        // 不然玻璃框会跟着浮在别的页面上（就是「点搜索后玻璃框还在」）
+                        on[0] = false;
+                        for (Slot s : owned) detach(s);
+                        Dydock.log("顶栏:这一页不是主界面了，玻璃先撤掉");
+                    } else if (!on[0] && alive) {
+                        // 回到主界面：重新挂上
+                        on[0] = true;
+                        for (Slot s : owned) reattach(s, backdrop, density);
+                        Dydock.log("顶栏:回到主界面，玻璃挂回来");
+                    }
+
+                    if (on[0]) {
+                        backdrop.setRegion(row.region(content, density));
+                        backdrop.capture();
+                        for (Slot s : owned) s.invalidate();
+                    }
                 } catch (Throwable t) {
                     Dydock.warnOnce("top-loop", "顶栏刷新失败: " + t);
                 }
-                timer.postDelayed(this, 1500L);
+                timer.postDelayed(this, 1200L);
             }
         };
-        timer.postDelayed(loop, 1500L);
+        timer.postDelayed(loop, 1200L);
 
         content.getViewTreeObserver().addOnGlobalLayoutListener(
                 new ViewTreeObserver.OnGlobalLayoutListener() {
                     @Override
                     public void onGlobalLayout() {
                         try {
-                            backdrop.setRegion(row.region(content, density));
-                            for (View v : owned) v.invalidate();
+                            if (on[0]) {
+                                boolean was = on[0];
+                                if (was && !stillTopBar(row, content)) {
+                                    on[0] = false;
+                                    for (Slot s : owned) detach(s);
+                                    return;
+                                }
+                                if (on[0]) backdrop.setRegion(row.region(content, density));
+                            }
+                            for (Slot s : owned) s.invalidate();
                         } catch (Throwable ignored) {
                         }
                     }
@@ -132,19 +161,91 @@ final class TopBarController {
         return true;
     }
 
+    /**
+     * 现在这一屏还是不是「主界面的顶栏」。
+     *
+     * 判据：中间那条 tab 条还在、还是原来的宽度、没有被整屏页面盖住、
+     * 里面没有冒出来一个可见的输入框（抖音的搜索页顶上就是搜索框）。
+     */
+    private static boolean stillTopBar(Row row, View content) {
+        if (row == null || row.middle == null || content == null) return false;
+        if (!row.middle.isAttachedToWindow() || !row.middle.isShown()) return false;
+        if (content.getWidth() <= 0) return false;
+        if (row.middle.getWidth() < content.getWidth() * 0.18f) return false;
+        if (row.middle.getHeight() <= 0) return false;
+        if (Shield.covered(row.middle, content)) return false;
+        if (Shield.hasVisibleInput(row.middle)) return false;
+        return true;
+    }
+
+    /** 已经撤掉玻璃之后，判断该不该再挂回去（比 stillTopBar 松一点） */
+    private static boolean topBarBack(Row row, View content) {
+        if (row == null || row.middle == null || content == null) return false;
+        if (!row.middle.isAttachedToWindow() || !row.middle.isShown()) return false;
+        if (Shield.covered(row.middle, content)) return false;
+        return !Shield.hasVisibleInput(row.middle);
+    }
+
     private static String describe(View v) {
         return v.getClass().getSimpleName() + " " + v.getWidth() + "x" + v.getHeight();
     }
 
-    private static void attach(View v, Backdrop bd, float density, float radiusDp,
-                               float insetDp, List<View> owned) {
-        if (v == null || v.getWidth() < 8 || v.getHeight() < 8) return;
+    /** 一块玻璃和它原本的底色 —— 撤的时候要原样还回去 */
+    private static final class Slot {
+        final View view;
+        Drawable original;
+        boolean taken;
+
+        Slot(View v) {
+            this.view = v;
+        }
+
+        void invalidate() {
+            try {
+                if (view != null && taken) view.invalidate();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    private static void attach(Slot s, Backdrop bd, float density, float radiusDp, List<Slot> owned) {
+        if (s == null || s.view == null) return;
+        View v = s.view;
+        if (v.getWidth() < 8 || v.getHeight() < 8) return;
         try {
-            v.setBackground(new GlassStripDrawable(v, bd, density, radiusDp, insetDp));
+            s.original = v.getBackground();
+            s.taken = true;
+            v.setBackground(new GlassStripDrawable(v, bd, density, radiusDp, 0f));
             v.invalidate();
-            owned.add(v);
+            owned.add(s);
         } catch (Throwable t) {
+            s.taken = false;
             Dydock.warnOnce("top-attach", "顶栏挂玻璃失败: " + t);
+        }
+    }
+
+    private static void reattach(Slot s, Backdrop bd, float density) {
+        if (s == null || s.view == null || s.taken) return;
+        View v = s.view;
+        if (v.getWidth() < 8 || v.getHeight() < 8) return;
+        try {
+            s.taken = true;
+            v.setBackground(new GlassStripDrawable(v, bd, density, 18f, 0f));
+            v.invalidate();
+        } catch (Throwable t) {
+            s.taken = false;
+        }
+    }
+
+    private static void detach(Slot s) {
+        if (s == null || s.view == null || !s.taken) return;
+        s.taken = false;
+        try {
+            if (s.view.getBackground() instanceof GlassStripDrawable) {
+                s.view.setBackground(s.original);
+            }
+            s.view.invalidate();
+        } catch (Throwable ignored) {
         }
     }
 
