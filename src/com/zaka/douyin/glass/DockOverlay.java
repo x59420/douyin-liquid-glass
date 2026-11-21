@@ -8,6 +8,7 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.View;
@@ -16,20 +17,31 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 底栏：左边一整块玻璃装 4 个图标、右边一块圆形玻璃装「＋」，整组居中。
+ * 底栏：左边一整块玻璃装 4 个图标、右边一块圆形玻璃装「＋」。
  *
  * 官方底栏那一条只把「画」藏起来（alpha = 0，布局和点击都还在），
  * 然后按它的位置自己画两块悬浮玻璃，点击转发回官方那几个子项。
  *
- * 动效照 Kyant0/AndroidLiquidGlass 的 LiquidBottomTabs 和 lengroo/pdd-LiquidGlass：
- *  - 出现：整组从下往上浮一点、由小到大淡入，图标依次亮起来
- *  - 按压：选中块的长按钮被压扁一点，并按下去的那一格浮起
- *  - 拖动：选中块跟手、越界有阻尼；拖的时候那块「透镜」被拉长，松手弹回最近一格
- *  - 切页：选中块在格子之间带过冲地滑过去，图标跟着放大缩小
+ * 0.0.5 的三处改动：
+ *  1. 左边那块**水平居中**，＋ 紧挨在它右边（只留 3dp 的缝）
+ *  2. 位置改成**每帧跟一次官方底栏**。以前只在全局布局回调里更新，
+ *     而抖音展开个人页侧栏时底栏是靠 translation 滑过去的 —— 不触发布局，
+ *     玻璃就一直停在原地，等下一次布局才「啪」地跳过去，看着像卡了半秒。
+ *  3. 补上长按拖动那一套（照 KernelSU 的 DampedDragAnimation / Kyant 的
+ *     LiquidBottomTabs）：按住 → 选中块放大成透镜、整条鼓一下；
+ *     横着拖 → 透镜跟手、按速度往运动方向拉长；松手 → 弹到最近一格，
+ *     等它快到位了才把放大收回去，读起来是一个连贯动作而不是「滑一下再缩一下」。
  */
 final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private static final int MAX_SLOTS = 6;
+
+    /** 按住时透镜放大到的倍数（KernelSU: 78 / 56） */
+    private static final float PRESSED_SCALE = 1.16f;
+    /** 松手后位置进到总行程的这个比例以内，才收回放大 */
+    private static final float SETTLE_FRACTION = 0.025f;
+    /** 兜底：位置一直没停稳也别把放大卡住 */
+    private static final long RELEASE_WATCHDOG_MS = 800L;
 
     private final Backdrop backdrop;
     private final float density;
@@ -58,6 +70,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final Spring appear = new Spring(0f);
     /** 0 → 1：按下时那块长条被压下去的形变 */
     private final Spring squish = new Spring(0f);
+    /** 归一化的拖动速度（格/秒 ÷ (count-1)），驱动透镜沿运动方向拉长 */
+    private final Spring dragVel = new Spring(0f);
 
     private int selected;
     private boolean downInLeft;
@@ -66,10 +80,23 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private boolean dragging;
     private float downX;
     private float downY;
+    private float dragStart;
     private int touchSlop;
     private boolean looping;
     private long lastFrame;
     private boolean drewOnce;
+
+    /** 松手后等位置快到位再收放大 */
+    private boolean releasePending;
+    private long releaseSince;
+    private long lastSampleAt;
+    private float lastSampleVal;
+
+    /** 每帧跟着走的官方底栏 */
+    private View dockView;
+    private boolean following;
+    private boolean followScheduled;
+    private final int[] dockLoc = new int[2];
 
     /** 未读角标：从宿主原来那几个子项里读，自己在玻璃上重画 */
     private final int[] badgeNum = new int[MAX_SLOTS];
@@ -77,6 +104,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint selPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final RectF rect = new RectF();
 
@@ -116,18 +144,51 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         }
     };
 
+    /** 每帧对齐官方底栏：位置一变就重排玻璃（动画里也跟得上） */
+    private final Choreographer.FrameCallback follow = new Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long nanos) {
+            followScheduled = false;
+            if (!following) return;
+            if (getVisibility() != VISIBLE || !isAttachedToWindow()) {
+                following = false;
+                return;
+            }
+            try {
+                View d = dockView;
+                if (d != null && d.isAttachedToWindow() && d.getWidth() > 0) {
+                    d.getLocationInWindow(dockLoc);
+                    int l = dockLoc[0];
+                    int t = dockLoc[1];
+                    int r = l + d.getWidth();
+                    int b = t + d.getHeight();
+                    if (l != band.left || t != band.top || r != band.right || b != band.bottom) {
+                        band.set(l, t, r, b);
+                        layoutPills();
+                        syncRegion();
+                        invalidate();
+                    }
+                }
+            } catch (Throwable t) {
+                Dydock.warnOnce("follow", "跟随底栏失败: " + t);
+            }
+            scheduleFollow();
+        }
+    };
+
     DockOverlay(Context ctx, Backdrop backdrop, float density) {
         super(ctx);
         this.backdrop = backdrop;
         this.density = density;
-        touchSlop = Math.round(6f * density);
+        touchSlop = Math.round(5f * density);
         setWillNotDraw(false);
         setClickable(false);
         setFocusable(false);
         for (int i = 0; i < MAX_SLOTS; i++) slots[i] = new Rect();
-        iconPaint.setStyle(Paint.Style.STROKE);
+        iconPaint.setStyle(Paint.Style.FILL);
         iconPaint.setStrokeCap(Paint.Cap.ROUND);
         iconPaint.setStrokeJoin(Paint.Join.ROUND);
+        shadowPaint.setColor(0x33000000);
         backdrop.setOnFrame(new Runnable() {
             @Override
             public void run() {
@@ -149,6 +210,19 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         pos.set(0f);
         appear.to(1f, 260f, 34f);
         startLoop();
+    }
+
+    /** 认出来的官方底栏，之后每帧都跟它对齐 */
+    void attachDock(View dock) {
+        dockView = dock;
+        following = dock != null;
+        scheduleFollow();
+    }
+
+    private void scheduleFollow() {
+        if (followScheduled || !following) return;
+        followScheduled = true;
+        Choreographer.getInstance().postFrameCallback(follow);
     }
 
     /** @param r 官方底栏在窗口里的矩形 */
@@ -199,16 +273,15 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         // 比官方那一条大一圈：太小了托不住 4 个图标
         pillH = Math.min(64f * density, Math.max(52f * density, bandH + 10f * density));
-        float plusSize = Math.min(pillH, 56f * density);
+        float plusSize = pillH;
+        float plusGap = 3f * density;
         slotW = Math.min(56f * density, Math.max(50f * density, pillH * 0.88f));
 
         float pad = 8f * density;
-        float gap = 10f * density;
         float leftW = slotW * count + pad * 2f;
-        float total = leftW + gap + plusSize;
 
-        // 整组居中，＋ 紧挨着右边
-        float startX = bandLeft + (bandW - total) / 2f;
+        // 左边那块**水平居中**，＋ 紧贴着它右边
+        float leftX = bandLeft + (bandW - leftW) / 2f;
         // 抬高一点，别贴着系统手势条
         float bottom = bandTop + bandH - 6f * density;
         float top = bottom - pillH;
@@ -227,10 +300,18 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                 bottom = top + pillH;
             }
         }
+        // 也别顶出左右边缘
+        int vw = getWidth();
+        if (vw > 0) {
+            float total = leftW + plusGap + plusSize;
+            if (leftX < 2f * density) leftX = 2f * density;
+            if (leftX + total > vw - 2f * density) leftX = vw - 2f * density - total;
+            if (leftX < 2f * density) leftX = 2f * density;
+        }
 
-        leftPill.set(startX, top, startX + leftW, bottom);
-        plusPill.set(startX + leftW + gap, top + (pillH - plusSize) / 2f,
-                startX + leftW + gap + plusSize, top + (pillH + plusSize) / 2f);
+        leftPill.set(leftX, top, leftX + leftW, bottom);
+        plusPill.set(leftPill.right + plusGap, top,
+                leftPill.right + plusGap + plusSize, bottom);
 
         for (int i = 0; i < count; i++) {
             float l = leftPill.left + pad + i * slotW;
@@ -269,13 +350,14 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean light = luma >= 140;
         int ink = light ? 0xFF1A1A1A : 0xFFFFFFFF;
 
-        scaled(leftPill, k * (1f - 0.03f * sq), tmp);
-        // 按下时整条往下压一点点，像被指头压住
+        // 按住时整条鼓一下：高度随按压微涨，像被指头压起来
+        float grow = 1f + 0.035f * p;
+        scaled(leftPill, k * (1f - 0.03f * sq) * grow, tmp);
         tmp.offset(0f, 1.5f * density * sq);
         drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, p * 0.55f,
                 dragging && p > 0.3f, alpha);
 
-        scaled(plusPill, k * (1f - 0.04f * pp), rect);
+        scaled(plusPill, k * (1f - 0.04f * pp) * (1f + 0.02f * p), rect);
         drawPane(canvas, rect, rect.width() / 2f, framed, luma, pp, false, alpha);
 
         drawLens(canvas, a, p, framed, luma, light, ink);
@@ -311,34 +393,53 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         }
     }
 
-    /** 选中块：平时是一块淡色胶囊，按住/拖动时变成会拉长的透镜 */
+    /**
+     * 选中块：平时是一块淡色胶囊，按住/拖动时放大成一块透镜，
+     * 拖得越快沿运动方向拉得越长（KernelSU 的 scaleX /= 1 - velocity * 0.75）。
+     */
     private void drawLens(Canvas canvas, float a, float p, boolean framed,
                           int luma, boolean light, int ink) {
         float x = pos.value;
-        float base = slotW * 0.86f;
-        // 越界拉扯时横向拉长，松手回弹
-        float v = Math.min(1f, Math.abs(pos.velocity) / 20f);
-        float stretch = 1f + 0.18f * p + 0.22f * v;
-        float w = base * stretch;
-        float h = leftPill.height() * (0.78f + 0.04f * p);
 
-        // 越界时中心跟着手指多跑一点，但不出整条玻璃
+        // 速度归一化：一格/秒 为 1，除以总行程之后 ×0.06 —— 手感跟 KernelSU 接近
+        float vn = count > 1 ? dragVel.value / Math.max(1, count - 1) : 0f;
+        float along = clampF(vn * 0.06f, -0.18f, 0.18f);
+        float across = clampF(vn * 0.02f, -0.12f, 0.12f);
+
+        // 按压缩放：宽度、高度一起长
+        float base = slotW * (0.84f + 0.16f * p);
+        float w = base / (1f - along);
+        float h = leftPill.height() * (0.76f + 0.22f * p) * (1f - across);
+        h = Math.min(h, leftPill.height() * 1.10f);
+
         float cx = slotCenterX(x);
-        lens.set(cx - w / 2f, leftPill.centerY() - h / 2f, cx + w / 2f, leftPill.centerY() + h / 2f);
-        lens.intersect(leftPill);
+        // 允许透镜在按住时上下略微鼓出整条玻璃 —— 放大镜浮起来才有实感
+        lens.set(cx - w / 2f, leftPill.centerY() - h / 2f,
+                cx + w / 2f, leftPill.centerY() + h / 2f);
+        // 只在没被按住时限制在玻璃里；按住时鼓出来一点更有立体感
+        if (p < 0.5f) lens.intersect(leftPill);
 
-        if (framed && p > 0.02f) {
-            drawPane(canvas, lens, h / 2f, true, luma, p, dragging, (int) (255 * a));
-        } else {
-            int save = canvas.save();
-            try {
-                if (a < 1f) canvas.saveLayerAlpha(lens, (int) (255 * a));
+        int save = canvas.save();
+        try {
+            if (a < 1f) canvas.saveLayerAlpha(lens, (int) (255 * a));
+
+            if (p > 0.02f && framed) {
+                // 按住/拖动：透镜本身是一块玻璃，带一层柔和投影，像浮在底栏上
+                float sh = 3f * density * p;
+                shadowPaint.setColor(light ? 0x22000000 : 0x40000000);
+                shadowPaint.setStyle(Paint.Style.FILL);
+                canvas.drawRoundRect(lens.left - sh * 0.6f, lens.top + sh * 0.8f,
+                        lens.right + sh * 0.6f, lens.bottom + sh, h / 2f, h / 2f, shadowPaint);
+                drawPane(canvas, lens, h / 2f, true, luma, p, dragging, 255);
+            } else if (p > 0.02f) {
+                drawPane(canvas, lens, h / 2f, false, luma, p, dragging, 255);
+            } else {
                 selPaint.setShader(null);
                 selPaint.setColor(light ? 0x24000000 : 0x26FFFFFF);
                 canvas.drawRoundRect(lens, h / 2f, h / 2f, selPaint);
-            } finally {
-                canvas.restoreToCount(save);
             }
+        } finally {
+            canvas.restoreToCount(save);
         }
     }
 
@@ -354,8 +455,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     // ---------------------------------------------------------------- 图标
 
     private void drawIcons(Canvas canvas, float a, float p, int ink) {
-        float size = 24f * density;
-        iconPaint.setStrokeWidth(1.8f * density);
+        float size = 23f * density;
 
         for (int i = 0; i < count; i++) {
             float d = Math.abs(pos.value - i);
@@ -363,9 +463,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             float near = Math.max(0f, 1f - Math.min(1f, d));
             // 出现时依次亮起
             float seq = Math.max(0f, Math.min(1f, (a - i * 0.08f) * 2.4f));
-            int alpha = (int) ((sel ? 255 : 190 + 30 * near) * seq);
+            int alpha = (int) ((sel ? 255 : 176 + 44 * near) * seq);
             if (alpha <= 2) continue;
-            float s = 1f + 0.08f * near + 0.03f * p;
+            // 按住时选中那个再放大一圈，像是被透镜托起来
+            float s = 1f + 0.10f * near + 0.02f * p;
+            if (sel) s += 0.18f * p;
             float cx = slots[i].centerX();
             float cy = slots[i].centerY() + (1f - seq) * 4f * density;
             drawIcon(canvas, i, cx, cy, size * s, alpha, ink);
@@ -374,15 +476,31 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private void drawPlus(Canvas canvas, float a, float pp, int ink) {
         iconPaint.setColor((((int) (255 * a) & 0xFF) << 24) | (ink & 0xFFFFFF));
-        iconPaint.setStrokeWidth(2.4f * density);
-        iconPaint.setStyle(Paint.Style.STROKE);
-        float r = 10f * density * (1f + 0.06f * pp);
-        float px = plusPill.centerX();
-        float py = plusPill.centerY();
-        canvas.drawLine(px - r, py, px + r, py, iconPaint);
-        canvas.drawLine(px, py - r, px, py + r, iconPaint);
+        iconPaint.setStyle(Paint.Style.FILL);
+        float cx = plusPill.centerX();
+        float cy = plusPill.centerY();
+        float len = 19f * density * (1f + 0.07f * pp);
+        float th = 4.6f * density * (1f + 0.04f * pp);
+        float r = th / 2f;
+        canvas.save();
+        try {
+            canvas.translate(cx, cy);
+            rect.set(-th / 2f, -len / 2f, th / 2f, len / 2f);
+            canvas.drawRoundRect(rect, r, r, iconPaint);
+            rect.set(-len / 2f, -th / 2f, len / 2f, th / 2f);
+            canvas.drawRoundRect(rect, r, r, iconPaint);
+        } finally {
+            canvas.restore();
+        }
     }
 
+    /**
+     * 一套实心图标（0.0.5 换的）。
+     *
+     * 老版是 1.8dp 的细线描边，在玻璃上又细又虚，放大一档就糊。
+     * 现在改成实心剪影 + 内挖细节：轮廓厚实、选中放大时也不发虚。
+     * 坐标都在 24×24 的画布里，跟着 size 缩放。
+     */
     private void drawIcon(Canvas canvas, int index, float cx, float cy, float size, int alpha, int ink) {
         float k = size / 24f;
         canvas.save();
@@ -390,47 +508,89 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             canvas.translate(cx - size / 2f, cy - size / 2f);
             canvas.scale(k, k);
             iconPaint.setColor(((alpha & 0xFF) << 24) | (ink & 0xFFFFFF));
-            iconPaint.setStyle(Paint.Style.STROKE);
+            iconPaint.setStyle(Paint.Style.FILL);
             path.reset();
+            // 非零环绕：同向的形状叠在一起也是实心（房子、两个人、头+肩都会重叠）。
+            // 要挖空的地方（气泡那三个点）用反向子路径，这个规则下正好挖掉。
+            path.setFillType(Path.FillType.WINDING);
             rect.setEmpty();
 
             switch (index) {
-                case 0: // 首页：房子
-                    path.moveTo(3.6f, 10.4f);
-                    path.lineTo(12f, 3.6f);
-                    path.lineTo(20.4f, 10.4f);
-                    path.lineTo(20.4f, 19.4f);
-                    path.lineTo(14.6f, 19.4f);
-                    path.lineTo(14.6f, 14.2f);
-                    path.lineTo(9.4f, 14.2f);
-                    path.lineTo(9.4f, 19.4f);
-                    path.lineTo(3.6f, 19.4f);
+                case 0: { // 首页：实心房子，底下留一个门洞
+                    path.moveTo(11.25f, 2.9f);
+                    path.cubicTo(11.7f, 2.52f, 12.3f, 2.52f, 12.75f, 2.9f);
+                    path.lineTo(20.6f, 9.5f);
+                    path.cubicTo(21.05f, 9.88f, 21.05f, 10.55f, 20.62f, 10.9f);
+                    path.cubicTo(20.2f, 11.25f, 19.55f, 11.22f, 19.16f, 10.85f);
+                    path.lineTo(12f, 4.86f);
+                    path.lineTo(4.84f, 10.85f);
+                    path.cubicTo(4.45f, 11.22f, 3.8f, 11.25f, 3.38f, 10.9f);
+                    path.cubicTo(2.95f, 10.55f, 2.95f, 9.88f, 3.4f, 9.5f);
+                    path.close();
+
+                    path.moveTo(5.0f, 10.4f);
+                    path.lineTo(19.0f, 10.4f);
+                    path.lineTo(19.0f, 19.2f);
+                    path.cubicTo(19.0f, 20.3f, 18.1f, 21.2f, 17.0f, 21.2f);
+                    path.lineTo(15.3f, 21.2f);
+                    path.lineTo(15.3f, 15.6f);
+                    path.cubicTo(15.3f, 14.5f, 14.4f, 13.6f, 13.3f, 13.6f);
+                    path.lineTo(10.7f, 13.6f);
+                    path.cubicTo(9.6f, 13.6f, 8.7f, 14.5f, 8.7f, 15.6f);
+                    path.lineTo(8.7f, 21.2f);
+                    path.lineTo(7.0f, 21.2f);
+                    path.cubicTo(5.9f, 21.2f, 5.0f, 20.3f, 5.0f, 19.2f);
                     path.close();
                     break;
-                case 1: // 朋友：两个人
-                    canvas.drawCircle(9.2f, 8.4f, 3.2f, iconPaint);
-                    path.moveTo(3.2f, 19.6f);
-                    path.cubicTo(3.4f, 15.6f, 6f, 13.4f, 9.2f, 13.4f);
-                    path.cubicTo(12.4f, 13.4f, 15f, 15.6f, 15.2f, 19.6f);
-                    canvas.drawPath(path, iconPaint);
-                    path.reset();
-                    canvas.drawCircle(17f, 9.4f, 2.4f, iconPaint);
-                    path.moveTo(16.6f, 14.1f);
-                    path.cubicTo(19.2f, 14.4f, 20.6f, 16.4f, 20.8f, 19.6f);
+                }
+                case 1: { // 朋友：两个人
+                    // 后面那个人，小一号
+                    path.addCircle(17.2f, 9.0f, 2.55f, Path.Direction.CW);
+                    path.moveTo(13.1f, 20.6f);
+                    path.cubicTo(13.2f, 16.8f, 14.7f, 14.6f, 17.2f, 14.6f);
+                    path.cubicTo(19.7f, 14.6f, 21.2f, 16.8f, 21.3f, 20.6f);
+                    path.cubicTo(21.32f, 21.1f, 20.95f, 21.4f, 20.5f, 21.4f);
+                    path.lineTo(13.9f, 21.4f);
+                    path.cubicTo(13.45f, 21.4f, 13.08f, 21.1f, 13.1f, 20.6f);
+                    path.close();
+
+                    // 前面那个人
+                    path.addCircle(9.0f, 8.2f, 3.55f, Path.Direction.CW);
+                    path.moveTo(2.6f, 20.6f);
+                    path.cubicTo(2.7f, 15.9f, 5.2f, 13.4f, 9.0f, 13.4f);
+                    path.cubicTo(12.8f, 13.4f, 15.3f, 15.9f, 15.4f, 20.6f);
+                    path.cubicTo(15.42f, 21.1f, 15.05f, 21.4f, 14.6f, 21.4f);
+                    path.lineTo(3.4f, 21.4f);
+                    path.cubicTo(2.95f, 21.4f, 2.58f, 21.1f, 2.6f, 20.6f);
+                    path.close();
                     break;
-                case 2: // 消息：气泡
-                    rect.set(3.6f, 5.2f, 20.4f, 16.4f);
-                    canvas.drawRoundRect(rect, 4.2f, 4.2f, iconPaint);
-                    path.moveTo(8.6f, 16.4f);
-                    path.lineTo(8.6f, 20f);
-                    path.lineTo(12.6f, 16.4f);
+                }
+                case 2: { // 消息：实心气泡 + 三个点挖空
+                    rect.set(2.4f, 3.8f, 21.6f, 16.6f);
+                    path.addRoundRect(rect, 5.6f, 5.6f, Path.Direction.CW);
+                    // 气泡尾巴（跟主体同向，叠在一起才是实心）
+                    path.moveTo(6.8f, 15.2f);
+                    path.lineTo(13.4f, 18.0f);
+                    path.lineTo(7.2f, 21.1f);
+                    path.cubicTo(6.86f, 21.32f, 6.8f, 20.72f, 6.8f, 20.4f);
+                    path.close();
+                    // 三个点：反向子路径，非零环绕规则下正好挖成三个洞
+                    path.addCircle(7.6f, 10.2f, 1.35f, Path.Direction.CCW);
+                    path.addCircle(12f, 10.2f, 1.35f, Path.Direction.CCW);
+                    path.addCircle(16.4f, 10.2f, 1.35f, Path.Direction.CCW);
                     break;
-                default: // 我：单人
-                    canvas.drawCircle(12f, 8.2f, 3.6f, iconPaint);
-                    path.moveTo(4.8f, 20f);
-                    path.cubicTo(5.2f, 15.4f, 8.2f, 13.6f, 12f, 13.6f);
-                    path.cubicTo(15.8f, 13.6f, 18.8f, 15.4f, 19.2f, 20f);
+                }
+                default: { // 我：头 + 肩
+                    path.addCircle(12f, 8.0f, 3.9f, Path.Direction.CW);
+                    path.moveTo(3.4f, 20.7f);
+                    path.cubicTo(3.55f, 15.6f, 7.0f, 13.2f, 12f, 13.2f);
+                    path.cubicTo(17.0f, 13.2f, 20.45f, 15.6f, 20.6f, 20.7f);
+                    path.cubicTo(20.62f, 21.2f, 20.25f, 21.5f, 19.8f, 21.5f);
+                    path.lineTo(4.2f, 21.5f);
+                    path.cubicTo(3.75f, 21.5f, 3.38f, 21.2f, 3.4f, 20.7f);
+                    path.close();
                     break;
+                }
             }
             canvas.drawPath(path, iconPaint);
         } finally {
@@ -491,9 +651,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     }
 
     private static boolean isNumeric(String s) {
-        int i = s.endsWith("+") ? 0 : 0;
         if (s.isEmpty()) return false;
-        for (int k = i; k < s.length(); k++) {
+        for (int k = 0; k < s.length(); k++) {
             char c = s.charAt(k);
             if (c == '+' && k == s.length() - 1) continue;
             if (c < '0' || c > '9') return false;
@@ -566,13 +725,14 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downX = x;
                     downY = y;
                     dragging = false;
-                    int i = slotAt(x);
-                    pendingIndex = i;
-                    pos.snapTo(clampIndex(pos.value));
-                    pos.to(i, 900f, 45f);
-                    selected = i;
-                    press.to(1f, 900f, 48f);
+                    releasePending = false;
+                    pendingIndex = slotAt(x);
+                    // 按下就把透镜挪到这一格并放大（长按即放大，不需要等）
+                    pos.to(pendingIndex, 1400f, 58f);
+                    selected = pendingIndex;
+                    press.to(1f, 1000f, 62f);
                     squish.to(1f, 520f, 34f);
+                    lastSampleAt = 0L;
                     startLoop();
                     return true;
                 }
@@ -588,15 +748,19 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             case MotionEvent.ACTION_MOVE: {
                 if (downInLeft) {
                     float dx = x - downX;
-                    if (!dragging && Math.abs(dx) > touchSlop) dragging = true;
+                    float dy = y - downY;
+                    if (!dragging && Math.abs(dx) > touchSlop
+                            && Math.abs(dx) > Math.abs(dy) * 0.75f) {
+                        dragging = true;
+                        // 以「按下那一格」为起点，拖动距离按格宽折算
+                        dragStart = pendingIndex;
+                        // 拖动时把起始点对齐到当前透镜实际位置，避免第一下跳格
+                        if (Math.abs(pos.value - pendingIndex) < 0.6f) dragStart = pos.value;
+                    }
                     if (dragging) {
-                        float f = clampIndex(pos.value + dx / slotW);
-                        // 越界带阻力
-                        if (f < 0f) f *= 0.35f;
-                        if (f > count - 1) f = count - 1 + (f - (count - 1)) * 0.35f;
-                        pos.snapTo(f);
-                        downX = x;
-                        invalidate();
+                        float v = clampF(dragStart + dx / slotW, 0f, count - 1f);
+                        pos.to(v, 2000f, 68f);
+                        startLoop();
                     }
                     return true;
                 }
@@ -614,11 +778,13 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     // 拖动过就落到手指停下的那一格；只是点一下就是按下时那一格
                     int target = dragging ? clampIndex(pos.value) : pendingIndex;
                     downInLeft = false;
-                    press.to(0f, 600f, 42f);
-                    squish.to(0f, 420f, 30f);
                     dragging = false;
-                    pos.to(target, 700f, 34f);
                     selected = target;
+                    pos.to(target, 900f, 46f);
+                    squish.to(0f, 420f, 30f);
+                    // 放大先留着，等位置快到位再收（KernelSU 的 release 语义）
+                    releasePending = true;
+                    releaseSince = SystemClock.uptimeMillis();
                     if (!cancelled) clickTab(target);
                     startLoop();
                     return true;
@@ -648,6 +814,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         if (v < 0f) return 0;
         if (v > count - 1) return count - 1;
         return Math.round(v);
+    }
+
+    private static float clampF(float v, float lo, float hi) {
+        return v < lo ? lo : (v > hi ? hi : v);
     }
 
     private void clickTab(int i) {
@@ -690,9 +860,37 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean c = plusPress.step(dt);
         boolean d = appear.step(dt);
         boolean e = squish.step(dt);
+
+        // 采样位置速度 → 透镜拉伸（KernelSU 的做法：对位置本身求导）
+        long now = SystemClock.uptimeMillis();
+        if (lastSampleAt == 0L) {
+            lastSampleAt = now;
+            lastSampleVal = pos.value;
+        } else if (now - lastSampleAt >= 8) {
+            float perSec = (pos.value - lastSampleVal) * 1000f / (now - lastSampleAt);
+            dragVel.to(perSec, 320f, 26f);
+            lastSampleAt = now;
+            lastSampleVal = pos.value;
+        }
+        boolean f = dragVel.step(dt);
+
+        // 松手后：位置进到 SETTLE 区间（或弹簧停了 / 超时）才收回放大
+        if (releasePending && !dragging && !downInLeft) {
+            float span = Math.max(1f, count - 1);
+            boolean settled = Math.abs(pos.value - pos.target) <= Math.max(span * SETTLE_FRACTION, 0.001f)
+                    || (Math.abs(pos.velocity) < 6f && Math.abs(pos.value - pos.target) < 0.02f);
+            boolean timeout = now - releaseSince > RELEASE_WATCHDOG_MS;
+            if (settled || timeout) {
+                releasePending = false;
+                press.to(0f, 620f, 44f);
+            } else {
+                f = true;
+            }
+        }
+
         invalidate();
 
-        if (a || b || c || d || e) {
+        if (a || b || c || d || e || f) {
             Choreographer.getInstance().postFrameCallback(this);
         } else {
             looping = false;
@@ -707,11 +905,25 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         timer.post(pump);
         timer.post(recapture);
         timer.post(badgeTick);
+        if (dockView != null) {
+            following = true;
+            scheduleFollow();
+        }
+    }
+
+    @Override
+    protected void onVisibilityChanged(View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+        if (visibility == VISIBLE && dockView != null) {
+            following = true;
+            scheduleFollow();
+        }
     }
 
     @Override
     protected void onDetachedFromWindow() {
         timer.removeCallbacksAndMessages(null);
+        following = false;
         super.onDetachedFromWindow();
     }
 }

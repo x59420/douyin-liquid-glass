@@ -161,6 +161,7 @@ final class DockController {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         ((ViewGroup) decor).addView(overlay, lp);
+        overlay.attachDock(dock);
         overlay.setBand(rectInWindow(dock));
 
         final View[] dockRef = new View[]{dock};
@@ -210,6 +211,7 @@ final class DockController {
                                 fresh.setAlpha(0f);
                                 dockRef[0] = fresh;
                                 overlay.setTabs(lf, p);
+                                overlay.attachDock(fresh);
                                 d = fresh;
                             }
                             // 藏官方底栏这件事必须「玻璃真的画出来了」才做。

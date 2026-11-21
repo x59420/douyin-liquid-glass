@@ -42,11 +42,11 @@ import java.util.WeakHashMap;
 final class GlassRows {
 
     /** 结构复查间隔（每格 = 这个毫秒数） */
-    private static final long TICK_MS = 700L;
+    private static final long TICK_MS = 420L;
     /** 背景重采集间隔：静态顶栏用不着太勤，省电 */
     private static final long CAPTURE_MS = 1800L;
     /** 每几格强制重扫一次视图树 */
-    private static final int RESCAN_TICKS = 6;
+    private static final int RESCAN_TICKS = 3;
 
     private static final WeakHashMap<Activity, Runner> RUNNERS =
             new WeakHashMap<Activity, Runner>();
@@ -142,9 +142,13 @@ final class GlassRows {
             for (int i = bars.size() - 1; i >= 0; i--) {
                 Bar b = bars.get(i);
                 if (!b.alive()) {
+                    // 单帧判死容易误杀（切页动画中间会有几帧尺寸为 0），连着几次才拆
+                    if (++b.miss < 3) continue;
                     b.release();
                     bars.remove(i);
                     sig = "";
+                } else {
+                    b.miss = 0;
                 }
             }
 
@@ -157,6 +161,9 @@ final class GlassRows {
                     bars.get(captureCursor).capture();
                 }
                 for (Bar b : bars) {
+                    // 宿主自己会动（tab 滑动、横竖屏）：位置每格都对一次，
+                    // 不然玻璃要等下一次重采才跟上，看着就是「慢半拍」
+                    b.refreshWindows();
                     b.reassert();
                     b.invalidate();
                 }
@@ -219,6 +226,10 @@ final class GlassRows {
 
     private static void appendBar(View content, ViewGroup row, boolean topStyle,
                                   float density, StringBuilder sig, List<Bar> out) {
+        // 搜索页顶上那一行整条就是个搜索输入框。那是抖音自己的输入态，
+        // 在外面再套一层玻璃，用户点进搜索之后还挂着一块框 —— 就是「玻璃框还在」。
+        if (topStyle && Shield.hasVisibleInput(row)) return;
+
         List<View> kids = rowKids(row);
         if (kids.size() < 2) return;
 
@@ -234,6 +245,9 @@ final class GlassRows {
         backdrop.setExcludeSelf();
 
         Bar bar = new Bar(row, backdrop, density);
+        bar.zone = topStyle ? GlassStripDrawable.ZONE_TOP : GlassStripDrawable.ZONE_BOTTOM;
+        // 顶栏三块之间留出明显的空隙，不然看着就是连成一条
+        bar.spaced = topStyle;
         for (List<View> group : groups) {
             addGroup(bar, group, row, density);
         }
@@ -253,26 +267,29 @@ final class GlassRows {
      */
     private static void addGroup(Bar bar, List<View> group, ViewGroup row, float density) {
         if (group.isEmpty()) return;
+        boolean spaced = bar.spaced;
 
         if (group.size() == 1) {
-            addSlot(bar, group.get(0), density);
+            addSlot(bar, group.get(0), density, spaced);
             return;
         }
 
         View host = hostOf(group, row);
         if (host != null && host != row) {
-            addSlot(bar, host, density);
+            addSlot(bar, host, density, spaced);
             return;
         }
 
         RectF win = boundsIn(group, row, density);
         if (win == null || bar.rowTaken) {
-            for (View v : group) addSlot(bar, v, density);
+            for (View v : group) addSlot(bar, v, density, spaced);
             return;
         }
         bar.rowTaken = true;
-        GlassStripDrawable glass = new GlassStripDrawable(row, bar.backdrop, density, 1000f, 0f);
+        GlassStripDrawable glass = new GlassStripDrawable(
+                row, bar.backdrop, density, 1000f, 0f, spaced ? 5f : 0f);
         glass.setWindow(win);
+        glass.setZone(bar.zone);
         Slot slot = new Slot(row, glass);
         slot.trackWindow(group, row, density);
         bar.slots.add(slot);
@@ -297,10 +314,12 @@ final class GlassRows {
         return new RectF(l - pad, t - pad, r + pad, b + pad);
     }
 
-    private static void addSlot(Bar bar, View v, float density) {
+    private static void addSlot(Bar bar, View v, float density, boolean spaced) {
         if (v == null || v == bar.row) return;
         if (v.getWidth() < 8 || v.getHeight() < 8) return;
-        GlassStripDrawable glass = new GlassStripDrawable(v, bar.backdrop, density, 1000f, 2f);
+        GlassStripDrawable glass = new GlassStripDrawable(
+                v, bar.backdrop, density, 1000f, 2f, spaced ? 5f : 0f);
+        glass.setZone(bar.zone);
         bar.slots.add(new Slot(v, glass));
     }
 
@@ -509,6 +528,12 @@ final class GlassRows {
         final List<Slot> slots = new ArrayList<Slot>();
         /** 整行那一块玻璃已经用掉了（一行只挂得下一个背景） */
         boolean rowTaken;
+        /** 这块行玻璃只准出现在屏幕的哪一段 */
+        int zone = GlassStripDrawable.ZONE_ANY;
+        /** 顶栏这种要一块一块隔开的行 */
+        boolean spaced;
+        /** 连续几次判成不在了（单帧不算） */
+        int miss;
         private final Rect region = new Rect();
 
         Bar(ViewGroup row, Backdrop backdrop, float density) {
@@ -536,6 +561,11 @@ final class GlassRows {
 
         void reassert() {
             for (Slot s : slots) s.assertMine(false);
+        }
+
+        /** 宿主自己动了（tab 滑动、横竖屏）：每块玻璃重新对齐一次 */
+        void refreshWindows() {
+            for (Slot s : slots) s.refreshWindow();
         }
 
         void invalidate() {
@@ -600,7 +630,7 @@ final class GlassRows {
                 Drawable cur = view.getBackground();
                 if (cur == glass) return;
                 long now = SystemClock.uptimeMillis();
-                if (!force && now - lastFix < 1000L) return;
+                if (!force && now - lastFix < 220L) return;
                 lastFix = now;
                 original = cur;
                 view.setBackground(glass);
