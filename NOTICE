@@ -1,0 +1,46 @@
+dydock (Douyin dock liquid glass)
+Copyright (C) 2025 Zaka
+
+This product includes software developed as part of:
+
+  Kyant0 / AndroidLiquidGlass
+  https://github.com/Kyant0/AndroidLiquidGlass
+  Copyright (C) 2025 Kyant
+  Licensed under the Apache License, Version 2.0.
+
+Derived portions used in this project:
+
+  - src/com/zaka/douyin/glass/GlassShader.java
+      Rounded-rect SDF refraction shader, refraction-with-dispersion shader,
+      and the 45-degree directional highlight shader, ported from the AGSL
+      shader sources of AndroidLiquidGlass (internal/Shaders.kt).
+
+  - src/com/zaka/douyin/glass/GlassPainter.java
+      Effect ordering and parameters (vibrancy -> blur -> lens -> highlight ->
+      surface tint -> inner shadow) follow AndroidLiquidGlass
+      (effects/Lens.kt, effects/Blur.kt, effects/ColorFilter.kt,
+      highlight/HighlightStyle.kt).
+
+  - src/com/zaka/douyin/glass/DockOverlay.java
+      Draggable dock indicator (follow the finger, resistance past the ends,
+      spring release to the nearest slot, dispersion while dragging) is modeled
+      after AndroidLiquidGlass (LiquidBottomTabs.kt, DampedDragAnimation,
+      InteractiveHighlight).
+
+  - src/com/zaka/douyin/glass/Spring.java
+      Single-value damped spring, same integration scheme as
+      AndroidLiquidGlass (internal/util/Animatable.kt).
+
+The above portions remain subject to the Apache License, Version 2.0.
+A copy of that license is included in the LICENSE file of this repository.
+
+The approach of "leave the host layout alone, take over only the bottom bar and
+sample the host's own content view as the glass backdrop" was learned from:
+
+  lengroo / pdd-LiquidGlass
+  https://github.com/lengroo/pdd-LiquidGlass
+  Licensed under the MIT License.
+
+This project is NOT affiliated with, endorsed by, or sponsored by ByteDance Ltd.
+or the Douyin application. "Douyin" / "抖音" are trademarks of their respective
+owners. For personal, non-commercial use only.
