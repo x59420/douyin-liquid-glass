@@ -16,7 +16,7 @@ import de.robv.android.xposed.XposedBridge;
 public final class Dydock {
 
     public static final String TAG = "dydock";
-    public static final String VER = "0.1.8";
+    public static final String VER = "0.1.9";
     public static final String HOST = "com.ss.android.ugc.aweme";
     public static final String PKG = "com.zaka.douyin.glass";
 

@@ -81,10 +81,7 @@ final class DockController {
             }
         } catch (Throwable ignored) {
         }
-        try {
-            if (dock != null && dock.getAlpha() != 1f) dock.setAlpha(1f);
-        } catch (Throwable ignored) {
-        }
+        // 原生 Dock 永不恢复显示；Activity 销毁时只拆除覆盖层。
         synchronized (DONE) {
             DONE.remove(act);
         }
@@ -168,12 +165,12 @@ final class DockController {
 
         // Capture only after the Dock band is known. Temporarily hide the native
         // artwork while sampling so its icons/text are not baked into the glass.
-        float nativeDockAlpha = dock.getAlpha();
+        // 原生 Dock 从接管开始就永久隐藏；玻璃层是唯一视觉导航。
         try {
             dock.setAlpha(0f);
             backdrop.capture();
         } finally {
-            dock.setAlpha(nativeDockAlpha);
+            dock.setAlpha(0f);
         }
 
         final View[] dockRef = new View[]{dock};
@@ -203,8 +200,7 @@ final class DockController {
                             // 老版本这里不判，Activity 一换 alpha 还是 0 —— 就是「残影」。
                             if (!overlay.isAttachedToWindow()) {
                                 live[0] = false;
-                                View old = dockRef[0];
-                                if (old != null && old.getAlpha() != 1f) old.setAlpha(1f);
+                                // 覆盖层生命周期结束也不恢复原生 Dock。
                                 return;
                             }
                             View d = dockRef[0];
@@ -223,8 +219,8 @@ final class DockController {
                                 View p = Finder.pickPlus(its);
                                 List<View> lf = new ArrayList<View>(its);
                                 if (p != null) lf.remove(p);
-                                fresh.setAlpha(1f);
-                                hidden[0] = false;
+                                fresh.setAlpha(0f);
+                                hidden[0] = true;
                                 dockRef[0] = fresh;
                                 overlay.setTabs(lf, p);
                                 overlay.attachDock(fresh);
@@ -246,19 +242,15 @@ final class DockController {
                 if (!live[0]) return;
                 try {
                     if (!overlay.isAttachedToWindow()) {
-                        View detachedDock = dockRef[0];
-                        if (detachedDock != null && detachedDock.getAlpha() != 1f) {
-                            detachedDock.setAlpha(1f);
-                        }
-                        hidden[0] = false;
+                        // 不恢复原生 Dock；只停止已脱离窗口的轮询。
                         live[0] = false;
                         return;
                     }
                     View d = dockRef[0];
                     if (d == null || !d.isAttachedToWindow()) {
                         overlay.setVisibility(View.GONE);
-                        if (d != null && d.getAlpha() != 1f) d.setAlpha(1f);
-                        hidden[0] = false;
+                        // 宿主正在替换底栏节点，旧节点保持隐藏。
+                        hidden[0] = true;
                         MAIN.postDelayed(this, 180L);
                         return;
                     }
@@ -281,18 +273,16 @@ final class DockController {
                         }
                         overlay.setBand(rectInWindow(d));
                         overlay.invalidate();
-                        if (overlay.hasDrawn() && !hidden[0]) {
-                            d.setAlpha(0f);
-                            hidden[0] = true;
-                        }
+                        // 无论玻璃当前是否显示，原生 Dock 都保持透明。
+                        if (d.getAlpha() != 0f) d.setAlpha(0f);
+                        hidden[0] = true;
                     } else {
                         if (overlay.getVisibility() != View.GONE) {
                             overlay.setVisibility(View.GONE);
                         }
-                        if (d != null && (hidden[0] || d.getAlpha() != 1f)) {
-                            d.setAlpha(1f);
-                        }
-                        hidden[0] = false;
+                        // 菜单/个人页期间两种 Dock 都隐藏；绝不露出原生底栏。
+                        if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
+                        hidden[0] = true;
                         graceFrom[0] = SystemClock.uptimeMillis();
                     }
                 } catch (Throwable t) {
@@ -310,8 +300,8 @@ final class DockController {
         // 用户看到的就是「打开别的界面还有黑块」「好多残影」。
         // 这一版一个背景都不碰，玻璃自己就是半透明的，不需要底下挖洞。
         // 不在安装阶段抢先隐藏原生 Dock；等玻璃真正绘制后再接管。
-        dock.setAlpha(1f);
-        hidden[0] = false;
+        dock.setAlpha(0f);
+        hidden[0] = true;
         graceFrom[0] = SystemClock.uptimeMillis();
 
         // 看门狗：玻璃**可见却迟迟没画出来**才把官方底栏还回去，绝不留一条空白。
@@ -322,14 +312,14 @@ final class DockController {
                 if (!live[0] || overlay.hasDrawn()) return;
                 View d0 = dockRef[0];
                 try {
-                    if (d0 != null) d0.setAlpha(1f);
+                    if (d0 != null) d0.setAlpha(0f);
                     if (overlay.getVisibility() == View.VISIBLE) {
                         overlay.setVisibility(View.GONE);
                     }
                 } catch (Throwable ignored) {
                 }
-                hidden[0] = false;
-                Dydock.warn("底栏:玻璃没画出来，先还原官方底栏（下一页再试）");
+                hidden[0] = true;
+                Dydock.warn("底栏:玻璃未能绘制；按设置保持原生 Dock 隐藏");
             }
         }, 2500L);
 

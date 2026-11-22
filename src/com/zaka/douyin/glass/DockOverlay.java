@@ -358,14 +358,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         // 参考 Tieba：按压时面板与图标行围绕中心同步放大，约增加 16dp。
         scaled(leftPill, k, tmp);
-        float barGrow = 1f + (16f * density / Math.max(1f, tmp.width())) * p;
-        float barCx = tmp.centerX();
-        float barCy = tmp.centerY();
-        float halfBarW = tmp.width() * barGrow * 0.5f;
-        float halfBarH = tmp.height() * barGrow * 0.5f;
-        tmp.set(barCx - halfBarW, barCy - halfBarH, barCx + halfBarW, barCy + halfBarH);
+        // 点击形变向四边使用相同的 dp 外扩量，圆角保持原 Dock 的半高半径。
+        float edgeGrow = 8f * density * p;
+        tmp.inset(-edgeGrow, -edgeGrow);
         tmp.offset(0f, 0.8f * density * sq);
-        drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, p * 0.55f,
+        drawPane(canvas, tmp, leftPill.height() / 2f, framed, luma, p * 0.55f,
                 dragging && p > 0.3f, alpha);
 
         // 右侧「＋」独立，不跟随左侧导航透镜的长按放大。
@@ -418,14 +415,17 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         // 因此会自然越过 64dp 左胶囊的上下边缘，而不是被胶囊裁成一块。
         // Tieba 的液滴不是一个圆球：它沿用 Dock 的横向胶囊轮廓，
         // 宽度取单个 tab 槽位，基础高度 56dp；放大/速度形变仍由独立弹簧控制。
-        float baseW = Math.min(72f * density, Math.max(1f, slotW * 0.96f));
-        float baseH = Math.min(56f * density,
-                Math.max(1f, leftPill.height() - 8f * density));
+        float baseW = Math.max(1f, slotW);
+        float baseH = Math.max(1f, leftPill.height());
         float sx = clampF(droplet.scaleX() * droplet.dragStretch(slotW), 0.85f, 1.75f);
         float sy = clampF(droplet.scaleY(), 0.85f, 1.60f);
-        float w = baseW * sx;
-        float h = baseH * sy;
-        float corner = Math.min(32f * density, h * 0.5f);
+        // 以单格宽度和 Dock 高度为基准，四边统一增加同一段距离。
+        // 取两轴中较大的形变值，避免底边/侧边因速度通道不同而出现不等外扩。
+        float uniformScale = Math.max(1f, Math.max(sx, sy));
+        float outset = baseH * (uniformScale - 1f) * 0.5f;
+        float w = baseW + outset * 2f;
+        float h = baseH + outset * 2f;
+        float corner = Math.min(32f * density + outset, h * 0.5f);
 
         float dragLag = clampF(droplet.accumulatedDrag() * 0.12f,
                 -slotW * 0.18f, slotW * 0.18f);
