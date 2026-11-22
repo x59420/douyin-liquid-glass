@@ -30,8 +30,6 @@ jobs:
           sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build signed APK
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
         run: bash build.sh
 
       - name: Upload APK
