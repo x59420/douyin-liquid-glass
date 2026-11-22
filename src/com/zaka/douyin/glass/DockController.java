@@ -224,6 +224,10 @@ final class DockController {
                                 dockRef[0] = fresh;
                                 overlay.setTabs(lf, p);
                                 overlay.attachDock(fresh);
+                                overlay.setBand(rectInWindow(fresh));
+                                synchronized (DOCKS) {
+                                    DOCKS.put(act, fresh);
+                                }
                                 d = fresh;
                             }
                             // 这里只跟随原生 Dock 的位置；显隐状态统一由 180ms 轮询器管理，
@@ -247,9 +251,31 @@ final class DockController {
                         return;
                     }
                     View d = dockRef[0];
-                    if (d == null || !d.isAttachedToWindow()) {
+                    // 抖音在菜单/个人主页切换时可能把原生导航节点临时设为 GONE，
+                    // 也可能直接换掉节点。不能只盯着旧 View，否则返回后玻璃永远等不到恢复。
+                    if (d == null || !d.isAttachedToWindow() || !d.isShown()) {
+                        ViewGroup fresh = Finder.findDock(content);
+                        if (fresh != null && fresh != d) {
+                            List<View> its = Finder.tabItems(fresh);
+                            if (its.size() >= 4) {
+                                View p = Finder.pickPlus(its);
+                                List<View> lf = new ArrayList<View>(its);
+                                if (p != null) lf.remove(p);
+                                fresh.setAlpha(0f);
+                                dockRef[0] = fresh;
+                                overlay.setTabs(lf, p);
+                                overlay.attachDock(fresh);
+                                overlay.setBand(rectInWindow(fresh));
+                                synchronized (DOCKS) {
+                                    DOCKS.put(act, fresh);
+                                }
+                                d = fresh;
+                                Dydock.log("底栏:返回后重新接管导航节点");
+                            }
+                        }
+                    }
+                    if (d == null || !d.isAttachedToWindow() || !d.isShown()) {
                         overlay.setVisibility(View.GONE);
-                        // 宿主正在替换底栏节点，旧节点保持隐藏。
                         hidden[0] = true;
                         MAIN.postDelayed(this, 180L);
                         return;

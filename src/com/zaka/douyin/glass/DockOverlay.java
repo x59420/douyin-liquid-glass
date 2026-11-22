@@ -34,7 +34,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private static final int MAX_SLOTS = 6;
 
     /** 按住时透镜放大到的倍数（KernelSU: 78 / 56） */
-    private static final float PRESSED_SCALE = 1.16f;
+    private static final float PRESSED_SCALE = 1.06f;
     /** 松手后位置进到总行程的这个比例以内，才收回放大 */
     private static final float SETTLE_FRACTION = 0.025f;
     /** 兜底：位置一直没停稳也别把放大卡住 */
@@ -356,13 +356,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean light = luma >= 140;
         int ink = light ? 0xFF1A1A1A : 0xFFFFFFFF;
 
-        // 参考 Tieba：按压时面板与图标行围绕中心同步放大，约增加 16dp。
+        // 点击时四边使用完全相同的外扩量；不再做垂直偏移，避免上下边距不一致。
         scaled(leftPill, k, tmp);
-        // 点击形变向四边使用相同的 dp 外扩量，圆角保持原 Dock 的半高半径。
         float edgeGrow = 8f * density * p;
         tmp.inset(-edgeGrow, -edgeGrow);
-        tmp.offset(0f, 0.8f * density * sq);
-        drawPane(canvas, tmp, leftPill.height() / 2f, framed, luma, p * 0.55f,
+        drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, p * 0.55f,
                 dragging && p > 0.3f, alpha);
 
         // 右侧「＋」独立，不跟随左侧导航透镜的长按放大。
@@ -415,17 +413,16 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         // 因此会自然越过 64dp 左胶囊的上下边缘，而不是被胶囊裁成一块。
         // Tieba 的液滴不是一个圆球：它沿用 Dock 的横向胶囊轮廓，
         // 宽度取单个 tab 槽位，基础高度 56dp；放大/速度形变仍由独立弹簧控制。
-        float baseW = Math.max(1f, slotW);
         float baseH = Math.max(1f, leftPill.height());
+        // 保持横向胶囊比例，避免槽宽接近高度时看起来像圆形。
+        float baseW = Math.max(slotW, baseH * 1.15f);
         float sx = clampF(droplet.scaleX() * droplet.dragStretch(slotW), 0.85f, 1.75f);
         float sy = clampF(droplet.scaleY(), 0.85f, 1.60f);
-        // 以单格宽度和 Dock 高度为基准，四边统一增加同一段距离。
-        // 取两轴中较大的形变值，避免底边/侧边因速度通道不同而出现不等外扩。
-        float uniformScale = Math.max(1f, Math.max(sx, sy));
-        float outset = baseH * (uniformScale - 1f) * 0.5f;
-        float w = baseW + outset * 2f;
-        float h = baseH + outset * 2f;
-        float corner = Math.min(32f * density + outset, h * 0.5f);
+        // 只允许整体轻微放大，横纵共用同一比例，不再被拖动速度拉成宽条。
+        float uniformScale = clampF(Math.max(sx, sy), 1f, PRESSED_SCALE);
+        float w = baseW * uniformScale;
+        float h = baseH * uniformScale;
+        float corner = Math.min(baseH * 0.5f * uniformScale, h * 0.5f);
 
         float dragLag = clampF(droplet.accumulatedDrag() * 0.12f,
                 -slotW * 0.18f, slotW * 0.18f);
@@ -476,11 +473,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             int alpha = (int) ((sel ? 255 : 176 + 44 * near) * seq);
             if (alpha <= 2) continue;
             // 按住时选中那个再放大一圈，像是被透镜托起来
-            float rowScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * p;
+            float rowScale = 1f + (4f * density / Math.max(1f, leftPill.width())) * p;
             float rowCx = leftPill.centerX();
             float rowCy = leftPill.centerY();
             float s = (1f + 0.10f * near + 0.02f * p) * rowScale;
-            if (sel) s += 0.18f * p;
+            if (sel) s += 0.06f * p;
             float cx = rowCx + (slots[i].centerX() - rowCx) * rowScale;
             float cy = rowCy + (slots[i].centerY() - rowCy) * rowScale
                     + (1f - seq) * 4f * density;
@@ -730,7 +727,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private void drawBadges(Canvas canvas, float a) {
         if (a < 0.9f) return;
-        float rowScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * droplet.pressProgress();
+        float rowScale = 1f + (4f * density / Math.max(1f, leftPill.width())) * droplet.pressProgress();
         float rowCx = leftPill.centerX();
         float rowCy = leftPill.centerY();
         float r = 8f * density * rowScale;
