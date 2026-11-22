@@ -12,6 +12,7 @@ import android.os.SystemClock;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -78,6 +79,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private int pendingIndex;
     private boolean downInPlus;
     private boolean dragging;
+    /** 正在接收原生触摸序列的底栏子项；未开始拖动前由它处理点击和长按。 */
+    private View nativeTarget;
     private float downX;
     private float downY;
     private float dragStart;
@@ -180,7 +183,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         super(ctx);
         this.backdrop = backdrop;
         this.density = density;
-        touchSlop = Math.round(5f * density);
+        touchSlop = ViewConfiguration.get(ctx).getScaledTouchSlop();
         setWillNotDraw(false);
         setClickable(false);
         setFocusable(false);
@@ -722,12 +725,17 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             case MotionEvent.ACTION_DOWN: {
                 if (leftPill.contains(x, y)) {
                     downInLeft = true;
+                    downInPlus = false;
                     downX = x;
                     downY = y;
                     dragging = false;
                     releasePending = false;
                     pendingIndex = slotAt(x);
-                    // 按下就把透镜挪到这一格并放大（长按即放大，不需要等）
+                    nativeTarget = pendingIndex >= 0 && pendingIndex < tabs.size()
+                            ? tabs.get(pendingIndex) : null;
+                    // 普通按下、点击和长按先交给抖音原生子项。
+                    dispatchToNative(nativeTarget, e);
+                    // 按下就把透镜挪到这一格并放大，不必等长按超时。
                     pos.to(pendingIndex, 1400f, 58f);
                     selected = pendingIndex;
                     press.to(1f, 1000f, 62f);
@@ -738,6 +746,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                 }
                 if (plusPill.contains(x, y)) {
                     downInPlus = true;
+                    downInLeft = false;
+                    nativeTarget = plusTab;
+                    dispatchToNative(nativeTarget, e);
                     squish.to(1f, 520f, 34f);
                     plusPress.to(1f, 700f, 40f);
                     startLoop();
@@ -752,19 +763,23 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     if (!dragging && Math.abs(dx) > touchSlop
                             && Math.abs(dx) > Math.abs(dy) * 0.75f) {
                         dragging = true;
-                        // 以「按下那一格」为起点，拖动距离按格宽折算
+                        // 拖动正式接管时，给原生子项发送真实 CANCEL，
+                        // 这样系统会撤销点击/长按，而不是只清除 pressed 状态。
+                        dispatchNativeCancel(nativeTarget, e);
                         dragStart = pendingIndex;
-                        // 拖动时把起始点对齐到当前透镜实际位置，避免第一下跳格
                         if (Math.abs(pos.value - pendingIndex) < 0.6f) dragStart = pos.value;
                     }
                     if (dragging) {
                         float v = clampF(dragStart + dx / slotW, 0f, count - 1f);
                         pos.to(v, 2000f, 68f);
                         startLoop();
+                    } else {
+                        dispatchToNative(nativeTarget, e);
                     }
                     return true;
                 }
                 if (downInPlus) {
+                    dispatchToNative(nativeTarget, e);
                     if (!plusPill.contains(x, y)) plusPress.to(0f, 500f, 40f);
                     else plusPress.to(1f, 700f, 40f);
                     return true;
@@ -773,29 +788,34 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             }
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
+                boolean cancelled = e.getActionMasked() == MotionEvent.ACTION_CANCEL;
                 if (downInLeft) {
-                    boolean cancelled = e.getActionMasked() == MotionEvent.ACTION_CANCEL;
-                    // 拖动过就落到手指停下的那一格；只是点一下就是按下时那一格
-                    int target = dragging ? clampIndex(pos.value) : pendingIndex;
+                    boolean wasDragging = dragging;
+                    int target = wasDragging ? clampIndex(pos.value) : pendingIndex;
+                    if (!wasDragging) {
+                        // 没有拖动：原样把 UP/CANCEL 交给原生控件，保留点击与长按。
+                        dispatchToNative(nativeTarget, e);
+                    } else if (!cancelled) {
+                        // 已拖动：原生序列此前已 CANCEL，松手时只触发最终落点一次。
+                        clickTab(target);
+                    }
                     downInLeft = false;
                     dragging = false;
+                    nativeTarget = null;
                     selected = target;
                     pos.to(target, 900f, 46f);
                     squish.to(0f, 420f, 30f);
-                    // 放大先留着，等位置快到位再收（KernelSU 的 release 语义）
                     releasePending = true;
                     releaseSince = SystemClock.uptimeMillis();
-                    if (!cancelled) clickTab(target);
                     startLoop();
                     return true;
                 }
                 if (downInPlus) {
+                    dispatchToNative(nativeTarget, e);
                     downInPlus = false;
+                    nativeTarget = null;
                     squish.to(0f, 420f, 30f);
                     plusPress.to(0f, 600f, 42f);
-                    if (e.getActionMasked() == MotionEvent.ACTION_UP && plusPill.contains(x, y)) {
-                        clickPlus();
-                    }
                     startLoop();
                     return true;
                 }
@@ -803,6 +823,38 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             }
         }
         return false;
+    }
+
+    /**
+     * 把覆盖层收到的事件换算到原生 tab 的本地坐标。
+     * 使用 raw 坐标定位，避免覆盖层与宿主子项处在不同父容器时产生偏移。
+     */
+    private void dispatchToNative(View target, MotionEvent source) {
+        if (target == null || source == null || !target.isAttachedToWindow()) return;
+        MotionEvent copy = MotionEvent.obtain(source);
+        try {
+            int[] loc = new int[2];
+            target.getLocationOnScreen(loc);
+            float dx = source.getRawX() - loc[0] - source.getX();
+            float dy = source.getRawY() - loc[1] - source.getY();
+            copy.offsetLocation(dx, dy);
+            target.dispatchTouchEvent(copy);
+        } catch (Throwable t) {
+            Dydock.warnOnce("native-touch", "转发原生底栏触摸失败: " + t);
+        } finally {
+            copy.recycle();
+        }
+    }
+
+    private void dispatchNativeCancel(View target, MotionEvent source) {
+        if (target == null || source == null) return;
+        MotionEvent cancel = MotionEvent.obtain(source);
+        try {
+            cancel.setAction(MotionEvent.ACTION_CANCEL);
+            dispatchToNative(target, cancel);
+        } finally {
+            cancel.recycle();
+        }
     }
 
     private int slotAt(float x) {
