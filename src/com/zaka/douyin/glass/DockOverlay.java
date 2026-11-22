@@ -930,7 +930,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         invalidate();
 
-        if (a || b || c || d || e || g) {
+        if (a || b || c || d || e || f || g) {
             Choreographer.getInstance().postFrameCallback(this);
         } else {
             looping = false;
@@ -964,6 +964,12 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     protected void onDetachedFromWindow() {
         timer.removeCallbacksAndMessages(null);
         following = false;
+        followScheduled = false;
+        looping = false;
+        Choreographer choreographer = Choreographer.getInstance();
+        choreographer.removeFrameCallback(this);
+        choreographer.removeFrameCallback(follow);
+        backdrop.release();
         super.onDetachedFromWindow();
     }
 }
