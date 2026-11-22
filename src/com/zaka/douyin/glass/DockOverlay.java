@@ -414,12 +414,16 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         // Tieba 的选中液滴以 56dp 为基础尺寸；长按按 78/56 的比例膨胀，
         // 因此会自然越过 64dp 左胶囊的上下边缘，而不是被胶囊裁成一块。
-        float baseSize = Math.min(56f * density,
-                Math.max(1f, Math.min(slotW * 0.9f, leftPill.height() - 8f * density)));
+        // Tieba 的液滴不是一个圆球：它沿用 Dock 的横向胶囊轮廓，
+        // 宽度取单个 tab 槽位，基础高度 56dp；放大/速度形变仍由独立弹簧控制。
+        float baseW = Math.min(72f * density, Math.max(1f, slotW * 0.96f));
+        float baseH = Math.min(56f * density,
+                Math.max(1f, leftPill.height() - 8f * density));
         float sx = clampF(droplet.scaleX(), 0.85f, 1.75f);
         float sy = clampF(droplet.scaleY(), 0.85f, 1.60f);
-        float w = baseSize * sx;
-        float h = baseSize * sy;
+        float w = baseW * sx;
+        float h = baseH * sy;
+        float corner = Math.min(32f * density, h * 0.5f);
 
         float dragFraction = leftPill.width() > 0f
                 ? clampF(droplet.accumulatedDrag() / leftPill.width(), -1f, 1f) : 0f;
@@ -434,13 +438,13 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             if (a < 1f) canvas.saveLayerAlpha(lens, (int) (255 * a));
 
             if (framed) {
-                drawPane(canvas, lens, h / 2f, true, luma, dropletPress, dragging, 255);
+                drawPane(canvas, lens, corner, true, luma, dropletPress, dragging, 255);
             } else if (dropletPress > 0.02f) {
-                drawPane(canvas, lens, h / 2f, false, luma, dropletPress, dragging, 255);
+                drawPane(canvas, lens, corner, false, luma, dropletPress, dragging, 255);
             } else {
                 selPaint.setShader(null);
                 selPaint.setColor(light ? 0x24000000 : 0x26FFFFFF);
-                canvas.drawRoundRect(lens, h / 2f, h / 2f, selPaint);
+                canvas.drawRoundRect(lens, corner, corner, selPaint);
             }
         } finally {
             canvas.restoreToCount(save);

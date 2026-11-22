@@ -56,6 +56,43 @@ final class Shield {
         return false;
     }
 
+    /**
+     * 菜单、侧栏和个人页展开面板：不一定完全盖住底栏，但 Dock 也不应浮在菜单上。
+     * 只检查 Dock 所在祖先链上、绘制顺序排在 Dock 后面的兄弟浮层。
+     */
+    static boolean hasExpandedOverlay(View dock, View content) {
+        if (dock == null || content == null) return false;
+        Rect page = rectOf(content);
+        if (page.isEmpty()) return false;
+        View cur = dock;
+        for (int guard = 0; guard < 12 && cur != null && cur != content; guard++) {
+            ViewParent parent = cur.getParent();
+            if (!(parent instanceof ViewGroup)) break;
+            ViewGroup group = (ViewGroup) parent;
+            int index = group.indexOfChild(cur);
+            if (index < 0) break;
+            for (int i = index + 1; i < group.getChildCount(); i++) {
+                if (isExpandedPanel(group.getChildAt(i), page)) return true;
+            }
+            cur = group;
+        }
+        return false;
+    }
+
+    private static boolean isExpandedPanel(View view, Rect page) {
+        if (view == null || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.08f
+                || !(view instanceof ViewGroup) || view.getWidth() <= 0 || view.getHeight() <= 0) return false;
+        Rect r = rectOf(view);
+        if (r.width() < page.width() * 0.34f || r.height() < page.height() * 0.28f) return false;
+        String name = view.getClass().getName().toLowerCase();
+        android.graphics.drawable.Drawable bg = view.getBackground();
+        boolean namedPanel = name.contains("popup") || name.contains("menu")
+                || name.contains("drawer") || name.contains("sheet")
+                || name.contains("dialog") || name.contains("panel");
+        if (!namedPanel && bg == null) return false;
+        return hasContent((ViewGroup) view, 0);
+    }
+
     private static boolean covers(View s, Rect target, Rect page, float tol) {
         if (s == null || s.getVisibility() != View.VISIBLE || s.getAlpha() < 0.05f) return false;
         if (s.getWidth() <= 0 || s.getHeight() <= 0) return false;

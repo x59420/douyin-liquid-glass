@@ -242,7 +242,10 @@ final class DockController {
                             // 整页被子页面盖住：连着几次都判成被盖住才算，单帧误判不动它
                             coveredTicks[0] = Shield.covered(d, content)
                                     ? Math.min(4, coveredTicks[0] + 1) : 0;
-                            boolean show = laidOut && coveredTicks[0] < 3;
+                            boolean show = laidOut && coveredTicks[0] < 3
+                                    && Finder.isHomeSelected(left)
+                                    && decor.hasWindowFocus()
+                                    && !Shield.hasExpandedOverlay(d, content);
 
                             int want = show ? View.VISIBLE : View.GONE;
                             boolean wasHidden = overlay.getVisibility() != View.VISIBLE;
@@ -266,7 +269,41 @@ final class DockController {
                     }
                 });
 
-        // 只把官方底栏这一条的画面藏起来（布局和点击都还在）。
+        // PopupWindow / 菜单浮层可能不触发 content 的 GlobalLayout；
+        // 单独轮询窗口焦点、当前选中 Tab 和同层弹出面板，避免菜单/个人页留下 Dock。
+        final Runnable visibilityPoll = new Runnable() {
+            @Override public void run() {
+                if (!live[0]) return;
+                try {
+                    View d = dockRef[0];
+                    boolean show = d != null && d.isAttachedToWindow() && d.isShown()
+                            && Finder.isHomeSelected(left)
+                            && decor.hasWindowFocus()
+                            && !Shield.hasExpandedOverlay(d, content);
+                    boolean visible = overlay.getVisibility() == View.VISIBLE;
+                    if (show != visible) {
+                        overlay.setVisibility(show ? View.VISIBLE : View.GONE);
+                        if (!show && hidden[0] && d != null) {
+                            d.setAlpha(1f);
+                            hidden[0] = false;
+                        } else if (show && overlay.hasDrawn() && !hidden[0]) {
+                            d.setAlpha(0f);
+                            hidden[0] = true;
+                        }
+                        if (show && d != null) {
+                            overlay.setBand(rectInWindow(d));
+                            overlay.invalidate();
+                        }
+                    }
+                } catch (Throwable t) {
+                    Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
+                }
+                MAIN.postDelayed(this, 180L);
+            }
+        };
+        MAIN.postDelayed(visibilityPoll, 180L);
+
+
         //
         // 0.0.2/0.0.3 这里多了一步「把附近容器的背景设成 null 让它透出来」——
         // 那些容器切页之后还是同一个对象，背景没了再没人还回来，
@@ -540,6 +577,31 @@ final class DockController {
                 ViewGroup g = (ViewGroup) v;
                 for (int i = 0; i < g.getChildCount(); i++) {
                     if (textIsPlus(g.getChildAt(i), depth + 1)) return true;
+                }
+            }
+            return false;
+        }
+
+        /** 当前是否选中首页；没有任何选中标记时返回 true，避免误把首次安装隐藏。 */
+        static boolean isHomeSelected(List<View> items) {
+            boolean foundSelection = false;
+            for (View item : items) {
+                String label = navigationLabel(item, 0);
+                if (selectedDeep(item, 0)) {
+                    foundSelection = true;
+                    return "首页".equals(label);
+                }
+            }
+            return !foundSelection;
+        }
+
+        private static boolean selectedDeep(View v, int depth) {
+            if (v == null || depth > 8) return false;
+            if (v.isSelected()) return true;
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    if (selectedDeep(g.getChildAt(i), depth + 1)) return true;
                 }
             }
             return false;

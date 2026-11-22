@@ -2,7 +2,7 @@
 
 一个面向抖音 Android 客户端的 LSPosed 模块：**只把首页底部导航栏替换成悬浮液态玻璃 Dock**，尽量保留抖音原有的布局和点击逻辑。
 
-> 当前源码版本：**0.0.9**
+> 当前源码版本：**0.1.0**
 >
 > APK 下载：**[GitHub Releases](https://github.com/x59420/douyin-liquid-glass/releases)**
 >
@@ -101,7 +101,7 @@ ANDROID_HOME=~/android-sdk bash build.sh
 成功后 APK 位于：
 
 ```
-out/dydock-0.0.9.apk
+out/dydock-0.1.0.apk
 ```
 
 ### GitHub Actions
@@ -124,6 +124,12 @@ out/dydock-0.0.9.apk
 请妥善保管签名文件，不要把它发送给他人或上传到无关位置。
 
 ## 版本记录
+
+### 0.1.0
+
+- 修正长按/拖动透镜形状：改为与 Dock 一致的横向圆角胶囊，不再绘制成圆球；宽高分别跟随液滴弹簧形变。
+- 页面显隐改为同时检查首页选中状态、窗口焦点和展开面板；进入非首页、打开首页左上角菜单或“我的”页右上角菜单时收起自定义 Dock，返回首页后恢复。
+- 增加独立显隐轮询，补足 PopupWindow 菜单不触发内容区布局回调的情况。
 
 ### 0.0.9
 
