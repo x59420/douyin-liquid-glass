@@ -103,7 +103,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint selPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final RectF rect = new RectF();
 
@@ -189,7 +188,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         iconPaint.setStyle(Paint.Style.FILL);
         iconPaint.setStrokeCap(Paint.Cap.ROUND);
         iconPaint.setStrokeJoin(Paint.Join.ROUND);
-        shadowPaint.setColor(0x33000000);
         backdrop.setOnFrame(new Runnable() {
             @Override
             public void run() {
@@ -356,14 +354,20 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean light = luma >= 140;
         int ink = light ? 0xFF1A1A1A : 0xFFFFFFFF;
 
-        // 按住时整条鼓一下：高度随按压微涨，像被指头压起来
-        float grow = 1f + 0.035f * p;
-        scaled(leftPill, k * (1f - 0.03f * sq) * grow, tmp);
-        tmp.offset(0f, 1.5f * density * sq);
+        // 参考 Tieba：按压时面板与图标行围绕中心同步放大，约增加 16dp。
+        scaled(leftPill, k, tmp);
+        float barGrow = 1f + (16f * density / Math.max(1f, tmp.width())) * p;
+        float barCx = tmp.centerX();
+        float barCy = tmp.centerY();
+        float halfBarW = tmp.width() * barGrow * 0.5f;
+        float halfBarH = tmp.height() * barGrow * 0.5f;
+        tmp.set(barCx - halfBarW, barCy - halfBarH, barCx + halfBarW, barCy + halfBarH);
+        tmp.offset(0f, 0.8f * density * sq);
         drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, p * 0.55f,
                 dragging && p > 0.3f, alpha);
 
-        scaled(plusPill, k * (1f - 0.04f * pp) * (1f + 0.02f * p), rect);
+        // 右侧「＋」独立，不跟随左侧导航透镜的长按放大。
+        scaled(plusPill, k * (1f - 0.04f * pp), rect);
         drawPlusGlass(canvas, rect, pp, alpha);
 
         drawLens(canvas, a, p, framed, luma, light, ink);
@@ -406,41 +410,33 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private void drawLens(Canvas canvas, float a, float p, boolean framed,
                           int luma, boolean light, int ink) {
         float x = pos.value;
-
-        // 按压缩放：宽度、高度一起长
         float dropletPress = droplet.pressProgress();
-        float w = slotW * 0.84f * droplet.scaleX();
-        float h = leftPill.height() * 0.76f * droplet.scaleY();
-        // Preserve the restrained resting lens, but use independent width/height spring channels while touched.
-        w = Math.max(slotW * 0.72f, Math.min(slotW * 1.55f, w));
-        h = Math.max(leftPill.height() * 0.62f, Math.min(leftPill.height() * 1.12f, h));
-        h = Math.min(h, leftPill.height() * 1.10f);
+
+        // Tieba 的选中液滴以 56dp 为基础尺寸；长按按 78/56 的比例膨胀，
+        // 因此会自然越过 64dp 左胶囊的上下边缘，而不是被胶囊裁成一块。
+        float baseSize = Math.min(56f * density,
+                Math.max(1f, Math.min(slotW * 0.9f, leftPill.height() - 8f * density)));
+        float sx = clampF(droplet.scaleX(), 0.85f, 1.75f);
+        float sy = clampF(droplet.scaleY(), 0.85f, 1.60f);
+        float w = baseSize * sx;
+        float h = baseSize * sy;
 
         float dragFraction = leftPill.width() > 0f
                 ? clampF(droplet.accumulatedDrag() / leftPill.width(), -1f, 1f) : 0f;
         float cx = slotCenterX(x) + 4f * density * dragFraction;
-        // 允许透镜在按住时上下略微鼓出整条玻璃 —— 放大镜浮起来才有实感
-        lens.set(cx - w / 2f, leftPill.centerY() - h / 2f,
-                cx + w / 2f, leftPill.centerY() + h / 2f);
-        // 只在没被按住时限制在玻璃里；按住时鼓出来一点更有立体感
-        if (p < 0.5f) lens.intersect(leftPill);
+        float cy = leftPill.centerY();
+        lens.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
 
+        // 透镜是独立绘制层：不裁切到左胶囊，也不额外叠加投影或人工描边。
+        // 立体感只由液态玻璃折射、深度和材质高光提供。
         int save = canvas.save();
         try {
             if (a < 1f) canvas.saveLayerAlpha(lens, (int) (255 * a));
 
-            if (dropletPress > 0.02f && framed) {
-                // 按住/拖动：透镜本身是一块玻璃，带一层柔和投影，像浮在底栏上
-                float sh = (2.5f + 2f * droplet.glowProgress()) * density * dropletPress;
-                shadowPaint.setColor(light ? 0x22000000 : 0x40000000);
-                shadowPaint.setStyle(Paint.Style.FILL);
-                canvas.drawRoundRect(lens.left - sh * 0.6f, lens.top + sh * 0.8f,
-                        lens.right + sh * 0.6f, lens.bottom + sh, h / 2f, h / 2f, shadowPaint);
+            if (framed) {
                 drawPane(canvas, lens, h / 2f, true, luma, dropletPress, dragging, 255);
-                drawDropletRim(canvas, lens, h / 2f, droplet.glowProgress(), light);
             } else if (dropletPress > 0.02f) {
                 drawPane(canvas, lens, h / 2f, false, luma, dropletPress, dragging, 255);
-                drawDropletRim(canvas, lens, h / 2f, droplet.glowProgress(), light);
             } else {
                 selPaint.setShader(null);
                 selPaint.setColor(light ? 0x24000000 : 0x26FFFFFF);
@@ -449,22 +445,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         } finally {
             canvas.restoreToCount(save);
         }
-    }
-
-    private final Paint dropletRim = new Paint(Paint.ANTI_ALIAS_FLAG);
-
-    /** Soft moving rim/glow, kept inside the lens silhouette. */
-    private void drawDropletRim(Canvas canvas, RectF b, float radius, float glow, boolean light) {
-        if (glow <= 0.01f) return;
-        dropletRim.setStyle(Paint.Style.STROKE);
-        dropletRim.setStrokeWidth(Math.max(1f, density * (0.7f + glow * 0.65f)));
-        dropletRim.setShader(null);
-        int alpha = (int)(30 + 58 * Math.min(1f, glow));
-        dropletRim.setColor((alpha << 24) | (light ? 0x000000 : 0xFFFFFF));
-        RectF edge = new RectF(b);
-        edge.inset(density * 0.8f, density * 0.8f);
-        canvas.drawRoundRect(edge, radius, radius, dropletRim);
-        dropletRim.setStyle(Paint.Style.FILL);
     }
 
     private float slotCenterX(float index) {
@@ -490,10 +470,14 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             int alpha = (int) ((sel ? 255 : 176 + 44 * near) * seq);
             if (alpha <= 2) continue;
             // 按住时选中那个再放大一圈，像是被透镜托起来
-            float s = 1f + 0.10f * near + 0.02f * p;
+            float rowScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * p;
+            float rowCx = leftPill.centerX();
+            float rowCy = leftPill.centerY();
+            float s = (1f + 0.10f * near + 0.02f * p) * rowScale;
             if (sel) s += 0.18f * p;
-            float cx = slots[i].centerX();
-            float cy = slots[i].centerY() + (1f - seq) * 4f * density;
+            float cx = rowCx + (slots[i].centerX() - rowCx) * rowScale;
+            float cy = rowCy + (slots[i].centerY() - rowCy) * rowScale
+                    + (1f - seq) * 4f * density;
             drawIcon(canvas, i, cx, cy, size * s, alpha, ink);
         }
     }
@@ -740,7 +724,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private void drawBadges(Canvas canvas, float a) {
         if (a < 0.9f) return;
-        float r = 8f * density;
+        float rowScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * droplet.pressProgress();
+        float rowCx = leftPill.centerX();
+        float rowCy = leftPill.centerY();
+        float r = 8f * density * rowScale;
         badgePaint.setColor(0xFFFE2C55);
         badgePaint.setShader(null);
         badgeText.setColor(0xFFFFFFFF);
@@ -753,15 +740,17 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             boolean dot = badgeDot[i];
             if (n <= 0 && !dot) continue;
 
-            float cx = slots[i].centerX() + 11f * density;
-            float cy = slots[i].centerY() - 11f * density;
+            float rawCx = slots[i].centerX() + 11f * density;
+            float rawCy = slots[i].centerY() - 11f * density;
+            float cx = rowCx + (rawCx - rowCx) * rowScale;
+            float cy = rowCy + (rawCy - rowCy) * rowScale;
 
             if (n <= 0) {
-                canvas.drawCircle(cx, cy, 4f * density, badgePaint);
+                canvas.drawCircle(cx, cy, 4f * density * rowScale, badgePaint);
                 continue;
             }
             String txt = n > 99 ? "99+" : String.valueOf(n);
-            float rad = Math.max(r, badgeText.measureText(txt) / 2f + 4f * density);
+            float rad = Math.max(r, badgeText.measureText(txt) / 2f + 4f * density * rowScale);
             rect.set(cx - rad, cy - r, cx + rad, cy + r);
             canvas.drawRoundRect(rect, r, r, badgePaint);
             float ty = cy - (badgeText.descent() + badgeText.ascent()) / 2f;
