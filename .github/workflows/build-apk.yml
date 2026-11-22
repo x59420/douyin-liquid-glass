@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -34,10 +34,34 @@ jobs:
       - name: Build signed APK
         run: bash build.sh
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: dydock-apk
           path: out/*.apk
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dydock-apk
+          path: release
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK="$(find release -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          VER="$(basename "$APK" .apk | sed 's/^dydock-//')"
+          TAG="v${VER}-build.${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" "$APK" \
+            --title "dydock ${VER} (build ${GITHUB_RUN_NUMBER})" \
+            --notes "自动构建发布。源码提交：${GITHUB_SHA}"
