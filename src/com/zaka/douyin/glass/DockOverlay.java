@@ -791,7 +791,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                 boolean cancelled = e.getActionMasked() == MotionEvent.ACTION_CANCEL;
                 if (downInLeft) {
                     boolean wasDragging = dragging;
-                    int target = wasDragging ? clampIndex(pos.value) : pendingIndex;
+                    int target = wasDragging ? clampIndex(pos.target) : pendingIndex;
                     if (!wasDragging) {
                         // 没有拖动：原样把 UP/CANCEL 交给原生控件，保留点击与长按。
                         dispatchToNative(nativeTarget, e);
