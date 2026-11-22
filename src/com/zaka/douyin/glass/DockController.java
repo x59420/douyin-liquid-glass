@@ -237,7 +237,7 @@ final class DockController {
                             // 整页被子页面盖住：连着几次都判成被盖住才算，单帧误判不动它
                             coveredTicks[0] = Shield.covered(d, content)
                                     ? Math.min(4, coveredTicks[0] + 1) : 0;
-                            expandedTicks[0] = Shield.hasExpandedOverlay(d, content)
+                            expandedTicks[0] = Shield.hasExpandedOverlay(d, content, decor)
                                     ? Math.min(3, expandedTicks[0] + 1) : 0;
                             boolean show = laidOut && coveredTicks[0] < 3
                                     && expandedTicks[0] < 2
@@ -276,7 +276,7 @@ final class DockController {
                 if (!live[0]) return;
                 try {
                     View d = dockRef[0];
-                    boolean expanded = d != null && Shield.hasExpandedOverlay(d, content);
+                    boolean expanded = d != null && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
                     boolean focusLost = !decor.hasWindowFocus();
                     focusLostTicks[0] = focusLost

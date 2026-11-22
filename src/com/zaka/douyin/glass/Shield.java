@@ -60,10 +60,12 @@ final class Shield {
      * 菜单、侧栏和个人页展开面板：不一定完全盖住底栏，但 Dock 也不应浮在菜单上。
      * 只检查 Dock 所在祖先链上、绘制顺序排在 Dock 后面的兄弟浮层。
      */
-    static boolean hasExpandedOverlay(View dock, View content) {
+    static boolean hasExpandedOverlay(View dock, View content, View decor) {
         if (dock == null || content == null) return false;
         Rect page = rectOf(content);
         if (page.isEmpty()) return false;
+
+        // 先检查 Dock 所在内容树中排在它后面的兄弟视图。
         View cur = dock;
         for (int guard = 0; guard < 12 && cur != null && cur != content; guard++) {
             ViewParent parent = cur.getParent();
@@ -72,9 +74,41 @@ final class Shield {
             int index = group.indexOfChild(cur);
             if (index < 0) break;
             for (int i = index + 1; i < group.getChildCount(); i++) {
-                if (isExpandedPanel(group.getChildAt(i), page)) return true;
+                if (containsExpandedPanel(group.getChildAt(i), page, 0)) return true;
             }
             cur = group;
+        }
+
+        // 关键修复：玻璃 Dock 被添加到 DecorView，位于 android.R.id.content 之后。
+        // 抖音有些菜单/弹层直接挂在 DecorView，而不是 content 的子树里；
+        // 旧逻辑走到 content 就停止，永远看不到这些窗口级兄弟视图。
+        if (decor instanceof ViewGroup) {
+            ViewGroup root = (ViewGroup) decor;
+            int contentIndex = root.indexOfChild(content);
+            if (contentIndex >= 0) {
+                for (int i = contentIndex + 1; i < root.getChildCount(); i++) {
+                    View candidate = root.getChildAt(i);
+                    if (candidate == null) continue;
+                    String className = candidate.getClass().getName();
+                    if (className.contains("DockOverlay")) continue;
+                    if (containsExpandedPanel(candidate, page, 0)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsExpandedPanel(View view, Rect page, int depth) {
+        if (view == null || depth > 8 || view.getVisibility() != View.VISIBLE
+                || view.getAlpha() < 0.08f) return false;
+        String className = view.getClass().getName();
+        if (className.contains("DockOverlay")) return false;
+        if (view instanceof ViewGroup && isExpandedPanel(view, page)) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                if (containsExpandedPanel(group.getChildAt(i), page, depth + 1)) return true;
+            }
         }
         return false;
     }
