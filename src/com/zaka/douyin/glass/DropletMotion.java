@@ -6,7 +6,7 @@ package com.zaka.douyin.glass;
  * Native View host keeps the existing DockOverlay touch dispatch.
  */
 final class DropletMotion {
-    static final float HELD_SCALE = 78f / 56f;
+    static final float HELD_SCALE = 74f / 56f;
 
     private final Channel pressure = new Channel(0f, (float)Math.sqrt(1000.0), 1.0f, 0.001f);
     private final Channel width = new Channel(1f, (float)Math.sqrt(250.0), 0.6f, 0.001f);
