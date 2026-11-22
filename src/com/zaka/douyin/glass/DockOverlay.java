@@ -71,8 +71,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final Spring appear = new Spring(0f);
     /** 0 → 1：按下时那块长条被压下去的形变 */
     private final Spring squish = new Spring(0f);
-    /** 归一化的拖动速度（格/秒 ÷ (count-1)），驱动透镜沿运动方向拉长 */
-    private final Spring dragVel = new Spring(0f);
     /** Multi-channel droplet deformation ported from the TieBa reference. */
     private final DropletMotion droplet = new DropletMotion();
 
@@ -94,8 +92,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     /** 松手后等位置快到位再收放大 */
     private boolean releasePending;
     private long releaseSince;
-    private long lastSampleAt;
-    private float lastSampleVal;
 
     /** 每帧跟着走的官方底栏 */
     private View dockView;
@@ -406,11 +402,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private void drawLens(Canvas canvas, float a, float p, boolean framed,
                           int luma, boolean light, int ink) {
         float x = pos.value;
-
-        // 速度归一化：一格/秒 为 1，除以总行程之后 ×0.06 —— 手感跟 KernelSU 接近
-        float vn = count > 1 ? dragVel.value / Math.max(1, count - 1) : 0f;
-        float along = clampF(vn * 0.06f, -0.18f, 0.18f);
-        float across = clampF(vn * 0.02f, -0.12f, 0.12f);
 
         // 按压缩放：宽度、高度一起长
         float dropletPress = droplet.pressProgress();
@@ -766,7 +757,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     selected = pendingIndex;
                     press.to(1f, 1000f, 62f);
                     squish.to(1f, 520f, 34f);
-                    lastSampleAt = 0L;
                     startLoop();
                     return true;
                 }
@@ -943,18 +933,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean d = appear.step(dt);
         boolean e = squish.step(dt);
 
-        // 采样位置速度 → 透镜拉伸（KernelSU 的做法：对位置本身求导）
-        long now = SystemClock.uptimeMillis();
-        if (lastSampleAt == 0L) {
-            lastSampleAt = now;
-            lastSampleVal = pos.value;
-        } else if (now - lastSampleAt >= 8) {
-            float perSec = (pos.value - lastSampleVal) * 1000f / (now - lastSampleAt);
-            dragVel.to(perSec, 320f, 26f);
-            lastSampleAt = now;
-            lastSampleVal = pos.value;
-        }
-        boolean f = dragVel.step(dt);
         boolean g = droplet.advance(dt / 1000f, pos.value, pos.target, pos.velocity, count);
 
         // 松手后：位置进到 SETTLE 区间（或弹簧停了 / 超时）才收回放大
@@ -973,7 +951,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         invalidate();
 
-        if (a || b || c || d || e || f || g) {
+        if (a || b || c || d || e || g) {
             Choreographer.getInstance().postFrameCallback(this);
         } else {
             looping = false;
