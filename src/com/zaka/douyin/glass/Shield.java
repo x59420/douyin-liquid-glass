@@ -119,11 +119,14 @@ final class Shield {
         Rect r = rectOf(view);
         if (r.width() < page.width() * 0.34f || r.height() < page.height() * 0.28f) return false;
         String name = view.getClass().getName().toLowerCase();
-        android.graphics.drawable.Drawable bg = view.getBackground();
+        // Do not classify arbitrary large background containers as menus.
+        // The host's normal feed/page containers also have backgrounds and children;
+        // treating them as expanded panels makes the Dock appear briefly, then vanish.
+        // Only positively identified popup/menu/drawer/sheet/dialog/panel views qualify.
         boolean namedPanel = name.contains("popup") || name.contains("menu")
                 || name.contains("drawer") || name.contains("sheet")
                 || name.contains("dialog") || name.contains("panel");
-        if (!namedPanel && bg == null) return false;
+        if (!namedPanel) return false;
         return hasContent((ViewGroup) view, 0);
     }
 
