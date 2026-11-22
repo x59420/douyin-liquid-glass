@@ -41,7 +41,7 @@ final class DockController {
             new WeakHashMap<Activity, Boolean>();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
-    /** 每个 Activity 认出来的官方底栏：顶栏那套要拿它避开，别在底栏上再套一层 */
+    /** 每个 Activity 识别出的官方 Dock。 */
     private static final WeakHashMap<Activity, View> DOCKS = new WeakHashMap<Activity, View>();
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
     private static final WeakHashMap<Activity, DockOverlay> OVERLAYS =
@@ -345,11 +345,11 @@ final class DockController {
                 boolean inBottom = bottom >= rh - 48f * density
                         && relTop >= rh - 150f * density;
                 boolean sizeOk = hDp >= 34f && hDp <= 96f && w >= rw * 0.70f;
-                if (inBottom && sizeOk && !hasInput(g) && !hasSearchLabel(g)) {
+                if (inBottom && sizeOk && !hasInput(g)) {
                     List<View> items = tabItems(g);
-                    if (items.size() >= 4 && items.size() <= 6) {
-                        // 越靠下、子项越规整，分越高
-                        float score = bottom + items.size() * 40f + w * 0.2f;
+                    // Fail closed: geometry and clickability alone must never identify a Dock.
+                    if (isExpectedDouyinDock(items)) {
+                        float score = bottom + w * 0.2f;
                         if (score > bestScore[0]) {
                             bestScore[0] = score;
                             best[0] = g;
@@ -366,27 +366,56 @@ final class DockController {
             }
         }
 
-        /** Search/result rows are never navigation docks, even if they expose several click targets. */
-        private static boolean hasSearchLabel(View v) {
-            return hasSearchLabel(v, 0);
+        /**
+         * Positive identity check for the native Douyin bottom navigation:
+         * exactly four named destinations (Home/Friends/Messages/Profile) plus
+         * the center publish slot. Unknown rows are left untouched.
+         */
+        private static boolean isExpectedDouyinDock(List<View> items) {
+            if (items == null || items.size() != 5) return false;
+            boolean home = false;
+            boolean friends = false;
+            boolean messages = false;
+            boolean profile = false;
+            for (int i = 0; i < items.size(); i++) {
+                if (i == 2) continue; // Douyin's independent center publish button
+                String label = navigationLabel(items.get(i), 0);
+                if ("首页".equals(label)) home = true;
+                else if ("朋友".equals(label) || "好友".equals(label)) friends = true;
+                else if ("消息".equals(label)) messages = true;
+                else if ("我".equals(label) || "个人主页".equals(label)) profile = true;
+                else return false;
+            }
+            return home && friends && messages && profile;
         }
 
-        private static boolean hasSearchLabel(View v, int depth) {
-            if (v == null || depth > 8) return false;
+        private static String navigationLabel(View v, int depth) {
+            if (v == null || depth > 7) return "";
+            String label = normalizeLabel(v.getContentDescription());
+            if (isNavigationLabel(label)) return label;
             if (v instanceof android.widget.TextView) {
-                CharSequence text = ((android.widget.TextView) v).getText();
-                if (text != null) {
-                    String s = text.toString();
-                    if (s.contains("相关搜索") || s.contains("搜索") || s.contains("热搜")) return true;
-                }
+                label = normalizeLabel(((android.widget.TextView) v).getText());
+                if (isNavigationLabel(label)) return label;
             }
             if (v instanceof ViewGroup) {
                 ViewGroup g = (ViewGroup) v;
                 for (int i = 0; i < g.getChildCount(); i++) {
-                    if (hasSearchLabel(g.getChildAt(i), depth + 1)) return true;
+                    String found = navigationLabel(g.getChildAt(i), depth + 1);
+                    if (!found.isEmpty()) return found;
                 }
             }
-            return false;
+            return "";
+        }
+
+        private static String normalizeLabel(CharSequence value) {
+            if (value == null) return "";
+            return value.toString().trim().replaceAll("[0-9]+$", "").trim();
+        }
+
+        private static boolean isNavigationLabel(String value) {
+            return "首页".equals(value) || "朋友".equals(value) || "好友".equals(value)
+                    || "消息".equals(value) || "我".equals(value)
+                    || "个人主页".equals(value);
         }
 
         /** 里面带输入框的一律不是底栏（聊天页的输入条就是这么被误认的） */
