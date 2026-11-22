@@ -5,6 +5,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.widget.EditText;
+import android.widget.TextView;
 
 /**
  * 判断某个控件是不是被「同一个 Activity 里叠上来的整屏页面」盖住了。
@@ -126,8 +127,42 @@ final class Shield {
         boolean namedPanel = name.contains("popup") || name.contains("menu")
                 || name.contains("drawer") || name.contains("sheet")
                 || name.contains("dialog") || name.contains("panel");
-        if (!namedPanel) return false;
+        boolean profilePage = name.contains("userprofile") || name.contains("userdetail")
+                || name.contains("personalpage") || name.contains("profiledetail")
+                || name.contains("othershomepage");
+        boolean menuText = hasMenuOrProfileMarker(view, 0);
+        if (!namedPanel && !profilePage && !menuText) return false;
         return hasContent((ViewGroup) view, 0);
+    }
+
+    /**
+     * 抖音不同版本的菜单容器类名并不固定；补充检查菜单/个人资料页常见的可见文案。
+     * 只在尺寸已经符合展开面板条件的 ViewGroup 内调用，避免普通视频文案触发。
+     */
+    private static boolean hasMenuOrProfileMarker(View view, int depth) {
+        if (view == null || depth > 8 || view.getVisibility() != View.VISIBLE) return false;
+        String value = "";
+        if (view instanceof TextView) {
+            CharSequence text = ((TextView) view).getText();
+            if (text != null) value = text.toString();
+        }
+        CharSequence desc = view.getContentDescription();
+        if (desc != null) value += " " + desc;
+        String[] markers = {
+                "设置", "扫一扫", "我的二维码", "创作者服务中心", "钱包", "观看历史",
+                "帮助与客服", "反馈与帮助", "青少年模式", "更多功能", "编辑资料",
+                "抖音号", "获赞", "粉丝", "关注", "作品", "私信"
+        };
+        for (String marker : markers) {
+            if (value.contains(marker)) return true;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                if (hasMenuOrProfileMarker(group.getChildAt(i), depth + 1)) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean covers(View s, Rect target, Rect page, float tol) {

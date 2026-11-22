@@ -177,8 +177,6 @@ final class DockController {
         final boolean[] live = new boolean[]{true};
         final boolean[] hidden = new boolean[]{false};
         final long[] graceFrom = new long[]{SystemClock.uptimeMillis()};
-        /** 被整页盖住的连续次数：判一次就收会把正常首页误杀，得连着几次都盖住才算 */
-        final int[] coveredTicks = new int[]{0};
         /** 菜单/展开面板需连续命中，避免单帧层级抖动导致误收 Dock。 */
         final int[] expandedTicks = new int[]{0};
         // PopupWindow/系统弹层可能位于独立窗口；连续丢失焦点后才收起，避免切页瞬间闪烁。
@@ -228,39 +226,9 @@ final class DockController {
                                 overlay.attachDock(fresh);
                                 d = fresh;
                             }
-                            // 藏官方底栏这件事必须「玻璃真的画出来了」才做。
-                            // 没画出来就先让官方底栏露在那儿兜着，别给用户一片空白；
-                            // 等玻璃画出来再自动切过去。
-                            boolean drewOk = overlay.hasDrawn();
-                            // 底栏被藏起来（全屏播放、退到后台）时玻璃跟着收
-                            boolean laidOut = d.isShown();
-                            // 整页被子页面盖住：连着几次都判成被盖住才算，单帧误判不动它
-                            coveredTicks[0] = Shield.covered(d, content)
-                                    ? Math.min(4, coveredTicks[0] + 1) : 0;
-                            boolean show = laidOut && coveredTicks[0] < 3
-                                    && expandedTicks[0] < 2
-                                    && focusLostTicks[0] < 2;
-
-                            int want = show ? View.VISIBLE : View.GONE;
-                            boolean wasHidden = overlay.getVisibility() != View.VISIBLE;
-                            if (overlay.getVisibility() != want) overlay.setVisibility(want);
-                            // 只有玻璃已实际绘制且当前应显示时，才隐藏原生底栏。
-                            // 初次安装/切页瞬间先保留原生底栏，避免接管过程出现空白。
-                            if (show && drewOk && !hidden[0]) {
-                                d.setAlpha(0f);
-                                hidden[0] = true;
-                            } else if ((!show || !drewOk) && hidden[0]) {
-                                d.setAlpha(1f);
-                                hidden[0] = false;
-                                graceFrom[0] = SystemClock.uptimeMillis();
-                            }
-                            // 刚从「收起」回到可见：位置和背景都重算一遍再画，不然会等下一帧
-                            if (show && (wasHidden || !overlay.hasDrawn())) {
-                                overlay.setBand(rectInWindow(d));
-                                overlay.invalidate();
-                            } else {
-                                overlay.setBand(rectInWindow(d));
-                            }
+                            // 这里只跟随原生 Dock 的位置；显隐状态统一由 180ms 轮询器管理，
+                            // 避免布局回调和轮询器使用不同条件，互相把玻璃/原生底栏切来切去。
+                            overlay.setBand(rectInWindow(d));
                         } catch (Throwable t) {
                             Dydock.warnOnce("layout", "跟随底栏位置失败: " + t);
                         }
@@ -274,29 +242,38 @@ final class DockController {
                 if (!live[0]) return;
                 try {
                     View d = dockRef[0];
+                    boolean covered = d != null && Shield.covered(d, content);
+                    coveredTicks[0] = covered ? Math.min(3, coveredTicks[0] + 1) : 0;
                     boolean expanded = d != null && Shield.hasExpandedOverlay(d, content, decor);
-                    // 仅轮询器负责累计，避免 GlobalLayout + Poll 双重加计数造成闪退。
                     expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
                     boolean focusLost = !decor.hasWindowFocus();
                     focusLostTicks[0] = focusLost
                             ? Math.min(3, focusLostTicks[0] + 1) : 0;
                     boolean show = d != null && d.isAttachedToWindow() && d.isShown()
-                            && expandedTicks[0] < 2 && focusLostTicks[0] < 2;
-                    boolean visible = overlay.getVisibility() == View.VISIBLE;
-                    if (show != visible) {
-                        overlay.setVisibility(show ? View.VISIBLE : View.GONE);
-                        if ((!show || !overlay.hasDrawn()) && hidden[0] && d != null) {
-                            d.setAlpha(1f);
-                            hidden[0] = false;
-                            graceFrom[0] = SystemClock.uptimeMillis();
-                        } else if (show && overlay.hasDrawn() && !hidden[0]) {
+                            && coveredTicks[0] < 2 && expandedTicks[0] < 2
+                            && focusLostTicks[0] < 2;
+
+                    // 每轮都对齐两层状态，而不只在 overlay 可见性变化时处理。
+                    // 这样关闭菜单/返回页面后，原生底栏不会因 hidden 标记不同步而留在前台。
+                    if (show) {
+                        if (overlay.getVisibility() != View.VISIBLE) {
+                            overlay.setVisibility(View.VISIBLE);
+                        }
+                        overlay.setBand(rectInWindow(d));
+                        overlay.invalidate();
+                        if (overlay.hasDrawn() && !hidden[0]) {
                             d.setAlpha(0f);
                             hidden[0] = true;
                         }
-                        if (show && d != null) {
-                            overlay.setBand(rectInWindow(d));
-                            overlay.invalidate();
+                    } else {
+                        if (overlay.getVisibility() != View.GONE) {
+                            overlay.setVisibility(View.GONE);
                         }
+                        if (d != null && (hidden[0] || d.getAlpha() != 1f)) {
+                            d.setAlpha(1f);
+                        }
+                        hidden[0] = false;
+                        graceFrom[0] = SystemClock.uptimeMillis();
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
