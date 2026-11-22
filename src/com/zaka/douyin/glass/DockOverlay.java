@@ -23,15 +23,11 @@ import java.util.List;
  * 官方底栏那一条只把「画」藏起来（alpha = 0，布局和点击都还在），
  * 然后按它的位置自己画两块悬浮玻璃，点击转发回官方那几个子项。
  *
- * 0.0.5 的三处改动：
- *  1. 左边那块**水平居中**，＋ 紧挨在它右边（只留 3dp 的缝）
- *  2. 位置改成**每帧跟一次官方底栏**。以前只在全局布局回调里更新，
- *     而抖音展开个人页侧栏时底栏是靠 translation 滑过去的 —— 不触发布局，
- *     玻璃就一直停在原地，等下一次布局才「啪」地跳过去，看着像卡了半秒。
- *  3. 补上长按拖动那一套（照 KernelSU 的 DampedDragAnimation / Kyant 的
- *     LiquidBottomTabs）：按住 → 选中块放大成透镜、整条鼓一下；
- *     横着拖 → 透镜跟手、按速度往运动方向拉长；松手 → 弹到最近一格，
- *     等它快到位了才把放大收回去，读起来是一个连贯动作而不是「滑一下再缩一下」。
+ * 布局参考 Tieba 的浮动底栏：
+ *  1. 左侧四项胶囊贴左侧安全边距，不再把胶囊本身放在屏幕中央；
+ *  2. 「＋」独立停靠在右侧安全边距，和左胶囊保持明确间隔；
+ *  3. 按可用宽度动态放大四个 tab 槽位，窄屏自动收缩，不挤压右侧按钮。
+ * 玻璃位置仍逐帧跟随抖音原生 Dock，点击和长按仍转发给原生控件。
  */
 final class DockOverlay extends View implements Choreographer.FrameCallback {
 
@@ -61,6 +57,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final Rect[] slots = new Rect[MAX_SLOTS];
 
     private float slotW;
+    private float slotPad;
     private float pillH;
     private int count;
 
@@ -278,15 +275,22 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         // 比官方那一条大一圈：太小了托不住 4 个图标
         pillH = Math.min(64f * density, Math.max(52f * density, bandH + 10f * density));
-        float plusSize = pillH;
-        float plusGap = 3f * density;
-        slotW = Math.min(56f * density, Math.max(50f * density, pillH * 0.88f));
+        float plusSize = Math.min(pillH, 64f * density);
+        float plusGap = 12f * density;
+        float edge = 16f * density;
+        slotPad = 10f * density;
 
-        float pad = 8f * density;
-        float leftW = slotW * count + pad * 2f;
+        // Tieba 的列宽基准约 76dp；抖音这里有 4 个槽位和独立的右侧按钮，
+        // 因此先按 72dp 计算，再根据屏幕实际宽度收敛，避免两块玻璃相撞。
+        float desiredSlotW = 72f * density;
+        float desiredLeftW = desiredSlotW * count + slotPad * 2f;
+        float maxLeftW = Math.max(0f, bandW - edge * 2f - plusSize - plusGap);
+        float leftW = Math.min(desiredLeftW, maxLeftW);
+        slotW = count > 0 ? Math.max(1f, (leftW - slotPad * 2f) / count) : desiredSlotW;
 
-        // 左边那块**水平居中**，＋ 紧贴着它右边
-        float leftX = bandLeft + (bandW - leftW) / 2f;
+        // 左胶囊贴左侧安全边距；独立的红色「＋」贴右侧安全边距。
+        float leftX = bandLeft + edge;
+        float plusX = bandLeft + bandW - edge - plusSize;
         // 抬高一点，别贴着系统手势条
         float bottom = bandTop + bandH - 6f * density;
         float top = bottom - pillH;
@@ -308,18 +312,15 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         // 也别顶出左右边缘
         int vw = getWidth();
         if (vw > 0) {
-            float total = leftW + plusGap + plusSize;
-            if (leftX < 2f * density) leftX = 2f * density;
-            if (leftX + total > vw - 2f * density) leftX = vw - 2f * density - total;
-            if (leftX < 2f * density) leftX = 2f * density;
+            leftX = clampF(leftX, 2f * density, Math.max(2f * density, vw - leftW - 2f * density));
+            plusX = clampF(plusX, 2f * density, Math.max(2f * density, vw - plusSize - 2f * density));
         }
 
         leftPill.set(leftX, top, leftX + leftW, bottom);
-        plusPill.set(leftPill.right + plusGap, top,
-                leftPill.right + plusGap + plusSize, bottom);
+        plusPill.set(plusX, top, plusX + plusSize, bottom);
 
         for (int i = 0; i < count; i++) {
-            float l = leftPill.left + pad + i * slotW;
+            float l = leftPill.left + slotPad + i * slotW;
             slots[i].set(Math.round(l), Math.round(leftPill.top),
                     Math.round(l + slotW), Math.round(leftPill.bottom));
         }
@@ -363,11 +364,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                 dragging && p > 0.3f, alpha);
 
         scaled(plusPill, k * (1f - 0.04f * pp) * (1f + 0.02f * p), rect);
-        drawPane(canvas, rect, rect.width() / 2f, framed, luma, pp, false, alpha);
+        drawPlusGlass(canvas, rect, pp, alpha);
 
         drawLens(canvas, a, p, framed, luma, light, ink);
         drawIcons(canvas, a, p, ink);
-        drawPlus(canvas, a, pp, ink);
+        drawPlus(canvas, a, pp, 0xFFFFFFFF);
         drawBadges(canvas, a);
         // 真的把玻璃画到画布上了才算数 —— 出现动画还没启动（整块全透明）时不算
         drewOnce = true;
@@ -494,6 +495,71 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             float cx = slots[i].centerX();
             float cy = slots[i].centerY() + (1f - seq) * 4f * density;
             drawIcon(canvas, i, cx, cy, size * s, alpha, ink);
+        }
+    }
+
+    /** Opaque ruby-red glass for the independent publish button. */
+    private final Paint plusGlassPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint plusGlassEdge = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint plusGlassHighlight = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint plusGlassShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Path plusGlassClip = new Path();
+    private final RectF plusGlassEdgeBounds = new RectF();
+
+    private void drawPlusGlass(Canvas canvas, RectF b, float pp, int alpha) {
+        if (b.isEmpty() || alpha <= 0) return;
+        float radius = Math.min(b.width(), b.height()) / 2f;
+        float pressed = clampF(pp, 0f, 1f);
+        int save = canvas.save();
+        try {
+            plusGlassShadow.setStyle(Paint.Style.FILL);
+            plusGlassShadow.setColor(0x33000000);
+            plusGlassShadow.setAlpha(alpha * 0x33 / 255);
+            plusGlassShadow.setShadowLayer((5f + 2f * pressed) * density,
+                    0f, 2f * density, 0x66000000);
+            canvas.drawRoundRect(b.left, b.top + density, b.right, b.bottom + density,
+                    radius, radius, plusGlassShadow);
+            plusGlassShadow.clearShadowLayer();
+
+            // 不再使用透明灰色磨砂底：按钮主体是饱和红色，表面叠加玻璃高光。
+            plusGlassPaint.setStyle(Paint.Style.FILL);
+            plusGlassPaint.setShader(null);
+            plusGlassPaint.setColor(0xFFE91F49);
+            plusGlassPaint.setAlpha(alpha);
+            canvas.drawRoundRect(b, radius, radius, plusGlassPaint);
+
+            plusGlassClip.reset();
+            plusGlassClip.addRoundRect(b, radius, radius, Path.Direction.CW);
+            canvas.clipPath(plusGlassClip);
+
+            plusGlassHighlight.setStyle(Paint.Style.FILL);
+            plusGlassHighlight.setShader(null);
+            plusGlassHighlight.setColor(0xFFFFFFFF);
+            plusGlassHighlight.setAlpha(alpha * 0x38 / 255);
+            float glossBottom = b.top + b.height() * (0.44f - 0.04f * pressed);
+            canvas.drawRoundRect(b.left + density, b.top + density,
+                    b.right - density, glossBottom, Math.max(1f, radius - density),
+                    Math.max(1f, radius - density), plusGlassHighlight);
+            plusGlassHighlight.setAlpha(alpha * 0x16 / 255);
+            canvas.drawRoundRect(b.left + 2f * density, b.top + 2f * density,
+                    b.right - 2f * density, b.top + 5f * density,
+                    radius, radius, plusGlassHighlight);
+
+            plusGlassEdge.setStyle(Paint.Style.STROKE);
+            plusGlassEdge.setStrokeWidth(Math.max(1f, density));
+            plusGlassEdge.setShader(null);
+            plusGlassEdge.setColor(0xFFFFFFFF);
+            plusGlassEdge.setAlpha(alpha * 0xBF / 255);
+            plusGlassEdgeBounds.set(b);
+            plusGlassEdgeBounds.inset(0.7f * density, 0.7f * density);
+            canvas.drawRoundRect(plusGlassEdgeBounds, Math.max(1f, radius - density),
+                    Math.max(1f, radius - density), plusGlassEdge);
+        } finally {
+            plusGlassPaint.setAlpha(255);
+            plusGlassHighlight.setAlpha(255);
+            plusGlassEdge.setAlpha(255);
+            plusGlassShadow.setAlpha(255);
+            canvas.restoreToCount(save);
         }
     }
 
@@ -855,7 +921,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     }
 
     private int slotAt(float x) {
-        int i = (int) Math.floor((x - leftPill.left - 8f * density) / slotW);
+        int i = (int) Math.floor((x - leftPill.left - slotPad) / slotW);
         return Math.max(0, Math.min(count - 1, i));
     }
 
