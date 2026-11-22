@@ -152,7 +152,6 @@ final class DockController {
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
         backdrop.setBlurDp(9f, density);
-        backdrop.setExcludeSelf();
         backdrop.capture();
 
         final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
