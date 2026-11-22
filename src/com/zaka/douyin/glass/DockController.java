@@ -152,7 +152,6 @@ final class DockController {
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
         backdrop.setBlurDp(9f, density);
-        backdrop.capture();
 
         final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
@@ -162,6 +161,16 @@ final class DockController {
         ((ViewGroup) decor).addView(overlay, lp);
         overlay.attachDock(dock);
         overlay.setBand(rectInWindow(dock));
+
+        // Capture only after the Dock band is known. Temporarily hide the native
+        // artwork while sampling so its icons/text are not baked into the glass.
+        float nativeDockAlpha = dock.getAlpha();
+        try {
+            dock.setAlpha(0f);
+            backdrop.capture();
+        } finally {
+            dock.setAlpha(nativeDockAlpha);
+        }
 
         final View[] dockRef = new View[]{dock};
         final boolean[] live = new boolean[]{true};
