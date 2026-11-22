@@ -178,6 +178,7 @@ final class DockController {
         final boolean[] hidden = new boolean[]{false};
         final long[] graceFrom = new long[]{SystemClock.uptimeMillis()};
         /** 菜单/展开面板需连续命中，避免单帧层级抖动导致误收 Dock。 */
+        final int[] coveredTicks = new int[]{0};
         final int[] expandedTicks = new int[]{0};
         // PopupWindow/系统弹层可能位于独立窗口；连续丢失焦点后才收起，避免切页瞬间闪烁。
         final int[] focusLostTicks = new int[]{0};
