@@ -55,13 +55,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: dydock-apk
-          path: release
+          path: artifact
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          APK="$(find release -type f -name '*.apk' -print -quit)"
+          APK="$(find artifact -type f -name '*.apk' -print -quit)"
           test -n "$APK"
           VER="$(basename "$APK" .apk | sed 's/^dydock-//')"
           TAG="v${VER}-build.${GITHUB_RUN_NUMBER}"
