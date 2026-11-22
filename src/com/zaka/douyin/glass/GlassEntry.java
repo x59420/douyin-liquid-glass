@@ -112,8 +112,10 @@ public final class GlassEntry implements IXposedHookLoadPackage {
             }
             View decor = window.getDecorView();
             int flags = decor.getSystemUiVisibility();
-            flags |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            // 只将系统导航栏设为透明，不把应用内容布局扩展进手势区；
+            // 否则原生 Dock 的窗口坐标会下移，玻璃 Dock 也跟着偏离 0.1.0。
+            flags |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+            flags &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
             decor.setSystemUiVisibility(flags);
         } catch (Throwable t) {
             Dydock.warnOnce("transparent-navigation",
