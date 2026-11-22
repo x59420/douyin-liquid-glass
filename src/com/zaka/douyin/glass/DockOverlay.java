@@ -73,6 +73,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final Spring squish = new Spring(0f);
     /** 归一化的拖动速度（格/秒 ÷ (count-1)），驱动透镜沿运动方向拉长 */
     private final Spring dragVel = new Spring(0f);
+    /** Multi-channel droplet deformation ported from the TieBa reference. */
+    private final DropletMotion droplet = new DropletMotion();
 
     private int selected;
     private boolean downInLeft;
@@ -211,6 +213,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         count = Math.min(tabs.size(), MAX_SLOTS);
         selected = 0;
         pos.set(0f);
+        droplet.snapToRest();
         appear.to(1f, 260f, 34f);
         startLoop();
     }
@@ -410,9 +413,12 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float across = clampF(vn * 0.02f, -0.12f, 0.12f);
 
         // 按压缩放：宽度、高度一起长
-        float base = slotW * (0.84f + 0.16f * p);
-        float w = base / (1f - along);
-        float h = leftPill.height() * (0.76f + 0.22f * p) * (1f - across);
+        float dropletPress = droplet.pressProgress();
+        float w = slotW * 0.84f * droplet.scaleX();
+        float h = leftPill.height() * 0.76f * droplet.scaleY();
+        // Preserve the restrained resting lens, but use independent width/height spring channels while touched.
+        w = Math.max(slotW * 0.72f, Math.min(slotW * 1.55f, w));
+        h = Math.max(leftPill.height() * 0.62f, Math.min(leftPill.height() * 1.12f, h));
         h = Math.min(h, leftPill.height() * 1.10f);
 
         float cx = slotCenterX(x);
@@ -426,16 +432,18 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         try {
             if (a < 1f) canvas.saveLayerAlpha(lens, (int) (255 * a));
 
-            if (p > 0.02f && framed) {
+            if (dropletPress > 0.02f && framed) {
                 // 按住/拖动：透镜本身是一块玻璃，带一层柔和投影，像浮在底栏上
-                float sh = 3f * density * p;
+                float sh = (2.5f + 2f * droplet.glowProgress()) * density * dropletPress;
                 shadowPaint.setColor(light ? 0x22000000 : 0x40000000);
                 shadowPaint.setStyle(Paint.Style.FILL);
                 canvas.drawRoundRect(lens.left - sh * 0.6f, lens.top + sh * 0.8f,
                         lens.right + sh * 0.6f, lens.bottom + sh, h / 2f, h / 2f, shadowPaint);
-                drawPane(canvas, lens, h / 2f, true, luma, p, dragging, 255);
-            } else if (p > 0.02f) {
-                drawPane(canvas, lens, h / 2f, false, luma, p, dragging, 255);
+                drawPane(canvas, lens, h / 2f, true, luma, dropletPress, dragging, 255);
+                drawDropletRim(canvas, lens, h / 2f, droplet.glowProgress(), light);
+            } else if (dropletPress > 0.02f) {
+                drawPane(canvas, lens, h / 2f, false, luma, dropletPress, dragging, 255);
+                drawDropletRim(canvas, lens, h / 2f, droplet.glowProgress(), light);
             } else {
                 selPaint.setShader(null);
                 selPaint.setColor(light ? 0x24000000 : 0x26FFFFFF);
@@ -444,6 +452,22 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         } finally {
             canvas.restoreToCount(save);
         }
+    }
+
+    private final Paint dropletRim = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+    /** Soft moving rim/glow, kept inside the lens silhouette. */
+    private void drawDropletRim(Canvas canvas, RectF b, float radius, float glow, boolean light) {
+        if (glow <= 0.01f) return;
+        dropletRim.setStyle(Paint.Style.STROKE);
+        dropletRim.setStrokeWidth(Math.max(1f, density * (0.7f + glow * 0.65f)));
+        dropletRim.setShader(null);
+        int alpha = (int)(30 + 58 * Math.min(1f, glow));
+        dropletRim.setColor((alpha << 24) | (light ? 0x00FFFFFF : 0x00FFFFFF));
+        RectF edge = new RectF(b);
+        edge.inset(density * 0.8f, density * 0.8f);
+        canvas.drawRoundRect(edge, radius, radius, dropletRim);
+        dropletRim.setStyle(Paint.Style.FILL);
     }
 
     private float slotCenterX(float index) {
@@ -735,8 +759,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                             ? tabs.get(pendingIndex) : null;
                     // 普通按下、点击和长按先交给抖音原生子项。
                     dispatchToNative(nativeTarget, e);
-                    // 按下就把透镜挪到这一格并放大，不必等长按超时。
+                    // 按下就把透镜挪到这一格；形变由独立弹簧通道驱动。
                     pos.to(pendingIndex, 1400f, 58f);
+                    droplet.press();
+                    droplet.touchDown();
                     selected = pendingIndex;
                     press.to(1f, 1000f, 62f);
                     squish.to(1f, 520f, 34f);
@@ -772,6 +798,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     if (dragging) {
                         float v = clampF(dragStart + dx / slotW, 0f, count - 1f);
                         pos.to(v, 2000f, 68f);
+                        droplet.dragBy(dx);
+                        droplet.touchDown();
                         startLoop();
                     } else {
                         dispatchToNative(nativeTarget, e);
@@ -804,6 +832,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     nativeTarget = null;
                     selected = target;
                     pos.to(target, 900f, 46f);
+                    droplet.touchUp();
+                    droplet.release();
                     squish.to(0f, 420f, 30f);
                     releasePending = true;
                     releaseSince = SystemClock.uptimeMillis();
@@ -925,6 +955,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             lastSampleVal = pos.value;
         }
         boolean f = dragVel.step(dt);
+        boolean g = droplet.advance(dt / 1000f, pos.value, pos.target, pos.velocity, count);
 
         // 松手后：位置进到 SETTLE 区间（或弹簧停了 / 超时）才收回放大
         if (releasePending && !dragging && !downInLeft) {
@@ -942,7 +973,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         invalidate();
 
-        if (a || b || c || d || e || f) {
+        if (a || b || c || d || e || f || g) {
             Choreographer.getInstance().postFrameCallback(this);
         } else {
             looping = false;
