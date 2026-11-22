@@ -272,7 +272,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float bandH = band.height();
 
         // 比官方那一条大一圈：太小了托不住 4 个图标
-        pillH = Math.min(64f * density, Math.max(48f * density, bandH));
+        pillH = Math.min(64f * density, Math.max(52f * density, bandH + 10f * density));
         float plusSize = Math.min(pillH, 64f * density);
         float plusGap = 12f * density;
         float edge = 16f * density;
@@ -290,7 +290,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float leftX = bandLeft + edge;
         float plusX = bandLeft + bandW - edge - plusSize;
         // 抬高一点，别贴着系统手势条
-        float bottom = bandTop + bandH - 8f * density;
+        float bottom = bandTop + bandH - 6f * density;
         float top = bottom - pillH;
 
         // 抬高 + 放大之后别顶出屏幕（顶出去会被裁掉，看着就像没显示）

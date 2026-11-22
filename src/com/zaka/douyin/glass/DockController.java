@@ -11,6 +11,7 @@ import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.view.ViewTreeObserver;
 import android.widget.EditText;
+import android.widget.Checkable;
 import android.widget.FrameLayout;
 
 import java.util.ArrayList;
@@ -178,6 +179,8 @@ final class DockController {
         final long[] graceFrom = new long[]{SystemClock.uptimeMillis()};
         /** 被整页盖住的连续次数：判一次就收会把正常首页误杀，得连着几次都盖住才算 */
         final int[] coveredTicks = new int[]{0};
+        /** 菜单/展开面板需连续命中，避免单帧层级抖动导致误收 Dock。 */
+        final int[] expandedTicks = new int[]{0};
 
         synchronized (DOCKS) {
             DOCKS.put(act, dock);
@@ -232,7 +235,10 @@ final class DockController {
                             // 整页被子页面盖住：连着几次都判成被盖住才算，单帧误判不动它
                             coveredTicks[0] = Shield.covered(d, content)
                                     ? Math.min(4, coveredTicks[0] + 1) : 0;
+                            expandedTicks[0] = Shield.hasExpandedOverlay(d, content)
+                                    ? Math.min(3, expandedTicks[0] + 1) : 0;
                             boolean show = laidOut && coveredTicks[0] < 3
+                                    && expandedTicks[0] < 2
                                     && Finder.isHomeSelected(left);
 
                             int want = show ? View.VISIBLE : View.GONE;
@@ -268,8 +274,10 @@ final class DockController {
                 if (!live[0]) return;
                 try {
                     View d = dockRef[0];
+                    boolean expanded = d != null && Shield.hasExpandedOverlay(d, content);
+                    expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
                     boolean show = d != null && d.isAttachedToWindow() && d.isShown()
-                            && Finder.isHomeSelected(left);
+                            && expandedTicks[0] < 2 && Finder.isHomeSelected(left);
                     boolean visible = overlay.getVisibility() == View.VISIBLE;
                     if (show != visible) {
                         overlay.setVisibility(show ? View.VISIBLE : View.GONE);
@@ -574,7 +582,7 @@ final class DockController {
             return false;
         }
 
-        /** 当前是否选中首页；没有任何选中标记时返回 true，避免误把首次安装隐藏。 */
+        /** 只在明确确认首页处于选中状态时显示；无法确认就恢复原生底栏。 */
         static boolean isHomeSelected(List<View> items) {
             boolean homeSelected = false;
             boolean otherDestinationSelected = false;
@@ -589,14 +597,14 @@ final class DockController {
                     otherDestinationSelected = true;
                 }
             }
-            // 部分版本不维护稳定的 selected 状态；没有明确的其他目的地选中时，
-            // 不因内部子控件的短暂状态变化而误隐藏首页 Dock。
-            return homeSelected || !otherDestinationSelected;
+            // 安全优先：其他页明确选中，或当前选中状态无法识别时，都不显示自定义 Dock。
+            return homeSelected && !otherDestinationSelected;
         }
 
         private static boolean selectedDeep(View v, int depth) {
             if (v == null || depth > 8) return false;
-            if (v.isSelected()) return true;
+            if (v.isSelected() || v.isActivated()
+                    || (v instanceof Checkable && ((Checkable) v).isChecked())) return true;
             if (v instanceof ViewGroup) {
                 ViewGroup g = (ViewGroup) v;
                 for (int i = 0; i < g.getChildCount(); i++) {
