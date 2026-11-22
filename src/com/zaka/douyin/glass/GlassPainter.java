@@ -34,7 +34,7 @@ final class GlassPainter {
 
     static final boolean HAS_SHADER = android.os.Build.VERSION.SDK_INT >= 33;
 
-    private static final Paint FILL = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    static final Paint FILL = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private static final Paint RIM = new Paint(Paint.ANTI_ALIAS_FLAG);
     private static final Paint INNER = new Paint(Paint.ANTI_ALIAS_FLAG);
     private static final Paint AMBIENT = new Paint(Paint.ANTI_ALIAS_FLAG);
