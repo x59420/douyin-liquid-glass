@@ -184,7 +184,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         this.density = density;
         touchSlop = ViewConfiguration.get(ctx).getScaledTouchSlop();
         setWillNotDraw(false);
-        setClickable(false);
+        // This full-screen overlay must receive DOWN/MOVE/UP inside its two Dock surfaces.
+        // Outside those surfaces onTouchEvent returns false, so underlying content still handles input.
+        setClickable(true);
         setFocusable(false);
         for (int i = 0; i < MAX_SLOTS; i++) slots[i] = new Rect();
         iconPaint.setStyle(Paint.Style.FILL);
