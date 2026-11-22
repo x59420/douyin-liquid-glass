@@ -114,7 +114,9 @@ final class GlassPainter {
 
             FILL.setShader(null);
             FILL.setColorFilter(null);
-            FILL.setColor(light ? 0xE8EFEFEF : 0xC8181818);
+            // 无法取得实时采样时也不能用近乎不透明的底色盖住抖音画面。
+            // 保留可见的磨砂质感，同时让底下视频明显透出。
+            FILL.setColor(light ? 0x70EFEFEF : 0x70181818);
             canvas.drawRect(b, FILL);
 
             AMBIENT.setShader(new LinearGradient(

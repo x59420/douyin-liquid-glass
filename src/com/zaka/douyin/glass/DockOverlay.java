@@ -180,6 +180,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         this.density = density;
         touchSlop = ViewConfiguration.get(ctx).getScaledTouchSlop();
         setWillNotDraw(false);
+        // 全屏覆盖层自身必须完全透明；只绘制两块 Dock 玻璃，其余位置透出抖音内容。
+        setBackgroundColor(android.graphics.Color.TRANSPARENT);
         // This full-screen overlay must receive DOWN/MOVE/UP inside its two Dock surfaces.
         // Outside those surfaces onTouchEvent returns false, so underlying content still handles input.
         setClickable(true);

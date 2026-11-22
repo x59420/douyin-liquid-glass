@@ -61,6 +61,7 @@ final class Backdrop {
     private final List<Layer> layers = new ArrayList<Layer>();
     private long lastScan;
     private long frameStamp;
+    private int lastLoggedLayerCount = -1;
     private int luma = 128;
     private int blurRadius = 6;
     private int meanAlpha;
@@ -335,9 +336,14 @@ final class Backdrop {
             l.view = v;
             layers.add(l);
         }
-        if (!layers.isEmpty()) {
-            Dydock.log("背景视频层 " + layers.size() + " 个（"
-                    + layers.get(0).view.getClass().getSimpleName() + "）");
+        if (layers.size() != lastLoggedLayerCount) {
+            lastLoggedLayerCount = layers.size();
+            if (layers.isEmpty()) {
+                Dydock.warn("背景采样：当前 Dock 区域未发现 SurfaceView/TextureView，玻璃将暂用半透明回退");
+            } else {
+                Dydock.log("背景采样：检测到视频层 " + layers.size() + " 个（"
+                        + layers.get(0).view.getClass().getSimpleName() + "）");
+            }
         }
     }
 

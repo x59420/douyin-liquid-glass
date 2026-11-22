@@ -181,6 +181,8 @@ final class DockController {
         final int[] coveredTicks = new int[]{0};
         /** 菜单/展开面板需连续命中，避免单帧层级抖动导致误收 Dock。 */
         final int[] expandedTicks = new int[]{0};
+        // PopupWindow/系统弹层可能位于独立窗口；连续丢失焦点后才收起，避免切页瞬间闪烁。
+        final int[] focusLostTicks = new int[]{0};
 
         synchronized (DOCKS) {
             DOCKS.put(act, dock);
@@ -239,7 +241,7 @@ final class DockController {
                                     ? Math.min(3, expandedTicks[0] + 1) : 0;
                             boolean show = laidOut && coveredTicks[0] < 3
                                     && expandedTicks[0] < 2
-                                    && Finder.isHomeSelected(left);
+                                    && focusLostTicks[0] < 2;
 
                             int want = show ? View.VISIBLE : View.GONE;
                             boolean wasHidden = overlay.getVisibility() != View.VISIBLE;
@@ -276,8 +278,11 @@ final class DockController {
                     View d = dockRef[0];
                     boolean expanded = d != null && Shield.hasExpandedOverlay(d, content);
                     expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
+                    boolean focusLost = !decor.hasWindowFocus();
+                    focusLostTicks[0] = focusLost
+                            ? Math.min(3, focusLostTicks[0] + 1) : 0;
                     boolean show = d != null && d.isAttachedToWindow() && d.isShown()
-                            && expandedTicks[0] < 2 && Finder.isHomeSelected(left);
+                            && expandedTicks[0] < 2 && focusLostTicks[0] < 2;
                     boolean visible = overlay.getVisibility() == View.VISIBLE;
                     if (show != visible) {
                         overlay.setVisibility(show ? View.VISIBLE : View.GONE);
