@@ -84,6 +84,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private float downX;
     private float downY;
     private float dragStart;
+    private float lastDragX;
     private int touchSlop;
     private boolean looping;
     private long lastFrame;
@@ -412,7 +413,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         h = Math.max(leftPill.height() * 0.62f, Math.min(leftPill.height() * 1.12f, h));
         h = Math.min(h, leftPill.height() * 1.10f);
 
-        float cx = slotCenterX(x);
+        float dragFraction = leftPill.width() > 0f
+                ? clampF(droplet.accumulatedDrag() / leftPill.width(), -1f, 1f) : 0f;
+        float cx = slotCenterX(x) + 4f * density * dragFraction;
         // 允许透镜在按住时上下略微鼓出整条玻璃 —— 放大镜浮起来才有实感
         lens.set(cx - w / 2f, leftPill.centerY() - h / 2f,
                 cx + w / 2f, leftPill.centerY() + h / 2f);
@@ -454,7 +457,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         dropletRim.setStrokeWidth(Math.max(1f, density * (0.7f + glow * 0.65f)));
         dropletRim.setShader(null);
         int alpha = (int)(30 + 58 * Math.min(1f, glow));
-        dropletRim.setColor((alpha << 24) | (light ? 0x00FFFFFF : 0x00FFFFFF));
+        dropletRim.setColor((alpha << 24) | (light ? 0x000000 : 0xFFFFFF));
         RectF edge = new RectF(b);
         edge.inset(density * 0.8f, density * 0.8f);
         canvas.drawRoundRect(edge, radius, radius, dropletRim);
@@ -743,6 +746,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downInPlus = false;
                     downX = x;
                     downY = y;
+                    lastDragX = x;
                     dragging = false;
                     releasePending = false;
                     pendingIndex = slotAt(x);
@@ -788,7 +792,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     if (dragging) {
                         float v = clampF(dragStart + dx / slotW, 0f, count - 1f);
                         pos.to(v, 2000f, 68f);
-                        droplet.dragBy(dx);
+                        droplet.dragBy(x - lastDragX);
+                        lastDragX = x;
                         droplet.touchDown();
                         startLoop();
                     } else {
