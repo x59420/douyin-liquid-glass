@@ -216,7 +216,8 @@ final class DockController {
                                 View p = Finder.pickPlus(its);
                                 List<View> lf = new ArrayList<View>(its);
                                 if (p != null) lf.remove(p);
-                                fresh.setAlpha(0f);
+                                fresh.setAlpha(1f);
+                                hidden[0] = false;
                                 dockRef[0] = fresh;
                                 overlay.setTabs(lf, p);
                                 overlay.attachDock(fresh);
@@ -226,32 +227,23 @@ final class DockController {
                             // 没画出来就先让官方底栏露在那儿兜着，别给用户一片空白；
                             // 等玻璃画出来再自动切过去。
                             boolean drewOk = overlay.hasDrawn();
-                            if (drewOk) {
-                                if (!hidden[0]) {
-                                    d.setAlpha(0f);
-                                    hidden[0] = true;
-                                }
-                            } else if (hidden[0]
-                                    && SystemClock.uptimeMillis() - graceFrom[0] > 1200L) {
-                                d.setAlpha(1f);
-                                hidden[0] = false;
-                                graceFrom[0] = SystemClock.uptimeMillis();
-                            }
                             // 底栏被藏起来（全屏播放、退到后台）时玻璃跟着收
                             boolean laidOut = d.isShown();
                             // 整页被子页面盖住：连着几次都判成被盖住才算，单帧误判不动它
                             coveredTicks[0] = Shield.covered(d, content)
                                     ? Math.min(4, coveredTicks[0] + 1) : 0;
                             boolean show = laidOut && coveredTicks[0] < 3
-                                    && Finder.isHomeSelected(left)
-                                    && decor.hasWindowFocus()
-                                    && !Shield.hasExpandedOverlay(d, content);
+                                    && Finder.isHomeSelected(left);
 
                             int want = show ? View.VISIBLE : View.GONE;
                             boolean wasHidden = overlay.getVisibility() != View.VISIBLE;
                             if (overlay.getVisibility() != want) overlay.setVisibility(want);
-                            // 玻璃被收起来的时候官方底栏必须露着，不然底栏就整条没了
-                            if (!show && hidden[0]) {
+                            // 只有玻璃已实际绘制且当前应显示时，才隐藏原生底栏。
+                            // 初次安装/切页瞬间先保留原生底栏，避免接管过程出现空白。
+                            if (show && drewOk && !hidden[0]) {
+                                d.setAlpha(0f);
+                                hidden[0] = true;
+                            } else if ((!show || !drewOk) && hidden[0]) {
                                 d.setAlpha(1f);
                                 hidden[0] = false;
                                 graceFrom[0] = SystemClock.uptimeMillis();
@@ -277,15 +269,14 @@ final class DockController {
                 try {
                     View d = dockRef[0];
                     boolean show = d != null && d.isAttachedToWindow() && d.isShown()
-                            && Finder.isHomeSelected(left)
-                            && decor.hasWindowFocus()
-                            && !Shield.hasExpandedOverlay(d, content);
+                            && Finder.isHomeSelected(left);
                     boolean visible = overlay.getVisibility() == View.VISIBLE;
                     if (show != visible) {
                         overlay.setVisibility(show ? View.VISIBLE : View.GONE);
-                        if (!show && hidden[0] && d != null) {
+                        if ((!show || !overlay.hasDrawn()) && hidden[0] && d != null) {
                             d.setAlpha(1f);
                             hidden[0] = false;
+                            graceFrom[0] = SystemClock.uptimeMillis();
                         } else if (show && overlay.hasDrawn() && !hidden[0]) {
                             d.setAlpha(0f);
                             hidden[0] = true;
@@ -309,8 +300,9 @@ final class DockController {
         // 那些容器切页之后还是同一个对象，背景没了再没人还回来，
         // 用户看到的就是「打开别的界面还有黑块」「好多残影」。
         // 这一版一个背景都不碰，玻璃自己就是半透明的，不需要底下挖洞。
-        dock.setAlpha(0f);
-        hidden[0] = true;
+        // 不在安装阶段抢先隐藏原生 Dock；等玻璃真正绘制后再接管。
+        dock.setAlpha(1f);
+        hidden[0] = false;
         graceFrom[0] = SystemClock.uptimeMillis();
 
         // 看门狗：玻璃**可见却迟迟没画出来**才把官方底栏还回去，绝不留一条空白。
@@ -584,15 +576,22 @@ final class DockController {
 
         /** 当前是否选中首页；没有任何选中标记时返回 true，避免误把首次安装隐藏。 */
         static boolean isHomeSelected(List<View> items) {
-            boolean foundSelection = false;
+            boolean homeSelected = false;
+            boolean otherDestinationSelected = false;
             for (View item : items) {
+                if (!selectedDeep(item, 0)) continue;
                 String label = navigationLabel(item, 0);
-                if (selectedDeep(item, 0)) {
-                    foundSelection = true;
-                    return "首页".equals(label);
+                if ("首页".equals(label)) {
+                    homeSelected = true;
+                } else if ("朋友".equals(label) || "好友".equals(label)
+                        || "消息".equals(label) || "我".equals(label)
+                        || "个人主页".equals(label)) {
+                    otherDestinationSelected = true;
                 }
             }
-            return !foundSelection;
+            // 部分版本不维护稳定的 selected 状态；没有明确的其他目的地选中时，
+            // 不因内部子控件的短暂状态变化而误隐藏首页 Dock。
+            return homeSelected || !otherDestinationSelected;
         }
 
         private static boolean selectedDeep(View v, int depth) {

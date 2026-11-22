@@ -3,6 +3,9 @@ package com.zaka.douyin.glass;
 import android.app.Activity;
 import android.app.Application;
 import android.app.Instrumentation;
+import android.graphics.Color;
+import android.view.View;
+import android.view.Window;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -92,9 +95,36 @@ public final class GlassEntry implements IXposedHookLoadPackage {
         }
     }
 
+    /**
+     * 让抖音内容延伸到系统手势导航栏后方。
+     * 不隐藏导航栏本身，系统白色手势提示和手势操作继续保留。
+     */
+    private static void makeNavigationAreaTransparent(Activity act) {
+        try {
+            if (act == null || act.getWindow() == null) return;
+            Window window = act.getWindow();
+            window.setNavigationBarColor(Color.TRANSPARENT);
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                window.setNavigationBarDividerColor(Color.TRANSPARENT);
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                window.setNavigationBarContrastEnforced(false);
+            }
+            View decor = window.getDecorView();
+            int flags = decor.getSystemUiVisibility();
+            flags |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            decor.setSystemUiVisibility(flags);
+        } catch (Throwable t) {
+            Dydock.warnOnce("transparent-navigation",
+                    "透明手势导航栏设置失败，保留系统默认导航栏: " + t);
+        }
+    }
+
     /** 只安装底部 Dock，其他区域不再添加液态玻璃。 */
     private static void installDock(Activity act) {
         try {
+            makeNavigationAreaTransparent(act);
             DockController.onActivity(act);
         } catch (Throwable t) {
             Dydock.error("底栏入口", t);
