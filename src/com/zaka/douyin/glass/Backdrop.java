@@ -46,6 +46,7 @@ final class Backdrop {
     private static final class Layer {
         View view;
         Bitmap frame;
+        Bitmap textureFull;
         Rect dst = new Rect();
         boolean pending;
         boolean valid;
@@ -397,15 +398,43 @@ final class Backdrop {
             if (l.view instanceof TextureView) {
                 TextureView tv = (TextureView) l.view;
                 if (!tv.isAvailable()) return;
+                int fullW = Math.max(4, tv.getWidth());
+                int fullH = Math.max(4, tv.getHeight());
+                if (l.textureFull == null || l.textureFull.isRecycled()
+                        || l.textureFull.getWidth() != fullW
+                        || l.textureFull.getHeight() != fullH) {
+                    l.textureFull = recycle(l.textureFull);
+                    l.textureFull = Bitmap.createBitmap(fullW, fullH, Bitmap.Config.ARGB_8888);
+                }
+                Bitmap got = tv.getBitmap(l.textureFull);
+                if (got == null) {
+                    l.valid = false;
+                    return;
+                }
+                int[] vl = new int[2];
+                tv.getLocationInWindow(vl);
+                Rect src = new Rect(
+                        Math.max(0, region.left - vl[0]),
+                        Math.max(0, region.top - vl[1]),
+                        Math.min(tv.getWidth(), region.right - vl[0]),
+                        Math.min(tv.getHeight(), region.bottom - vl[1]));
+                if (src.isEmpty()) {
+                    l.valid = false;
+                    return;
+                }
                 int w = Math.max(4, l.dst.width());
                 int h = Math.max(4, l.dst.height());
                 if (l.frame == null || l.frame.isRecycled()
                         || l.frame.getWidth() != w || l.frame.getHeight() != h) {
+                    l.frame = recycle(l.frame);
                     l.frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
                 }
-                Bitmap got = tv.getBitmap(l.frame);
-                l.valid = got != null;
-                if (l.valid) onVideoFrame();
+                Canvas crop = new Canvas(l.frame);
+                crop.drawColor(0, PorterDuff.Mode.CLEAR);
+                crop.drawBitmap(l.textureFull, src, new Rect(0, 0, w, h), paint);
+                l.valid = true;
+                l.stamp = SystemClock.uptimeMillis();
+                onVideoFrame();
                 return;
             }
 
@@ -468,7 +497,14 @@ final class Backdrop {
                 } catch (Throwable ignored) {
                 }
             }
+            if (l.textureFull != null && !l.textureFull.isRecycled()) {
+                try {
+                    l.textureFull.recycle();
+                } catch (Throwable ignored) {
+                }
+            }
             l.frame = null;
+            l.textureFull = null;
         }
         layers.clear();
     }

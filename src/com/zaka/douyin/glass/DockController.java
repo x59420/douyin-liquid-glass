@@ -85,6 +85,9 @@ final class DockController {
             if (dock != null && dock.getAlpha() != 1f) dock.setAlpha(1f);
         } catch (Throwable ignored) {
         }
+        synchronized (DONE) {
+            DONE.remove(act);
+        }
     }
 
     static void onActivity(final Activity act) {
@@ -242,15 +245,31 @@ final class DockController {
             @Override public void run() {
                 if (!live[0]) return;
                 try {
+                    if (!overlay.isAttachedToWindow()) {
+                        View detachedDock = dockRef[0];
+                        if (detachedDock != null && detachedDock.getAlpha() != 1f) {
+                            detachedDock.setAlpha(1f);
+                        }
+                        hidden[0] = false;
+                        live[0] = false;
+                        return;
+                    }
                     View d = dockRef[0];
-                    boolean covered = d != null && Shield.covered(d, content);
+                    if (d == null || !d.isAttachedToWindow()) {
+                        overlay.setVisibility(View.GONE);
+                        if (d != null && d.getAlpha() != 1f) d.setAlpha(1f);
+                        hidden[0] = false;
+                        MAIN.postDelayed(this, 180L);
+                        return;
+                    }
+                    boolean covered = Shield.covered(d, content);
                     coveredTicks[0] = covered ? Math.min(3, coveredTicks[0] + 1) : 0;
                     boolean expanded = d != null && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
                     boolean focusLost = !decor.hasWindowFocus();
                     focusLostTicks[0] = focusLost
                             ? Math.min(3, focusLostTicks[0] + 1) : 0;
-                    boolean show = d != null && d.isAttachedToWindow() && d.isShown()
+                    boolean show = d.isShown()
                             && coveredTicks[0] < 2 && expandedTicks[0] < 2
                             && focusLostTicks[0] < 2;
 

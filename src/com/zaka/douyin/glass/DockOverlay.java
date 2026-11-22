@@ -421,7 +421,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float baseW = Math.min(72f * density, Math.max(1f, slotW * 0.96f));
         float baseH = Math.min(56f * density,
                 Math.max(1f, leftPill.height() - 8f * density));
-        float sx = clampF(droplet.scaleX(), 0.85f, 1.75f);
+        float sx = clampF(droplet.scaleX() * droplet.dragStretch(slotW), 0.85f, 1.75f);
         float sy = clampF(droplet.scaleY(), 0.85f, 1.60f);
         float w = baseW * sx;
         float h = baseH * sy;
@@ -429,7 +429,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         float dragFraction = leftPill.width() > 0f
                 ? clampF(droplet.accumulatedDrag() / leftPill.width(), -1f, 1f) : 0f;
-        float cx = slotCenterX(x) + 4f * density * dragFraction;
+        float dragLag = clampF(droplet.accumulatedDrag() * 0.12f,
+                -slotW * 0.18f, slotW * 0.18f);
+        float cx = slotCenterX(x) + dragLag;
         float cy = leftPill.centerY();
         lens.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
 
@@ -1015,6 +1017,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     @Override
     protected void onVisibilityChanged(View changedView, int visibility) {
         super.onVisibilityChanged(changedView, visibility);
+        if (visibility != VISIBLE) drewOnce = false;
         if (visibility == VISIBLE && dockView != null) {
             following = true;
             scheduleFollow();

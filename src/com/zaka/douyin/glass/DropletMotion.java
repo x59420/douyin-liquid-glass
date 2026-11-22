@@ -21,6 +21,10 @@ final class DropletMotion {
     float scaleX() { return width.value / (1f - clamp(velocity.value * 0.075f, -0.2f, 0.2f)); }
     float scaleY() { return height.value * (1f - clamp(velocity.value * 0.025f, -0.2f, 0.2f)); }
     float accumulatedDrag() { return dragOffset.value; }
+    float dragStretch(float slotWidth) {
+        float span = Math.max(1f, slotWidth);
+        return 1f + Math.min(0.22f, Math.abs(dragOffset.value) / span * 0.10f);
+    }
 
     void press() {
         releasePending = false;
