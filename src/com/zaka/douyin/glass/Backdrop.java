@@ -197,9 +197,6 @@ final class Backdrop {
         } catch (Throwable t) {
             // 宿主树里常有 SurfaceView / 硬件位图，软件画布画到一半失败是常态
             Dydock.warnOnce("ui-draw", "UI 层绘制中断（通常无害）: " + t);
-        } catch (Throwable t) {
-            // 宿主树里常有 SurfaceView / 硬件位图，软件画布画到一半失败是常态
-            Dydock.warnOnce("ui-draw", "UI 层绘制中断（通常无害）: " + t);
         }
 
         // 3. 请求新帧
