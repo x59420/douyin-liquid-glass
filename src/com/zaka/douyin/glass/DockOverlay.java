@@ -516,11 +516,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     }
 
     /**
-     * 一套实心图标（0.0.5 换的）。
-     *
-     * 老版是 1.8dp 的细线描边，在玻璃上又细又虚，放大一档就糊。
-     * 现在改成实心剪影 + 内挖细节：轮廓厚实、选中放大时也不发虚。
-     * 坐标都在 24×24 的画布里，跟着 size 缩放。
+     * 统一的简洁线性图标：仅替换视觉路径，不改变四个原生导航项的顺序、
+     * 点击转发和角标逻辑。所有图标使用相同线宽、圆角端点与连接。
      */
     private void drawIcon(Canvas canvas, int index, float cx, float cy, float size, int alpha, int ink) {
         float k = size / 24f;
@@ -529,92 +526,65 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             canvas.translate(cx - size / 2f, cy - size / 2f);
             canvas.scale(k, k);
             iconPaint.setColor(((alpha & 0xFF) << 24) | (ink & 0xFFFFFF));
-            iconPaint.setStyle(Paint.Style.FILL);
+            iconPaint.setStyle(Paint.Style.STROKE);
+            iconPaint.setStrokeWidth(1.85f);
+            iconPaint.setStrokeCap(Paint.Cap.ROUND);
+            iconPaint.setStrokeJoin(Paint.Join.ROUND);
             path.reset();
-            // 非零环绕：同向的形状叠在一起也是实心（房子、两个人、头+肩都会重叠）。
-            // 要挖空的地方（气泡那三个点）用反向子路径，这个规则下正好挖掉。
             path.setFillType(Path.FillType.WINDING);
             rect.setEmpty();
 
             switch (index) {
-                case 0: { // 首页：实心房子，底下留一个门洞
-                    path.moveTo(11.25f, 2.9f);
-                    path.cubicTo(11.7f, 2.52f, 12.3f, 2.52f, 12.75f, 2.9f);
-                    path.lineTo(20.6f, 9.5f);
-                    path.cubicTo(21.05f, 9.88f, 21.05f, 10.55f, 20.62f, 10.9f);
-                    path.cubicTo(20.2f, 11.25f, 19.55f, 11.22f, 19.16f, 10.85f);
-                    path.lineTo(12f, 4.86f);
-                    path.lineTo(4.84f, 10.85f);
-                    path.cubicTo(4.45f, 11.22f, 3.8f, 11.25f, 3.38f, 10.9f);
-                    path.cubicTo(2.95f, 10.55f, 2.95f, 9.88f, 3.4f, 9.5f);
-                    path.close();
-
-                    path.moveTo(5.0f, 10.4f);
-                    path.lineTo(19.0f, 10.4f);
-                    path.lineTo(19.0f, 19.2f);
-                    path.cubicTo(19.0f, 20.3f, 18.1f, 21.2f, 17.0f, 21.2f);
-                    path.lineTo(15.3f, 21.2f);
-                    path.lineTo(15.3f, 15.6f);
-                    path.cubicTo(15.3f, 14.5f, 14.4f, 13.6f, 13.3f, 13.6f);
-                    path.lineTo(10.7f, 13.6f);
-                    path.cubicTo(9.6f, 13.6f, 8.7f, 14.5f, 8.7f, 15.6f);
-                    path.lineTo(8.7f, 21.2f);
-                    path.lineTo(7.0f, 21.2f);
-                    path.cubicTo(5.9f, 21.2f, 5.0f, 20.3f, 5.0f, 19.2f);
-                    path.close();
+                case 0: { // 首页：房屋轮廓
+                    path.moveTo(3.2f, 10.7f);
+                    path.lineTo(12f, 3.4f);
+                    path.lineTo(20.8f, 10.7f);
+                    path.moveTo(5.4f, 9.4f);
+                    path.lineTo(5.4f, 20.5f);
+                    path.quadTo(5.4f, 21.2f, 6.2f, 21.2f);
+                    path.lineTo(17.8f, 21.2f);
+                    path.quadTo(18.6f, 21.2f, 18.6f, 20.5f);
+                    path.lineTo(18.6f, 9.4f);
+                    path.moveTo(9.5f, 21f);
+                    path.lineTo(9.5f, 15.3f);
+                    path.quadTo(9.5f, 14.6f, 10.2f, 14.6f);
+                    path.lineTo(13.8f, 14.6f);
+                    path.quadTo(14.5f, 14.6f, 14.5f, 15.3f);
+                    path.lineTo(14.5f, 21f);
                     break;
                 }
-                case 1: { // 朋友：两个人
-                    // 后面那个人，小一号
-                    path.addCircle(17.2f, 9.0f, 2.55f, Path.Direction.CW);
-                    path.moveTo(13.1f, 20.6f);
-                    path.cubicTo(13.2f, 16.8f, 14.7f, 14.6f, 17.2f, 14.6f);
-                    path.cubicTo(19.7f, 14.6f, 21.2f, 16.8f, 21.3f, 20.6f);
-                    path.cubicTo(21.32f, 21.1f, 20.95f, 21.4f, 20.5f, 21.4f);
-                    path.lineTo(13.9f, 21.4f);
-                    path.cubicTo(13.45f, 21.4f, 13.08f, 21.1f, 13.1f, 20.6f);
-                    path.close();
-
-                    // 前面那个人
-                    path.addCircle(9.0f, 8.2f, 3.55f, Path.Direction.CW);
-                    path.moveTo(2.6f, 20.6f);
-                    path.cubicTo(2.7f, 15.9f, 5.2f, 13.4f, 9.0f, 13.4f);
-                    path.cubicTo(12.8f, 13.4f, 15.3f, 15.9f, 15.4f, 20.6f);
-                    path.cubicTo(15.42f, 21.1f, 15.05f, 21.4f, 14.6f, 21.4f);
-                    path.lineTo(3.4f, 21.4f);
-                    path.cubicTo(2.95f, 21.4f, 2.58f, 21.1f, 2.6f, 20.6f);
-                    path.close();
+                case 1: { // 朋友：双人头像
+                    canvas.drawCircle(9f, 8f, 3.1f, iconPaint);
+                    canvas.drawCircle(17.1f, 9.2f, 2.45f, iconPaint);
+                    path.moveTo(2.8f, 20.8f);
+                    path.quadTo(3.2f, 14.2f, 9f, 14.2f);
+                    path.quadTo(14.8f, 14.2f, 15.2f, 20.8f);
+                    path.moveTo(14.2f, 14.8f);
+                    path.quadTo(20.6f, 13.7f, 21.2f, 20.8f);
                     break;
                 }
-                case 2: { // 消息：实心气泡 + 三个点挖空
-                    rect.set(2.4f, 3.8f, 21.6f, 16.6f);
-                    path.addRoundRect(rect, 5.6f, 5.6f, Path.Direction.CW);
-                    // 气泡尾巴（跟主体同向，叠在一起才是实心）
-                    path.moveTo(6.8f, 15.2f);
-                    path.lineTo(13.4f, 18.0f);
-                    path.lineTo(7.2f, 21.1f);
-                    path.cubicTo(6.86f, 21.32f, 6.8f, 20.72f, 6.8f, 20.4f);
-                    path.close();
-                    // 三个点：反向子路径，非零环绕规则下正好挖成三个洞
-                    path.addCircle(7.6f, 10.2f, 1.35f, Path.Direction.CCW);
-                    path.addCircle(12f, 10.2f, 1.35f, Path.Direction.CCW);
-                    path.addCircle(16.4f, 10.2f, 1.35f, Path.Direction.CCW);
+                case 2: { // 消息：圆角对话框与省略号
+                    rect.set(3f, 3.8f, 21f, 17.1f);
+                    canvas.drawRoundRect(rect, 5f, 5f, iconPaint);
+                    path.moveTo(7.2f, 16.8f);
+                    path.lineTo(6.1f, 21f);
+                    path.lineTo(12.1f, 17.1f);
+                    canvas.drawCircle(8f, 10.4f, 0.85f, iconPaint);
+                    canvas.drawCircle(12f, 10.4f, 0.85f, iconPaint);
+                    canvas.drawCircle(16f, 10.4f, 0.85f, iconPaint);
                     break;
                 }
-                default: { // 我：头 + 肩
-                    path.addCircle(12f, 8.0f, 3.9f, Path.Direction.CW);
-                    path.moveTo(3.4f, 20.7f);
-                    path.cubicTo(3.55f, 15.6f, 7.0f, 13.2f, 12f, 13.2f);
-                    path.cubicTo(17.0f, 13.2f, 20.45f, 15.6f, 20.6f, 20.7f);
-                    path.cubicTo(20.62f, 21.2f, 20.25f, 21.5f, 19.8f, 21.5f);
-                    path.lineTo(4.2f, 21.5f);
-                    path.cubicTo(3.75f, 21.5f, 3.38f, 21.2f, 3.4f, 20.7f);
-                    path.close();
+                default: { // 我：单人头像
+                    canvas.drawCircle(12f, 8f, 3.7f, iconPaint);
+                    path.moveTo(3.2f, 21f);
+                    path.quadTo(3.8f, 13.7f, 12f, 13.7f);
+                    path.quadTo(20.2f, 13.7f, 20.8f, 21f);
                     break;
                 }
             }
             canvas.drawPath(path, iconPaint);
         } finally {
+            iconPaint.setStyle(Paint.Style.FILL);
             canvas.restore();
         }
     }
