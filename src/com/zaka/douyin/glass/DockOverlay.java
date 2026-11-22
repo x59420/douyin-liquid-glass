@@ -939,6 +939,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean e = squish.step(dt);
 
         boolean g = droplet.advance(dt / 1000f, pos.value, pos.target, pos.velocity, count);
+        boolean f = false;
+        long now = SystemClock.uptimeMillis();
 
         // 松手后：位置进到 SETTLE 区间（或弹簧停了 / 超时）才收回放大
         if (releasePending && !dragging && !downInLeft) {
