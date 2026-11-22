@@ -240,7 +240,7 @@ final class DockController {
                 });
 
         // PopupWindow / 菜单浮层可能不触发 content 的 GlobalLayout；
-        // 单独轮询窗口焦点、当前选中 Tab 和同层弹出面板，避免菜单/个人页留下 Dock。
+        // 单独轮询窗口焦点、遮挡和同层弹出面板，避免菜单/个人页留下 Dock。
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
                 if (!live[0]) return;

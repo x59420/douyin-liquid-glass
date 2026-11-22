@@ -414,7 +414,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float x = pos.value;
         float dropletPress = droplet.pressProgress();
 
-        // Tieba 的选中液滴以 56dp 为基础尺寸；长按按 78/56 的比例膨胀，
+        // Tieba 的选中液滴以 56dp 为基础尺寸；长按按 74/56 的比例膨胀，
         // 因此会自然越过 64dp 左胶囊的上下边缘，而不是被胶囊裁成一块。
         // Tieba 的液滴不是一个圆球：它沿用 Dock 的横向胶囊轮廓，
         // 宽度取单个 tab 槽位，基础高度 56dp；放大/速度形变仍由独立弹簧控制。
@@ -427,8 +427,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float h = baseH * sy;
         float corner = Math.min(32f * density, h * 0.5f);
 
-        float dragFraction = leftPill.width() > 0f
-                ? clampF(droplet.accumulatedDrag() / leftPill.width(), -1f, 1f) : 0f;
         float dragLag = clampF(droplet.accumulatedDrag() * 0.12f,
                 -slotW * 0.18f, slotW * 0.18f);
         float cx = slotCenterX(x) + dragLag;

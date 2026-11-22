@@ -398,8 +398,8 @@ final class Backdrop {
             if (l.view instanceof TextureView) {
                 TextureView tv = (TextureView) l.view;
                 if (!tv.isAvailable()) return;
-                int fullW = Math.max(4, tv.getWidth());
-                int fullH = Math.max(4, tv.getHeight());
+                int fullW = Math.max(4, tv.getWidth() / DOWN);
+                int fullH = Math.max(4, tv.getHeight() / DOWN);
                 if (l.textureFull == null || l.textureFull.isRecycled()
                         || l.textureFull.getWidth() != fullW
                         || l.textureFull.getHeight() != fullH) {
@@ -413,11 +413,13 @@ final class Backdrop {
                 }
                 int[] vl = new int[2];
                 tv.getLocationInWindow(vl);
+                float sourceScaleX = l.textureFull.getWidth() / (float) tv.getWidth();
+                float sourceScaleY = l.textureFull.getHeight() / (float) tv.getHeight();
                 Rect src = new Rect(
-                        Math.max(0, region.left - vl[0]),
-                        Math.max(0, region.top - vl[1]),
-                        Math.min(tv.getWidth(), region.right - vl[0]),
-                        Math.min(tv.getHeight(), region.bottom - vl[1]));
+                        Math.round(Math.max(0, region.left - vl[0]) * sourceScaleX),
+                        Math.round(Math.max(0, region.top - vl[1]) * sourceScaleY),
+                        Math.round(Math.min(tv.getWidth(), region.right - vl[0]) * sourceScaleX),
+                        Math.round(Math.min(tv.getHeight(), region.bottom - vl[1]) * sourceScaleY));
                 if (src.isEmpty()) {
                     l.valid = false;
                     return;
