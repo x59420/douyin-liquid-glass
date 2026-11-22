@@ -12,7 +12,6 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
-import android.graphics.RuntimeShader;
 import android.graphics.Shader;
 import android.view.View;
 
@@ -43,18 +42,14 @@ final class GlassPainter {
     private static final Path PATH = new Path();
     private static final RectF RECT = new RectF();
     private static final Rect SRC = new Rect();
-    private static final Matrix MAT = new Matrix();
-    private static final int[] LOC = new int[2];
+    static final Matrix MAT = new Matrix();
+    static final int[] LOC = new int[2];
 
     private static ColorMatrixColorFilter vibrant;
-    /** 着色器编译不便宜，按源串缓存，每帧只改 uniform */
-    private static RuntimeShader sRefract;
-    private static RuntimeShader sDisperse;
-
     private GlassPainter() {
     }
 
-    private static ColorMatrixColorFilter vibrant() {
+    static ColorMatrixColorFilter vibrant() {
         if (vibrant == null) {
             ColorMatrix m = new ColorMatrix();
             m.setSaturation(1.5f);
@@ -152,52 +147,7 @@ final class GlassPainter {
         if (bmp == null || bmp.isRecycled()) return false;
         Rect region = bd.region();
         if (region.isEmpty()) return false;
-
-        try {
-            owner.getLocationInWindow(LOC);
-            float kx = bmp.getWidth() / (float) region.width();
-            float ky = bmp.getHeight() / (float) region.height();
-
-            BitmapShader content = new BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-            MAT.reset();
-            MAT.setScale(kx, ky);
-            MAT.postTranslate((LOC[0] - region.left) * kx, (LOC[1] - region.top) * ky);
-            content.setLocalMatrix(MAT);
-
-            RuntimeShader shader = shader(dispersion);
-            shader.setInputShader("content", content);
-            shader.setFloatUniform("size", b.width(), b.height());
-            shader.setFloatUniform("offset", -b.left, -b.top);
-            shader.setFloatUniform("cornerRadii", r, r, r, r);
-
-            float minSide = Math.min(b.width(), b.height());
-            float lensH = Math.min(24f * density, minSide * 0.42f);
-            float lensA = Math.min(26f * density, minSide * 0.46f);
-            shader.setFloatUniform("refractionHeight", Math.max(1f, lensH));
-            shader.setFloatUniform("refractionAmount", -Math.max(1f, lensA));
-            shader.setFloatUniform("depthEffect", 0.6f * clamp01(press));
-            if (dispersion) shader.setFloatUniform("chromaticAberration", 1f);
-
-            FILL.setShader(shader);
-            FILL.setColorFilter(vibrant());
-            canvas.drawRect(b.left, b.top, b.right, b.bottom, FILL);
-            return true;
-        } catch (Throwable t) {
-            Dydock.warnOnce("shader", "折射着色器失败，退回普通裁切: " + t);
-            return false;
-        } finally {
-            FILL.setShader(null);
-            FILL.setColorFilter(null);
-        }
-    }
-
-    private static RuntimeShader shader(boolean dispersion) {
-        if (dispersion) {
-            if (sDisperse == null) sDisperse = new RuntimeShader(GlassShader.REFRACTION_DISPERSION);
-            return sDisperse;
-        }
-        if (sRefract == null) sRefract = new RuntimeShader(GlassShader.REFRACTION);
-        return sRefract;
+        return Api33Glass.draw(canvas, b, r, bmp, region, owner, press, dispersion, density);
     }
 
     private static void crop(Canvas canvas, RectF b, Backdrop bd, View owner) {
@@ -281,7 +231,7 @@ final class GlassPainter {
         INNER.setShader(null);
     }
 
-    private static float clamp01(float v) {
+    static float clamp01(float v) {
         return v < 0f ? 0f : (v > 1f ? 1f : v);
     }
 
