@@ -340,9 +340,12 @@ final class DockController {
                 int relTop = l[1] - rl[1];
                 int bottom = relTop + h;
 
-                boolean inBottom = bottom > rh * 0.74f && relTop > rh * 0.55f;
-                boolean sizeOk = hDp >= 34f && hDp <= 110f && w >= rw * 0.55f;
-                if (inBottom && sizeOk && !hasInput(g)) {
+                // Restrict matching to the actual bottom navigation strip. Older broad bounds
+                // could mistake a search/result row near the bottom for the Dock.
+                boolean inBottom = bottom >= rh - 48f * density
+                        && relTop >= rh - 150f * density;
+                boolean sizeOk = hDp >= 34f && hDp <= 96f && w >= rw * 0.70f;
+                if (inBottom && sizeOk && !hasInput(g) && !hasSearchLabel(g)) {
                     List<View> items = tabItems(g);
                     if (items.size() >= 4 && items.size() <= 6) {
                         // 越靠下、子项越规整，分越高
@@ -361,6 +364,29 @@ final class DockController {
                     walk(g.getChildAt(i), rw, rh, best, bestScore, depth + 1, budget);
                 }
             }
+        }
+
+        /** Search/result rows are never navigation docks, even if they expose several click targets. */
+        private static boolean hasSearchLabel(View v) {
+            return hasSearchLabel(v, 0);
+        }
+
+        private static boolean hasSearchLabel(View v, int depth) {
+            if (v == null || depth > 8) return false;
+            if (v instanceof android.widget.TextView) {
+                CharSequence text = ((android.widget.TextView) v).getText();
+                if (text != null) {
+                    String s = text.toString();
+                    if (s.contains("相关搜索") || s.contains("搜索") || s.contains("热搜")) return true;
+                }
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    if (hasSearchLabel(g.getChildAt(i), depth + 1)) return true;
+                }
+            }
+            return false;
         }
 
         /** 里面带输入框的一律不是底栏（聊天页的输入条就是这么被误认的） */
