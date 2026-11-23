@@ -2,7 +2,7 @@
 
 一个面向抖音 Android 客户端的 LSPosed 模块：**把四个主页面底部导航栏替换成悬浮液态玻璃 Dock**，尽量保留抖音原有的布局和点击逻辑。
 
-> 当前源码版本：**0.1.14**
+> 当前源码版本：**0.1.15**
 >
 > APK 下载：**[GitHub Releases](https://github.com/x59420/douyin-liquid-glass/releases)**
 >
