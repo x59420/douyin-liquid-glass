@@ -313,8 +313,10 @@ class ComposeDockOverlay private constructor(
         val bandLeft = band.left - location[0]
         val bandTop = band.top - location[1]
         val bandWidth = band.width()
-        val edge = (16f * densityScale).toInt()
-        val gap = (12f * densityScale).toInt()
+        // KernelSU uses 28dp horizontal inset. Keep the independent 64dp Douyin
+        // publish button and use a compact gap so the four-tab capsule stays centered.
+        val edge = (28f * densityScale).toInt()
+        val gap = (8f * densityScale).toInt()
         val pillHeight = (64f * densityScale).toInt()
         val plusSize = pillHeight
         val plusLeft = bandLeft + bandWidth - edge - plusSize
