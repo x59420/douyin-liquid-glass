@@ -20,7 +20,7 @@ final class Api33Glass {
     }
 
     static boolean draw(Canvas canvas, RectF bounds, float radius, Bitmap bitmap,
-                        Rect region, View owner, float press, boolean dispersion,
+                        Rect region, Backdrop backdrop, View owner, float press, boolean dispersion,
                         float density, boolean selectedLens) {
         try {
             int[] location = GlassPainter.LOC;
@@ -39,7 +39,8 @@ final class Api33Glass {
 
             // Miuix order: vibrancy -> 4dp Gaussian blur -> rounded-rect lens.
             // The captured bitmap is already recorded at Miuix's adaptive downscale level.
-            Shader blurred = gaussianBlur(content, bitmap, bdSigma(bd), bdScale(bd));
+            Shader blurred = gaussianBlur(content, backdrop.blurSigmaInTexels(),
+                    backdrop.downscaleFactor());
             RuntimeShader shader = shader(dispersion);
             shader.setInputShader("content", blurred);
             shader.setFloatUniform("size", bounds.width(), bounds.height());
@@ -75,15 +76,7 @@ final class Api33Glass {
         }
     }
 
-    private static float bdSigma(Backdrop backdrop) {
-        return backdrop.blurSigmaInTexels();
-    }
-
-    private static float bdScale(Backdrop backdrop) {
-        return backdrop.downscaleFactor();
-    }
-
-    private static Shader gaussianBlur(Shader source, Bitmap bitmap, float sigma, float scale) {
+    private static Shader gaussianBlur(Shader source, float sigma, float scale) {
         if (blurHorizontal == null) {
             blurHorizontal = new RuntimeShader(GlassShader.GAUSSIAN_BLUR);
         }
