@@ -79,7 +79,8 @@ final class GlassPainter {
     static void drawLens(Canvas canvas, RectF b, float rad, Bitmap combined,
                          Rect region, Backdrop bd, View owner,
                          float press, int luma, float density) {
-        if (combined == null || combined.isRecycled() || region == null || region.isEmpty()) {
+        if (combined == null || combined.isRecycled() || region == null || region.isEmpty()
+                || bd == null || bd.bitmap() == null) {
             drawLens(canvas, b, rad, bd, owner, press, luma, density);
             return;
         }
@@ -91,10 +92,11 @@ final class GlassPainter {
             PATH.reset();
             PATH.addRoundRect(b, r, r, Path.Direction.CW);
             canvas.clipPath(PATH);
+            Bitmap source = bd.bitmap();
             boolean ok = android.os.Build.VERSION.SDK_INT >= 33
-                    && Api33Glass.draw(canvas, b, r, combined, region, bd, owner,
-                            progress, progress > 0.001f, density, true);
-            if (!ok) cropBitmap(canvas, b, combined, region, owner);
+                    && Api33Glass.draw(canvas, b, r, source, region, bd, owner,
+                            progress, progress > 0.001f, density, true, combined);
+            if (!ok) cropBitmap(canvas, b, source, region, owner);
             surface(canvas, b, luma, progress);
             highlight(canvas, b, r, density, luma, progress);
             inner(canvas, b, r, density, progress);
@@ -207,7 +209,7 @@ final class GlassPainter {
         Rect region = bd.region();
         if (region.isEmpty()) return false;
         return Api33Glass.draw(canvas, b, r, bmp, region, bd, owner, press, dispersion,
-                density, selectedLens);
+                density, selectedLens, null);
     }
 
     private static void crop(Canvas canvas, RectF b, Backdrop bd, View owner) {
