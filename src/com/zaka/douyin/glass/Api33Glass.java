@@ -25,6 +25,7 @@ final class Api33Glass {
     private static RenderEffect vibrancy;
 
     private static final RenderNode panelNode = new RenderNode("dydock-panel-backdrop");
+    private static final RenderNode lensBackgroundNode = new RenderNode("dydock-selected-lens-background");
     private static final RenderNode lensNode = new RenderNode("dydock-selected-lens-backdrop");
     private static final Paint capturePaint =
             new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
@@ -35,7 +36,8 @@ final class Api33Glass {
 
     static boolean draw(Canvas canvas, RectF bounds, float radius, Bitmap bitmap,
                         Rect region, Backdrop backdrop, View owner, float press,
-                        boolean dispersion, float density, boolean selectedLens) {
+                        boolean dispersion, float density, boolean selectedLens,
+                        Bitmap foregroundLayer) {
         if (canvas == null || !canvas.isHardwareAccelerated()
                 || bitmap == null || bitmap.isRecycled()
                 || region == null || region.isEmpty() || backdrop == null) {
@@ -66,14 +68,44 @@ final class Api33Glass {
             Rect src = new Rect(sl, st, sr, sb);
             dst.set(0, 0, nodeW, nodeH);
 
-            RecordingCanvas recording = node.beginRecording(nodeW, nodeH);
-            try {
-                recording.drawBitmap(bitmap, src, dst, capturePaint);
-            } finally {
-                node.endRecording();
-            }
-
             RuntimeShader shader = shader(dispersion && selectedLens);
+            RecordingCanvas recording;
+            if (selectedLens) {
+                // KernelSU's combinedBackdrop is the already-blurred main backdrop
+                // plus a separate tab layer. Blur the background first, then place
+                // the tab layer above it, and apply only the selected lens afterward.
+                lensBackgroundNode.setPosition(0, 0, nodeW, nodeH);
+                recording = lensBackgroundNode.beginRecording(nodeW, nodeH);
+                try {
+                    recording.drawBitmap(bitmap, src, dst, capturePaint);
+                } finally {
+                    lensBackgroundNode.endRecording();
+                }
+                if (vibrancy == null) {
+                    vibrancy = RenderEffect.createColorFilterEffect(GlassPainter.vibrant());
+                }
+                float baseBlurSigma = 4f * density * 0.45f;
+                RenderEffect baseBlur = RenderEffect.createBlurEffect(
+                        baseBlurSigma, baseBlurSigma, vibrancy, Shader.TileMode.CLAMP);
+                lensBackgroundNode.setRenderEffect(baseBlur);
+
+                recording = node.beginRecording(nodeW, nodeH);
+                try {
+                    recording.drawRenderNode(lensBackgroundNode);
+                    if (foregroundLayer != null && !foregroundLayer.isRecycled()) {
+                        recording.drawBitmap(foregroundLayer, src, dst, capturePaint);
+                    }
+                } finally {
+                    node.endRecording();
+                }
+            } else {
+                recording = node.beginRecording(nodeW, nodeH);
+                try {
+                    recording.drawBitmap(bitmap, src, dst, capturePaint);
+                } finally {
+                    node.endRecording();
+                }
+            }
             float progress = GlassPainter.clamp01(press);
             shader.setFloatUniform("size", bounds.width(), bounds.height());
             shader.setFloatUniform("offset", -pad, -pad);
@@ -93,15 +125,19 @@ final class Api33Glass {
                 shader.setFloatUniform("chromaticAberration", 0.5f);
             }
 
-            if (vibrancy == null) {
-                vibrancy = RenderEffect.createColorFilterEffect(GlassPainter.vibrant());
-            }
-            // Miuix blur(radius=4dp) converts radius to sigma with 0.45f.
-            float blurSigma = 4f * density * 0.45f;
-            RenderEffect blur = RenderEffect.createBlurEffect(
-                    blurSigma, blurSigma, vibrancy, Shader.TileMode.CLAMP);
             RenderEffect lens = RenderEffect.createRuntimeShaderEffect(shader, "content");
-            node.setRenderEffect(RenderEffect.createChainEffect(lens, blur));
+            if (selectedLens) {
+                node.setRenderEffect(lens);
+            } else {
+                if (vibrancy == null) {
+                    vibrancy = RenderEffect.createColorFilterEffect(GlassPainter.vibrant());
+                }
+                // Miuix blur(radius=4dp) converts radius to sigma with 0.45f.
+                float blurSigma = 4f * density * 0.45f;
+                RenderEffect blur = RenderEffect.createBlurEffect(
+                        blurSigma, blurSigma, vibrancy, Shader.TileMode.CLAMP);
+                node.setRenderEffect(RenderEffect.createChainEffect(lens, blur));
+            }
 
             int save = canvas.save();
             try {
