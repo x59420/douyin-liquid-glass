@@ -75,7 +75,7 @@ final class Shield {
             int index = group.indexOfChild(cur);
             if (index < 0) break;
             for (int i = index + 1; i < group.getChildCount(); i++) {
-                if (containsExpandedPanel(group.getChildAt(i), page, 0)) return true;
+                if (containsExpandedPanel(group.getChildAt(i), page, 0, new int[]{220})) return true;
             }
             cur = group;
         }
@@ -92,24 +92,31 @@ final class Shield {
                     if (candidate == null) continue;
                     String className = candidate.getClass().getName();
                     if (className.contains("DockOverlay")) continue;
-                    if (containsExpandedPanel(candidate, page, 0)) return true;
+                    if (containsExpandedPanel(candidate, page, 0, new int[]{220})) return true;
                 }
             }
         }
         return false;
     }
 
-    private static boolean containsExpandedPanel(View view, Rect page, int depth) {
-        if (view == null || depth > 8 || view.getVisibility() != View.VISIBLE
-                || view.getAlpha() < 0.08f) return false;
+    private static boolean containsExpandedPanel(View view, Rect page, int depth, int[] budget) {
+        if (view == null || depth > 8 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.08f
+                || !(view instanceof ViewGroup)) return false;
+
+        // Small descendants cannot contain a qualifying expanded menu/profile panel.
+        // Pruning them avoids repeatedly walking the entire feed tree on the UI thread.
+        Rect bounds = rectOf(view);
+        if (bounds.width() < page.width() * 0.34f
+                || bounds.height() < page.height() * 0.28f) return false;
+
         String className = view.getClass().getName();
         if (className.contains("DockOverlay")) return false;
-        if (view instanceof ViewGroup && isExpandedPanel(view, page)) return true;
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                if (containsExpandedPanel(group.getChildAt(i), page, depth + 1)) return true;
-            }
+        if (isExpandedPanel(view, page)) return true;
+
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+            if (containsExpandedPanel(group.getChildAt(i), page, depth + 1, budget)) return true;
         }
         return false;
     }
