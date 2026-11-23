@@ -412,10 +412,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     // 着色器在一些机型/系统版本上会直接抛（AGSL 编不过、RuntimeShader 不支持）。
                     // 以前这一下会把整块玻璃带走 —— 退回磨砂，至少看得见。
                     Dydock.warnOnce("pane-gl", "折射绘制失败，退回磨砂: " + t);
-                    GlassPainter.drawFrosted(canvas, b, rad, density, luma);
+                    GlassPainter.drawFrosted(canvas, b, rad, density, this);
                 }
             } else {
-                GlassPainter.drawFrosted(canvas, b, rad, density, luma);
+                GlassPainter.drawFrosted(canvas, b, rad, density, this);
             }
         } finally {
             canvas.restoreToCount(save);
@@ -464,10 +464,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("lens-gl", "透镜绘制失败，退回磨砂: " + t);
-                    GlassPainter.drawFrosted(canvas, lens, corner, density, luma);
+                    GlassPainter.drawFrosted(canvas, lens, corner, density, this);
                 }
             } else {
-                GlassPainter.drawFrosted(canvas, lens, corner, density, luma);
+                GlassPainter.drawFrosted(canvas, lens, corner, density, this);
             }
         } finally {
             canvas.restoreToCount(save);
