@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -51,6 +52,7 @@ import com.zaka.douyin.glass.ksu.FloatingBottomBarItem
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.LocalContentColor
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
 
@@ -393,7 +395,8 @@ private fun ComposeDockSurface(
                             Image(
                                 bitmap = tab.icon,
                                 contentDescription = tab.label,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(24.dp),
+                                colorFilter = ColorFilter.tint(LocalContentColor.current)
                             )
                         } else {
                             Icon(
