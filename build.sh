@@ -29,6 +29,8 @@ gradle --no-daemon --stacktrace assembleRelease
 
 APK="$ROOT/app/build/outputs/apk/release/app-release.apk"
 test -s "$APK"
-cp "$APK" "$ROOT/out/dydock-0.1.20.apk"
+VERSION_NAME=$(grep -m1 "versionName" app/build.gradle.kts | cut -d '"' -f2)
+if [ -z "$VERSION_NAME" ]; then echo "ERROR: versionName not found"; exit 1; fi
+cp "$APK" "$ROOT/out/dydock-$VERSION_NAME.apk"
 echo "== APK ready =="
-ls -lh "$ROOT/out/dydock-0.1.20.apk"
+ls -lh "$ROOT/out/dydock-$VERSION_NAME.apk"
