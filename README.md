@@ -1,28 +1,45 @@
 # dydock · 抖音底栏液态玻璃
 
-一个面向抖音 Android 客户端的 LSPosed 模块：**把四个主页面底部导航栏替换成悬浮液态玻璃 Dock**，尽量保留抖音原有的布局和点击逻辑。
+一个面向抖音 Android 客户端的 LSPosed 模块：**把底部导航栏换成悬浮液态玻璃 Dock**，只动底栏这一块，其余界面保持抖音原样。
 
-> 当前源码版本：**0.2.2**
+> 当前版本：**0.3.0**（versionCode 2300）
 >
 > APK 下载：**[GitHub Releases](https://github.com/x59420/douyin-liquid-glass/releases)**
 >
-> 自动构建：每次推送到 `main` 且构建成功后，GitHub Actions 会自动创建一个带 APK 的 Release。
+> 自动构建：推送到 `main` 且构建成功后，GitHub Actions 会自动创建带 APK 的 Release。
 
 ---
 
-## 关于 0.2.2：为什么之前「装了跟没装一样」
+## 关于 0.3.0：渲染器回到 Compose + Miuix（与 KernelSU 同一套）
 
-0.1.21 / 0.2.1 的底栏识别是**一票否决**：必须正好 5 个子项、而且「首页 / 朋友 / 消息 / 我」四个文字全都认出来，才肯接管。抖音只要改一次版、换个皮肤、把文字画进自绘 Canvas，或者未读角标把原来的文字节点换掉，识别就永远失败 —— 表现出来就是**模块明明装好了、抖音能正常打开，但底部一点变化都没有**。
+0.2.2 为了排查「打开抖音没反应 / 闪退」，把渲染器换成了纯 View + Canvas 手绘。排查是有效的，但代价是**观感和 KernelSU 不一致**：手绘那套是照着参数近似复刻，折射、内阴影、泛光、拖动手感都是另写的。
 
-这一版三处改动：
+0.3.0 把渲染器整套换回来，并且是**逐字移植 KernelSU Manager 的实现**，不是自己再写一遍：
 
-1. **识别改成打分制。** 先找「贴着屏幕底边、横着铺开的一排可点控件」，再按文字命中、子项个数（4~7）、是否有选中态、中间那个发布按钮这些证据累加分数；分数不够就老实不动，绝不去替换正文里的一排按钮。文字一个都认不出时，只要结构是抖音经典的「4 个等宽 + 中间一个窄的发布键」也会认。
-2. **重试时间从 7 秒拉到 12 秒**，冷启动慢的机器也能等到底栏出现。
-3. **接管成功 / 失败各弹一次提示。** 打开抖音后如果看到「玻璃底栏已接管」而界面没变化，说明问题在绘制；如果看到「没认出抖音底栏」，说明是识别规则没覆盖你的抖音版本 —— 把这一句告诉我就能直接定位。
+| 文件 | 与上游关系 |
+| --- | --- |
+| `ksu/FloatingBottomBar.kt` | KernelSU `FloatingBottomBar.kt` 逐字移植（仅改包名、import，外加 API 33 以下的泛光保护） |
+| `ksu/liquid/Lens.kt` | 逐字移植：AGSL 圆角 SDF 折射 |
+| `ksu/liquid/InnerShadow.kt` | 逐字移植：边缘内阴影 |
+| `ksu/liquid/Vibrancy.kt` | 逐字移植：饱和度增强 |
+| `ksu/liquid/CombinedBackdrop.kt` | 逐字移植：宿主背景 + 自身图层合并采样 |
+| `ksu/animation/DampedDragAnimation.kt` | 逐字移植：阻尼拖动 + 弹簧回位 + 4dp 橡皮筋 |
+| `ksu/animation/InteractiveHighlight.kt` | 逐字移植：按下泛光（AGSL） |
+| `ksu/modifier/DragGestureInspector.kt` | 逐字移植：拖动速度采集 |
 
-同时，这一版**把 Compose / Miuix 渲染器整套撤掉，回到纯 Android View + Canvas 渲染**。原因是抖音自己也带一份 androidx/Compose，模块再往宿主进程里塞一份，两边版本一撞，玻璃在测量或绘制里抛异常被护栏吞掉，用户看到的就是「什么都没发生」。纯 Canvas 这条路不依赖宿主 any 的 Compose，也不会有类冲突 —— 0.0.2 当时显示正常的就是它。
+参数也保持一致，没有另调：`vibrancy()` → `blur(4dp, 4dp)` → `lens(refractionHeight = 24dp, refractionAmount = 24dp)`，高光 `alpha = 0.75f`，投影 `radius = 10dp / alpha 0.2(暗) · 0.1(亮)`，按下时整体缩放 `lerp(1f, 1f + 16dp / width, pressProgress)`，底栏高度 64dp、内部 56dp，阴影/内阴影同一套 `CircleShape` 胶囊。
 
-顺带的排版修正如实说明：四个图标 + 「＋」现在当成**一整组水平居中**，「＋」紧挨在这一组右边，不再是左边一条拉满、右边一个掉在角落；整组 64dp 高、每个 tab 76dp 宽，跟 KernelSU Manager 的 FloatingBottomBar 参数一致。
+**唯一的一处改动**：KernelSU 的胶囊按内容自己撑开（`IntrinsicSize.Min`，每个 tab 最少 76dp）。抖音这边 4 个 tab 的区域比整屏窄——右侧还有发布键——所以外面套了一层同宽度的容器做居中 + 最大宽度约束，胶囊在小屏上会等比收窄，不会盖到发布键上。组件内部一行没改。
+
+### 顺带保留了 0.2.2 的识别逻辑
+
+识别仍然是打分制，不是一票否决：找「贴着屏幕底边、横着铺开的一排可点控件」，再按文字命中、子项个数、选中态、中间发布键这些证据累加；分数不够就不动手。抖音改版、换皮、文字被画进自绘 Canvas、角标替换节点，都还能认出来。
+
+### 崩溃防护（0.2.1 的两个根因 + 0.3.0 的护栏）
+
+- `ThemeController` 只在系统深浅色切换时创建，不再跟着每一帧重组重建（原来 30fps 背景刷新会每秒 new 几十个，把宿主内存拖爆）。
+- 采样位图交给 Compose 的一律是**副本**，采样缓冲可以放心回收（原来 Compose 直接引用同一块内存，回收后再绘制就是原生崩溃）。
+- `ComposeView` 的 measure / layout / draw 三级护栏 + `isBroken()` 检查：Compose 或 Miuix 真的抛错时，模块自动收起玻璃、把官方底栏还回来，异常不会冒到宿主主线程，抖音照常能用。
 
 ## 功能一览
 
@@ -33,7 +50,7 @@
 - 从宿主原有导航项读取未读状态，并在玻璃 Dock 上显示角标。
 - 玻璃 Dock 在首次识别后固定在屏幕底部位置，不再逐帧追随原生 Dock；原生节点只用于转发点击和读取角标。
 - 支持按住导航项、左右拖动和松手弹簧回位。
-- 玻璃背景优先采样宿主界面内容；不支持实时着色器的系统会使用磨砂效果回退。
+- 玻璃背景采样宿主真实界面内容，再交给 Miuix 的 blur / lens 链路渲染；低于 Android 13（无 RuntimeShader）时退化为磨砂玻璃，没有折射与泛光。
 
 ## 修改范围
 
@@ -133,6 +150,15 @@ ANDROID_HOME=~/android-sdk bash build.sh
 请妥善保管签名文件，不要把它发送给他人或上传到无关位置。
 
 ## 版本记录
+
+### 0.3.0
+
+- **渲染器回到 Compose + Miuix**：`FloatingBottomBar` 与 `liquid/*`、`animation/*`、`modifier/*` 全部按 KernelSU Manager 逐字移植，玻璃参数（vibrancy / blur 4dp / lens 24dp / 高光 0.75 / 投影 10dp / 64dp 高度 / 56dp 内部）与上游一致，不再用自己手写的 Canvas 近似。
+- 底栏胶囊按内容撑开并限制在抖音 4 个 tab 区域内居中；小屏等比收窄，不遮挡右侧发布键。
+- 保留 0.2.2 的打分式底栏识别（贴底一排 + 文字 / 个数 / 选中态 / 发布键多重证据，无文字也按「4 等宽 + 中间窄键」结构识别），重试 40 次 / 12 秒。
+- 保留 0.2.1 的两处崩溃修复（ThemeController 不再逐帧重建、采样位图给 Compose 的始终是副本）与三级绘制护栏；Compose 抛错时自动恢复官方底栏。
+- 接管成功 / 识别失败各弹一次提示，用来区分「没认出来」和「没画出来」。
+- `versionCode` 2300，可直接覆盖 0.2.2（2200）及更早版本。
 
 ### 0.2.2
 
@@ -247,10 +273,16 @@ ANDROID_HOME=~/android-sdk bash build.sh
 
 - [Kyant0/AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass)（Apache-2.0）：液态折射着色器、高光、色散、弹簧动画及底栏拖动交互等实现参考。相关说明见 [NOTICE](NOTICE)。
 - [lengroo/pdd-LiquidGlass](https://github.com/lengroo/pdd-LiquidGlass)（MIT）：只接管指定区域、使用宿主界面内容作为玻璃背景的实现思路参考。
+- [tiann/KernelSU](https://github.com/tiann/KernelSU)：`FloatingBottomBar` 及其液态玻璃组件（`liquid/*`、`animation/*`、`modifier/*`）的移植来源，详见 [NOTICE-KERNELSU](NOTICE-KERNELSU.md)。
+- [compose-miuix-ui](https://github.com/miuix-kotlin-multiplatform/compose-miuix-ui)：KernelSU 那份底栏本身即改编自其 `IosLiquidGlassNavigationBar` 示例（Apache-2.0），本项目由此继承同一实现。
+
+液态玻璃相关的折射、色散、内阴影、泛光、拖动阻尼等效果均来自上述开源项目，**版权归原作者**。
 
 ## 许可与免责声明
 
 - 本项目许可：Apache License 2.0，见 [LICENSE](LICENSE)。
+- Copyright © 2026 dydock contributors。第三方衍生部分的版权归其原作者所有（见 [NOTICE](NOTICE) / [NOTICE-KERNELSU](NOTICE-KERNELSU.md)）。
+- 本项目仅供学习、研究与个人**非商业**用途使用，请勿用于商业分发或售卖。
 - 第三方衍生代码遵循其原始项目所适用的许可证，具体归属见 [NOTICE](NOTICE)。
 - 本项目为非官方第三方模块，与字节跳动及抖音官方无隶属、赞助或认可关系。
 - “抖音”及相关商标归其各自所有者所有。

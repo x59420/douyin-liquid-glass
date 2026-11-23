@@ -1,5 +1,6 @@
 plugins {
     id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -15,18 +16,24 @@ android {
         applicationId = "com.zaka.douyin.glass"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2200
-        versionName = "0.2.2"
+        versionCode = 2300
+        versionName = "0.3.0"
     }
 
     sourceSets {
         getByName("main") {
             manifest.srcFile(rootProject.file("app/AndroidManifest.xml"))
             java.srcDirs(rootProject.file("src"))
+            // AGP 9 built-in Kotlin has a separate Kotlin source directory set.
+            kotlin.directories.add(rootProject.file("src").absolutePath)
             res.srcDirs(rootProject.file("app/res"))
             assets.srcDirs(rootProject.file("app/assets"))
             resources.srcDirs(rootProject.file("app/resources"))
         }
+    }
+
+    buildFeatures {
+        compose = true
     }
 
     compileOptions {
@@ -70,8 +77,14 @@ android {
 }
 
 dependencies {
-    // 纯 Java Canvas 渲染：不把 Compose/Miuix 打进宿主进程。
-    // 抖音自己带一份 androidx/Compose，模块再塞一份进去会在宿主里撞版本，
-    // 表现就是「玻璃画不出来、什么都没变」。这条路走 p ure Android View + RenderEffect。
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.animation:animation")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
+    implementation("top.yukonga.miuix.kmp:miuix-blur-android:0.9.4")
     compileOnly(files(rootProject.file("libs/api-82.jar")))
 }
