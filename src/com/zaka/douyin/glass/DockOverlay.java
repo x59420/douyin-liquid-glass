@@ -384,6 +384,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         tmp.set(panelCx - panelHalfW, panelCy - panelHalfH,
                 panelCx + panelHalfW, panelCy + panelHalfH);
         tmp.offset(panelOffset, 0f);
+        GlassPainter.drawOuterShadow(canvas, tmp, tmp.height() / 2f, density,
+                darkTheme, alpha);
         drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, panelPress,
                 dragging && panelPress > 0.3f, alpha);
         interactiveHighlight.draw(canvas, tmp, slotCenterX(droplet.x()) + panelOffset,
