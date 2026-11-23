@@ -106,7 +106,26 @@ final class DockSettingsUi {
             if (child == null) continue;
             if (child != keep && "Dydock settings entry".contentEquals(
                     child.getContentDescription() == null ? "" : child.getContentDescription())) {
-                group.removeViewAt(i);
+                // 若入口位于我们创建的双列 wrapper 中，连 wrapper 一起拆掉并还原原生设置行。
+                if (group instanceof LinearLayout
+                        && ((LinearLayout) group).getOrientation() == LinearLayout.HORIZONTAL
+                        && group.getChildCount() == 2 && group.getParent() instanceof ViewGroup) {
+                    View nativeItem = group.getChildAt(i == 0 ? 1 : 0);
+                    ViewGroup outer = (ViewGroup) group.getParent();
+                    int wrapperIndex = outer.indexOfChild(group);
+                    ViewGroup.LayoutParams wrapperParams = group.getLayoutParams();
+                    if (nativeItem != null && wrapperIndex >= 0) {
+                        group.removeView(nativeItem);
+                        outer.removeViewAt(wrapperIndex);
+                        nativeItem.setLayoutParams(wrapperParams);
+                        outer.addView(nativeItem, Math.min(wrapperIndex, outer.getChildCount()),
+                                wrapperParams);
+                    } else {
+                        group.removeViewAt(i);
+                    }
+                } else {
+                    group.removeViewAt(i);
+                }
                 continue;
             }
             if (child instanceof ViewGroup) {
