@@ -495,8 +495,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             Canvas layer = new Canvas(lensComposite);
             layer.drawColor(android.graphics.Color.TRANSPARENT,
                     android.graphics.PorterDuff.Mode.CLEAR);
-            layer.drawBitmap(source, 0f, 0f, lensCompositePaint);
-
+            // Keep this as a transparent tab-only layer. Api33Glass first blurs
+            // the live backdrop, composites these tabs above it, then applies the lens.
             getLocationInWindow(winLoc);
             int save = layer.save();
             float sx = source.getWidth() / (float) region.width();
