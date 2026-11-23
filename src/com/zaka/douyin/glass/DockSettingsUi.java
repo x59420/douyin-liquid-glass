@@ -115,6 +115,7 @@ final class DockSettingsUi {
                     int wrapperIndex = outer.indexOfChild(group);
                     ViewGroup.LayoutParams wrapperParams = group.getLayoutParams();
                     if (nativeItem != null && wrapperIndex >= 0) {
+                        group.removeView(child);
                         group.removeView(nativeItem);
                         outer.removeViewAt(wrapperIndex);
                         nativeItem.setLayoutParams(wrapperParams);
