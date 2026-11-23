@@ -441,10 +441,18 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         try {
             if (a < 1f) canvas.saveLayerAlpha(lens, (int) (255 * a));
 
-            // Tieba keeps the same glass material at rest and during interaction;
-            // only press progress changes the refraction/depth response.
-            drawPane(canvas, lens, corner, framed, luma, dropletPress,
-                    dragging, 255);
+            // KernelSU selected lens: pressure drives refraction, depth and dispersion.
+            if (framed) {
+                try {
+                    GlassPainter.drawLens(canvas, lens, corner, backdrop, this,
+                            dropletPress, luma, density);
+                } catch (Throwable t) {
+                    Dydock.warnOnce("lens-gl", "透镜绘制失败，退回磨砂: " + t);
+                    GlassPainter.drawFrosted(canvas, lens, corner, density, luma);
+                }
+            } else {
+                GlassPainter.drawFrosted(canvas, lens, corner, density, luma);
+            }
         } finally {
             canvas.restoreToCount(save);
         }
@@ -480,15 +488,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             float seq = Math.max(0f, Math.min(1f, (a - i * 0.08f) * 2.4f));
             int alpha = (int) ((sel ? 255 : 176 + 44 * near) * seq);
             if (alpha <= 2) continue;
-            // 按住时选中那个再放大一圈，像是被透镜托起来
-            float rowScale = 1f + 0.20f * p;
-            float rowCx = leftPill.centerX();
-            float rowCy = leftPill.centerY();
-            float s = rowScale;
-            float cx = rowCx + (slots[i].centerX() - rowCx) * rowScale + panelOffset;
-            float cy = rowCy + (slots[i].centerY() - rowCy) * rowScale
-                    + (1f - seq) * 4f * density;
-            drawIcon(canvas, i, cx, cy, size * s, alpha, ink);
+            // KernelSU scales each tab around its own centre; slot spacing is unchanged.
+            float itemScale = 1f + 0.20f * p;
+            float cx = slots[i].centerX() + panelOffset;
+            float cy = slots[i].centerY() + (1f - seq) * 4f * density;
+            drawIcon(canvas, i, cx, cy, size * itemScale, alpha, ink);
         }
     }
 
