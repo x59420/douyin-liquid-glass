@@ -92,7 +92,7 @@ final class GlassPainter {
             PATH.addRoundRect(b, r, r, Path.Direction.CW);
             canvas.clipPath(PATH);
             boolean ok = android.os.Build.VERSION.SDK_INT >= 33
-                    && Api33Glass.draw(canvas, b, r, combined, region, owner,
+                    && Api33Glass.draw(canvas, b, r, combined, region, bd, owner,
                             progress, progress > 0.001f, density, true);
             if (!ok) cropBitmap(canvas, b, combined, region, owner);
             surface(canvas, b, luma, progress);
@@ -206,7 +206,7 @@ final class GlassPainter {
         if (bmp == null || bmp.isRecycled()) return false;
         Rect region = bd.region();
         if (region.isEmpty()) return false;
-        return Api33Glass.draw(canvas, b, r, bmp, region, owner, press, dispersion,
+        return Api33Glass.draw(canvas, b, r, bmp, region, bd, owner, press, dispersion,
                 density, selectedLens);
     }
 
