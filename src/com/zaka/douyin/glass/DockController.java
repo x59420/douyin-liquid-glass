@@ -248,6 +248,8 @@ final class DockController {
         final int[] expandedTicks = new int[]{0};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
+        final long[] lastClearScanAt = new long[]{0L};
+        final boolean[] clearScreenState = new boolean[]{false};
         final Runnable backdropRefresh = new Runnable() {
             @Override public void run() {
                 if (!live[0]) return;
@@ -322,7 +324,11 @@ final class DockController {
 
                     boolean speedPlayback = Shield.hasSpeedPlaybackOverlay(decor);
                     boolean longPress = isHostLongPressActive(act);
-                    boolean clearScreen = Shield.hasClearScreenState(decor);
+                    if (now - lastClearScanAt[0] >= 200L) {
+                        clearScreenState[0] = Shield.hasClearScreenState(decor);
+                        lastClearScanAt[0] = now;
+                    }
+                    boolean clearScreen = clearScreenState[0];
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
