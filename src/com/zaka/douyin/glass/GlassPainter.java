@@ -75,6 +75,58 @@ final class GlassPainter {
                 luma, density, true);
     }
 
+    /** Selected lens over the combined background + tab-icon layer. */
+    static void drawLens(Canvas canvas, RectF b, float rad, Bitmap combined,
+                         Rect region, Backdrop bd, View owner,
+                         float press, int luma, float density) {
+        if (combined == null || combined.isRecycled() || region == null || region.isEmpty()) {
+            drawLens(canvas, b, rad, bd, owner, press, luma, density);
+            return;
+        }
+        if (canvas == null || b == null || b.width() <= 0 || b.height() <= 0) return;
+        float r = Math.max(0f, Math.min(rad, Math.min(b.width(), b.height()) / 2f));
+        float progress = clamp01(press);
+        int save = canvas.save();
+        try {
+            PATH.reset();
+            PATH.addRoundRect(b, r, r, Path.Direction.CW);
+            canvas.clipPath(PATH);
+            boolean ok = android.os.Build.VERSION.SDK_INT >= 33
+                    && Api33Glass.draw(canvas, b, r, combined, region, owner,
+                            progress, progress > 0.001f, density, true);
+            if (!ok) cropBitmap(canvas, b, combined, region, owner);
+            surface(canvas, b, luma, progress);
+            highlight(canvas, b, r, density, luma, progress);
+            inner(canvas, b, r, density, progress);
+        } finally {
+            canvas.restoreToCount(save);
+        }
+    }
+
+    private static void cropBitmap(Canvas canvas, RectF b, Bitmap bitmap,
+                                   Rect region, View owner) {
+        try {
+            owner.getLocationInWindow(LOC);
+            float kx = bitmap.getWidth() / (float) region.width();
+            float ky = bitmap.getHeight() / (float) region.height();
+            int l = clamp((int) ((LOC[0] + b.left - region.left) * kx), 0, bitmap.getWidth() - 1);
+            int t = clamp((int) ((LOC[1] + b.top - region.top) * ky), 0, bitmap.getHeight() - 1);
+            int rr = clamp((int) ((LOC[0] + b.right - region.left) * kx), l + 1, bitmap.getWidth());
+            int bb = clamp((int) ((LOC[1] + b.bottom - region.top) * ky), t + 1, bitmap.getHeight());
+            SRC.set(l, t, rr, bb);
+            FILL.setShader(null);
+            FILL.setColorFilter(vibrant());
+            canvas.drawBitmap(bitmap, SRC, b, FILL);
+        } catch (Throwable ignored) {
+            FILL.setShader(null);
+            FILL.setColorFilter(null);
+            FILL.setColor(0x14FFFFFF);
+            canvas.drawRect(b, FILL);
+        } finally {
+            FILL.setColorFilter(null);
+        }
+    }
+
     private static void drawInternal(Canvas canvas, RectF b, float rad, Backdrop bd,
                                      View owner, float press, boolean dispersion,
                                      int luma, float density, boolean selectedLens) {
