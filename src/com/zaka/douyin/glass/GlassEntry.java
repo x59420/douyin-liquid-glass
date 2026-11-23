@@ -28,6 +28,15 @@ public final class GlassEntry implements IXposedHookLoadPackage {
 
         Dydock.log("dydock " + Dydock.VER + " 装载进宿主（仅 Dock 液态玻璃）");
 
+        // LSPosed 会在 LoadPackageParam 里给出模块自己的 APK 路径。
+        // 玻璃层要在独立类加载器里加载，必须知道模块 APK 在哪。
+        try {
+            java.lang.reflect.Field modulePath = lp.getClass().getField("modulePath");
+            Object value = modulePath.get(lp);
+            if (value instanceof String) IsoDock.setModulePath((String) value);
+        } catch (Throwable ignored) {
+        }
+
 
         // Observe the host's own accepted long-click callback without replacing its listeners.
         // This keeps Douyin's original gesture handling intact.

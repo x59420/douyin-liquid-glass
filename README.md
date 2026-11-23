@@ -2,11 +2,38 @@
 
 一个面向抖音 Android 客户端的 LSPosed 模块：**把底部导航栏换成悬浮液态玻璃 Dock**，只动底栏这一块，其余界面保持抖音原样。
 
-> 当前版本：**0.3.0**（versionCode 2300）
+> 当前版本：**0.3.1**（versionCode 2310）
 >
 > APK 下载：**[GitHub Releases](https://github.com/x59420/douyin-liquid-glass/releases)**
 >
 > 自动构建：推送到 `main` 且构建成功后，GitHub Actions 会自动创建带 APK 的 Release。
+
+---
+
+## 关于 0.3.1：为什么 0.3.0「装了完全没反应」
+
+0.3.0 把渲染器换回了 Compose + Miuix（和 KernelSU 同一套），但装到手机上**什么都不发生**：底栏还是抖音原样。0.2.2 用 Canvas 手绘时反而能看见玻璃。原因不在渲染器，在**类加载**：
+
+- LSPosed 是把模块的 dex 挂进**抖音自己的进程**里的，而且宿主（抖音）的类优先。
+- 抖音进程里自带 androidx（以及可能的 Compose）。模块再用自己那份 Compose 时，`androidx.lifecycle` / `androidx.savedstate` 被抖音那份老版本顶掉，`ComposeView` 一初始化就抛 `NoSuchMethodError` / `ClassCastException`（资源 id、类版本都对不上）。
+- 0.2.1 起加的三级绘制护栏会把这个异常吞掉、然后「自动恢复官方底栏」——于是表现就是**无声无息、什么都没变**。
+
+0.3.1 的修法是**把玻璃层放进独立的类加载器**跑，渲染器一行没换：
+
+| 位置 | 作用 |
+| --- | --- |
+| `IsoDock.java` | 用 `DexClassLoader`（父加载器 = 系统启动类加载器）加载模块 APK 里的 `iso.IsoOverlay`，抖音自己的 androidx 完全不参与；跨加载器只传 `Context` / `View` / `Bitmap` / `Rect` 和 `java.util.function` 回调 |
+| `iso/IsoOverlay.kt` | 玻璃层本体，跑在隔离加载器里，所以可以放心用 Compose / Miuix；**不引用宿主侧任何模块类** |
+| `ksu/*` | KernelSU 的 `FloatingBottomBar` / `liquid/*` / `animation/*` / `modifier/*` 逐字移植，**参数一个字未改** |
+
+同一次还修了几处会让「看起来又没生效」的地方：
+
+- **着色器能力探测**：AGSL `RuntimeShader` 建不起来（部分机型/ROM）时自动走 Miuix 自带的降级，不让一帧着色器异常把整层玻璃干掉。
+- **看门狗和轮询互斥**：玻璃 2.5 秒内没画出来就恢复原生底栏，并且**同时停掉显隐轮询**（旧版会下一帧又把底栏藏回去）。
+- **隔离加载只做一次**：类加载器与隔离类缓存复用，失败后不再每个 Activity 重撞一遍。
+- **识别失败会写清原因**：日志里带上「最高候选的类名 + 得分」，不再是笼统的「没认出来」。
+
+> 说明：这些改动只解决「模块和抖音的 androidx 撞车」。玻璃的位置/外观参数仍然完全来自 KernelSU 那一套，两个 dock（四 tab 胶囊 + 右边独立「＋」）的几何也保持原样。
 
 ---
 
@@ -115,23 +142,35 @@
 
 ## 构建
 
-项目使用自定义 Shell 脚本构建，不使用 Gradle，也不要求 Android Studio。
+Gradle + AGP 构建 Kotlin/Compose，`build.sh` 只负责补 Xposed API、取签名口令、调用 Gradle 并整理产物。
 
 ### 本地环境
 
-- JDK 17
-- Android SDK
-- Android SDK Platform（例如 android-35）
-- Android SDK Build Tools（例如 35.0.0）
-- 可用的网络连接（首次构建需要下载 Xposed API jar）
+- JDK 21
+- Gradle 9.7.1（CI 用 `gradle/actions/setup-gradle`）
+- Android SDK Platform **android-37.0**
+- Android SDK Build Tools **37.0.0**
+- 可用的网络连接（首次构建要拉 Compose / Miuix 依赖与 Xposed API jar）
 
 ### 构建命令
 
 ```bash
-ANDROID_HOME=~/android-sdk bash build.sh
+ANDROID_HOME=/path/to/android-sdk bash build.sh
 ```
 
-成功后 APK 位于 `out/dydock-<版本号>.apk`。
+`build.sh` 会：
+
+1. 没有签名口令时，从历史提交里取回 keystore 口令（保证覆盖安装不换签名）；
+2. 缺 `libs/api-82.jar` 时下载 Xposed API 82；
+3. `gradle assembleRelease`（R8 收缩、`-dontobfuscate` 保留类名）；
+4. 把 APK 复制成 `out/dydock-<版本号>.apk`。
+
+> 只想验证能不能编译，可以只跑 `:app:compileReleaseKotlin :app:compileReleaseJavaWithJavac`，不需要签名口令。
+
+### 构建产物与 R8 注意
+
+- `iso/**` 是**按名字反射加载**的，`app/proguard-rules.pro` 里必须 `-keep`（连同它引用的 `ksu/**`），否则 R8 会把玻璃层裁光，表现又是「没反应」。
+- 版本号 `versionCode` 必须大于设备上已安装的版本，否则安卓会以「降级」为由拒绝覆盖安装。
 
 ### GitHub Actions
 
@@ -153,6 +192,16 @@ ANDROID_HOME=~/android-sdk bash build.sh
 请妥善保管签名文件，不要把它发送给他人或上传到无关位置。
 
 ## 版本记录
+
+### 0.3.1
+
+- **修复「0.3.0 装了完全没反应」**：玻璃层改到独立类加载器（`IsoDock` + `iso/IsoOverlay`）里跑，模块自带的一份 Compose / Miuix / androidx 不再和抖音进程里的旧版本抢类；渲染器仍是 KernelSU 的 `FloatingBottomBar` + `liquid/*`，参数未改动。
+- 跨加载器只传框架类型（`Context` / `View` / `Bitmap` / `Rect`）与 `java.util.function` 回调，点击事件照旧转发给抖音原生导航项。
+- **着色器能力探测**：`RuntimeShader` 不可用时自动降级，不再因一帧 AGSL 异常把整层玻璃判死。
+- **看门狗与显隐轮询互斥**：玻璃 2.5 秒未绘制则恢复原生底栏并停止轮询，避免「刚恢复又被藏起来」。
+- 隔离类加载器 / 隔离类缓存复用，加载失败后不再每个 Activity 重试一遍。
+- 识别失败日志附「最高候选类名 + 得分」，便于对照抖音版本排查。
+- `versionCode` 2310，可覆盖 0.3.0（2300）及更早版本。
 
 ### 0.3.0
 

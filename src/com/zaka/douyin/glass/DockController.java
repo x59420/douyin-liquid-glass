@@ -1,6 +1,7 @@
 package com.zaka.douyin.glass;
 
 import android.app.Activity;
+import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
@@ -17,6 +18,8 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.WeakHashMap;
+import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 
 /**
  * 把官方底栏那一条换成两块悬浮玻璃。
@@ -48,8 +51,8 @@ final class DockController {
     private static final WeakHashMap<Activity, View> LONG_PRESS_TARGETS =
             new WeakHashMap<Activity, View>();
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
-    private static final WeakHashMap<Activity, ComposeDockOverlay> OVERLAYS =
-            new WeakHashMap<Activity, ComposeDockOverlay>();
+    private static final WeakHashMap<Activity, IsoDock> OVERLAYS =
+            new WeakHashMap<Activity, IsoDock>();
     /** Keep the per-Activity poller cancellable so destroyed pages do not retain work. */
     private static final WeakHashMap<Activity, Runnable> POLLERS =
             new WeakHashMap<Activity, Runnable>();
@@ -337,12 +340,12 @@ final class DockController {
         synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
         synchronized (CLEAR_TOUCH) { CLEAR_TOUCH.remove(act); }
         View dock;
-        ComposeDockOverlay overlay;
+        IsoDock iso;
         synchronized (DOCKS) {
             dock = DOCKS.remove(act);
         }
         synchronized (OVERLAYS) {
-            overlay = OVERLAYS.remove(act);
+            iso = OVERLAYS.remove(act);
         }
         Runnable poller;
         boolean[] pollState;
@@ -355,10 +358,10 @@ final class DockController {
         if (pollState != null) pollState[0] = false;
         if (poller != null) MAIN.removeCallbacks(poller);
         try {
-            if (overlay != null) {
-                overlay.dispose();
-                ViewParent p = overlay.getParent();
-                if (p instanceof ViewGroup) ((ViewGroup) p).removeView(overlay);
+            if (iso != null) {
+                iso.dispose();
+                ViewParent p = iso.view.getParent();
+                if (p instanceof ViewGroup) ((ViewGroup) p).removeView(iso.view);
             }
         } catch (Throwable ignored) {
         }
@@ -399,7 +402,8 @@ final class DockController {
                     if (n < MAX_ATTEMPTS) {
                         attempt(act, n + 1);
                     } else if (n == MAX_ATTEMPTS) {
-                        Dydock.warn("底栏:没认出底栏（这个页面可能不是首页）");
+                        Dydock.warn("底栏:没认出底栏（最高候选 "
+                                + Finder.lastBestClass + " 得分 " + Finder.lastBestScore + "）");
                         toast(act, "Dydock " + Dydock.VER + "：没认出抖音底栏");
                     }
                 } catch (Throwable t) {
@@ -427,35 +431,83 @@ final class DockController {
         }
 
         View plus = Finder.pickPlus(items);
-        List<View> left = new ArrayList<View>(items);
-        if (plus != null) left.remove(plus);
-
-        float density = act.getResources().getDisplayMetrics().density;
+        final List<View> initialTabs = new ArrayList<View>(items);
+        if (plus != null) initialTabs.remove(plus);
 
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
         // Miuix 自己在 GPU 上做 4dp 模糊，这里只决定采样分辨率。
         backdrop.setSampleScale();
 
-        final ComposeDockOverlay overlay = ComposeDockOverlay.create(act, backdrop, density);
-        overlay.setTabs(left, plus);
-        // Refresh the sampled background as feed content and video frames change.
+        // 宿主节点被换掉时，点击回调里取到的永远是最新那批导航项。
+        final List<View>[] tabTargets = new List[]{initialTabs};
+        final View[] plusTarget = new View[]{plus};
+
+        // 关键：玻璃层跑在独立类加载器里，不跟抖音自己的 androidx / compose 抢类。
+        final IsoDock iso = IsoDock.create(act,
+                new Consumer<String>() {
+                    @Override public void accept(String message) {
+                        Dydock.log("[玻璃] " + message);
+                    }
+                },
+                new IntConsumer() {
+                    @Override public void accept(int index) {
+                        try {
+                            List<View> targets = tabTargets[0];
+                            if (index >= 0 && index < targets.size()) {
+                                targets.get(index).performClick();
+                            }
+                        } catch (Throwable t) {
+                            Dydock.warnOnce("iso-tab-click", "转发导航点击失败: " + t);
+                        }
+                    }
+                },
+                new Runnable() {
+                    @Override public void run() {
+                        try {
+                            View target = plusTarget[0];
+                            if (target != null) target.performClick();
+                        } catch (Throwable t) {
+                            Dydock.warnOnce("iso-plus-click", "转发发布点击失败: " + t);
+                        }
+                    }
+                });
+
+        if (iso == null) {
+            // 隔离加载都起不来的话，宁可不接管，也不在宿主进程里硬塞一套会和抖音撞版本的 Compose。
+            Dydock.warn("底栏:玻璃组件加载失败，保留抖音原生底栏");
+            toast(act, "Dydock " + Dydock.VER + "：玻璃组件加载失败");
+            return false;
+        }
+
+        ((ViewGroup) decor).addView(iso.view, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        applyGeometry(iso, backdrop, dock, initialTabs.size());
+        refreshTabs(iso, initialTabs, plus);
+
+        final View[] dockRef = new View[]{dock};
+        final boolean[] live = new boolean[]{true};
+        final long[] lastStamp = new long[]{Long.MIN_VALUE};
+        synchronized (DOCKS) {
+            DOCKS.put(act, dock);
+        }
+        synchronized (OVERLAYS) {
+            OVERLAYS.put(act, iso);
+        }
+
         backdrop.setOnFrame(new Runnable() {
             @Override public void run() {
-                if (overlay.isAttachedToWindow()) overlay.refreshBackdrop();
+                if (!live[0]) return;
+                try {
+                    pushBackdrop(iso, backdrop, lastStamp);
+                } catch (Throwable t) {
+                    Dydock.warnOnce("iso-backdrop", "背景刷新失败: " + t);
+                }
             }
         });
 
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-        ((ViewGroup) decor).addView(overlay, lp);
-        overlay.setBand(rectInWindow(dock));
-        // 首次识别只用于确定底部位置；后续玻璃不再追随原生 Dock。
-        overlay.pinPosition();
-
-        // Capture only after the Dock band is known, then remove the native Dock
-        // from layout so it reserves no blank bottom strip. The overlay retains the
-        // captured band coordinates independently of the native View's new bounds.
+        // 原生底栏先让位：留在原位会被一起采进玻璃里。
+        // 玻璃万一脸都没画出来，下面的看门狗会把原生底栏原样还回去。
         dock.setVisibility(View.GONE);
         try {
             backdrop.capture();
@@ -463,87 +515,52 @@ final class DockController {
             Dydock.warnOnce("native-dock-hide", "移除原生底栏占位失败: " + t);
         }
 
-        final View[] dockRef = new View[]{dock};
-        final boolean[] live = new boolean[]{true};
-        synchronized (DOCKS) {
-            DOCKS.put(act, dock);
-        }
-        synchronized (OVERLAYS) {
-            OVERLAYS.put(act, overlay);
-        }
-
-        // 固定位置的玻璃 Dock 只检测菜单/个人页状态，不再用原生 Dock 的可见性控制显隐。
-        // 节点被抖音临时隐藏时保留玻璃；只有确实换节点时才低频重新绑定点击目标。
         final int[] expandedTicks = new int[]{0};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
         final long[] lastClearScanAt = new long[]{0L};
+        final long[] lastTabRefreshAt = new long[]{0L};
         final boolean[] clearScreenState = new boolean[]{false};
         final boolean[] speedPlaybackState = new boolean[]{false};
-        final Runnable backdropRefresh = new Runnable() {
-            @Override public void run() {
-                if (!live[0]) return;
-                try {
-                    if (overlay.isAttachedToWindow() && overlay.getVisibility() == View.VISIBLE) {
-                        backdrop.capture();
-                        overlay.refreshBackdrop();
-                    }
-                } catch (Throwable t) {
-                    Dydock.warnOnce("backdrop-refresh", "背景刷新失败: " + t);
-                }
-                MAIN.postDelayed(this, 300L);
-            }
-        };
-        MAIN.postDelayed(backdropRefresh, 300L);
 
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
                 if (!live[0]) return;
                 try {
-                    // Compose/Miuix 在宿主里彻底画不出来（抛过错）：立刻停掉轮询，
-                    // 把官方底栏还回去，别留一条空白、也别再画。
-                    if (overlay.isBroken()) {
+                    if (iso.isBroken()) {
                         live[0] = false;
                         MAIN.removeCallbacks(this);
-                        MAIN.removeCallbacks(backdropRefresh);
                         synchronized (POLLERS) { POLLERS.remove(act); }
                         synchronized (POLL_STATES) { POLL_STATES.remove(act); }
-                        View d0 = dockRef[0];
-                        try {
-                            if (d0 != null) {
-                                d0.setVisibility(View.VISIBLE);
-                                d0.setAlpha(1f);
-                            }
-                            overlay.setVisibility(View.GONE);
-                        } catch (Throwable ignored) {
-                        }
-                        Dydock.warn("底栏:玻璃绘制框架出错，已恢复官方 Dock");
+                        detachOverlay(iso);
+                        restoreNative(dockRef[0]);
+                        Dydock.warn("底栏:玻璃渲染出错，已恢复官方 Dock");
+                        toast(act, "Dydock " + Dydock.VER + "：玻璃渲染出错，已恢复官方底栏");
                         return;
                     }
                     if (act.isFinishing() || act.isDestroyed()) {
                         live[0] = false;
                         MAIN.removeCallbacks(this);
-                        MAIN.removeCallbacks(backdropRefresh);
                         synchronized (POLLERS) { POLLERS.remove(act); }
                         synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                         return;
                     }
-                    // A transition can leave the old overlay parented but detached.
-                    // Remove/re-add it when the Activity decor is live; checking only
-                    // getParent()==null misses this case and leaves the Dock gone forever.
-                    if (!overlay.isAttachedToWindow() && decor.isAttachedToWindow()) {
-                        ViewParent parent = overlay.getParent();
+                    // 转场可能让覆盖层还挂在父容器上但已经脱离窗口。
+                    if (!iso.view.isAttachedToWindow() && decor.isAttachedToWindow()) {
+                        ViewParent parent = iso.view.getParent();
                         if (parent instanceof ViewGroup) {
-                            ((ViewGroup) parent).removeView(overlay);
+                            ((ViewGroup) parent).removeView(iso.view);
                         }
-                        if (overlay.getParent() == null) {
-                            ((ViewGroup) decor).addView(overlay, new FrameLayout.LayoutParams(
+                        if (iso.view.getParent() == null) {
+                            ((ViewGroup) decor).addView(iso.view, new FrameLayout.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT));
+                            applyGeometry(iso, backdrop, dockRef[0], tabTargets[0].size());
                             backdrop.capture();
                             Dydock.log("底栏:玻璃层已重新挂回主窗口并刷新背景");
                         }
                     }
+
                     View d = dockRef[0];
                     long now = SystemClock.uptimeMillis();
                     if (d == null || !d.isAttachedToWindow()) {
@@ -559,16 +576,23 @@ final class DockController {
                                     if (p != null) lf.remove(p);
                                     fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
-                                    overlay.setTabs(lf, p);
-                                    overlay.pinPosition();
+                                    tabTargets[0] = lf;
+                                    plusTarget[0] = p;
                                     synchronized (DOCKS) {
                                         DOCKS.put(act, fresh);
                                     }
+                                    refreshTabs(iso, lf, p);
+                                    applyGeometry(iso, backdrop, fresh, lf.size());
                                     d = fresh;
                                     Dydock.log("底栏:已更新原生点击目标，玻璃位置保持固定");
                                 }
                             }
                         }
+                    }
+
+                    if (now - lastTabRefreshAt[0] >= 500L) {
+                        lastTabRefreshAt[0] = now;
+                        refreshTabs(iso, tabTargets[0], plusTarget[0]);
                     }
 
                     boolean longPress = isHostLongPressActive(act);
@@ -585,29 +609,25 @@ final class DockController {
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
-                    // Every hide reason is independent: leaving one state must not reveal
-                    // the Dock while another hide reason is still active.
+                    // 每个隐藏理由各算各的：一个理由结束，不能把 Dock 露出来。
                     boolean show = !speedPlayback && !longPress && !clearScreen
                             && expandedTicks[0] < 2;
 
-                    // GONE removes the native Dock's reserved layout height; the Compose
-                    // overlay keeps its captured window position and the feed can extend below it.
                     if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
-                        overlay.animate().cancel();
+                        iso.view.animate().cancel();
                         if (show) {
-                            if (overlay.getVisibility() != View.VISIBLE) {
-                                overlay.setVisibility(View.VISIBLE);
+                            if (iso.view.getVisibility() != View.VISIBLE) {
+                                iso.view.setVisibility(View.VISIBLE);
                             }
-                            // 从当前透明度继续，避免反向切换时闪一下。
-                            overlay.animate().alpha(1f).setDuration(28L).start();
+                            iso.view.animate().alpha(1f).setDuration(28L).start();
                         } else {
-                            overlay.animate().alpha(0f).setDuration(24L)
+                            iso.view.animate().alpha(0f).setDuration(24L)
                                     .withEndAction(new Runnable() {
                                         @Override public void run() {
                                             if (!overlayTargetVisible[0]) {
-                                                overlay.setVisibility(View.GONE);
+                                                iso.view.setVisibility(View.GONE);
                                             }
                                         }
                                     }).start();
@@ -623,44 +643,218 @@ final class DockController {
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
         MAIN.postDelayed(visibilityPoll, 40L);
 
-
-        //
-        // 0.0.2/0.0.3 这里多了一步「把附近容器的背景设成 null 让它透出来」——
-        // 那些容器切页之后还是同一个对象，背景没了再没人还回来，
-        // 用户看到的就是「打开别的界面还有黑块」「好多残影」。
-        // 这一版一个背景都不碰，玻璃自己就是半透明的，不需要底下挖洞。
-        // 原生 Dock 从接管开始就保持透明。
-        dock.setAlpha(0f);
-
         // 看门狗：玻璃**可见却迟迟没画出来**才把官方底栏还回去，绝不留一条空白。
-        // 只守最初这两秒半；画出来过一次之后就永久放手，不再干预。
         MAIN.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (!live[0] || overlay.hasDrawn()) return;
-                View d0 = dockRef[0];
-                try {
-                    // Fail safe: if Compose never draws, restore the native navigation
-                    // instead of leaving the user with an empty bottom strip.
-                    if (d0 != null) {
-                        d0.setVisibility(View.VISIBLE);
-                        d0.setAlpha(1f);
-                    }
-                    if (overlay.getVisibility() == View.VISIBLE) {
-                        overlay.setVisibility(View.GONE);
-                    }
-                } catch (Throwable ignored) {
-                }
-                Dydock.warn("底栏:玻璃未能绘制，已恢复原生 Dock 以避免底部空白");
+            @Override public void run() {
+                if (!live[0] || iso.hasDrawn()) return;
+                // 先把轮询停掉：否则它下一帧又会把刚还回去的原生底栏设成 GONE。
+                live[0] = false;
+                MAIN.removeCallbacks(visibilityPoll);
+                synchronized (POLLERS) { POLLERS.remove(act); }
+                synchronized (POLL_STATES) { POLL_STATES.remove(act); }
+                detachOverlay(iso);
+                restoreNative(dockRef[0]);
+                Dydock.warn("底栏:玻璃未能绘制，已恢复原生 Dock");
+                toast(act, "Dydock " + Dydock.VER + "：玻璃没画出来，已恢复原生底栏");
             }
         }, 2500L);
 
         toast(act, "Dydock " + Dydock.VER + "：玻璃底栏已接管");
-        Dydock.log("底栏已接管：" + left.size() + " 个图标"
+        Dydock.log("底栏已接管：" + initialTabs.size() + " 个图标"
                 + (plus != null ? " ＋ 独立一块" : "")
                 + "，底栏 " + dock.getWidth() + "x" + dock.getHeight()
                 + "（" + dock.getClass().getSimpleName() + "）");
         return true;
+    }
+
+    /** 把玻璃层从窗口上摘掉（不销毁，dispose 由 release 负责）。 */
+    private static void detachOverlay(IsoDock iso) {
+        if (iso == null) return;
+        try {
+            iso.view.setVisibility(View.GONE);
+        } catch (Throwable ignored) {
+        }
+        try {
+            ViewParent parent = iso.view.getParent();
+            if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(iso.view);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void restoreNative(View dock) {
+        try {
+            if (dock != null) {
+                dock.setVisibility(View.VISIBLE);
+                dock.setAlpha(1f);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 玻璃层的位置全在宿主这边算：四个 tab 的胶囊 + 右边「＋」两块。
+     * 参数沿用 KernelSU FloatingBottomBar：28dp 安全边距、8dp 间距、64dp 高、单格 76dp。
+     */
+    private static void applyGeometry(IsoDock iso, Backdrop backdrop, View dock, int tabsCount) {
+        if (iso == null || dock == null) return;
+        try {
+            float density = dock.getResources().getDisplayMetrics().density;
+            int count = Math.max(1, tabsCount);
+            Rect band = rectInWindow(dock);
+            if (band.width() <= 0 || band.height() <= 0) return;
+
+            int[] overlayLocation = new int[2];
+            iso.view.getLocationInWindow(overlayLocation);
+
+            int bandLeft = band.left - overlayLocation[0];
+            int bandTop = band.top - overlayLocation[1];
+            int edge = (int) (28f * density);
+            int gap = (int) (8f * density);
+            int pill = (int) (64f * density);
+            int plusSize = pill;
+            int plusLeft = bandLeft + band.width() - edge - plusSize;
+            int left = bandLeft + edge;
+            int available = Math.max(1, plusLeft - gap - left);
+            int desired = (int) (76f * density * count + 8f * density);
+            int leftWidth = Math.min(desired, available);
+            int top = bandTop + band.height() - (int) (8f * density) - pill;
+            if (leftWidth <= 0) return;
+
+            Rect tabsRect = new Rect(left, top, left + leftWidth, top + pill);
+            Rect plusRect = new Rect(plusLeft, top, plusLeft + plusSize, top + plusSize);
+            int pad = (int) (40f * density);
+            Rect region = new Rect(
+                    tabsRect.left - pad,
+                    top - pad,
+                    plusRect.right + pad,
+                    top + pill + pad);
+            Rect regionInWindow = new Rect(region);
+            regionInWindow.offset(overlayLocation[0], overlayLocation[1]);
+
+            backdrop.setRegion(regionInWindow);
+            iso.setGeometry(region, tabsRect, plusRect);
+        } catch (Throwable t) {
+            Dydock.warnOnce("iso-geometry", "玻璃定位失败: " + t);
+        }
+    }
+
+    /** 交给玻璃层的背景一律是新副本：采样缓冲随时会回收，直接共用就是原生崩溃。 */
+    private static void pushBackdrop(IsoDock iso, Backdrop backdrop, long[] lastStamp) {
+        Bitmap sampled = backdrop.bitmap();
+        if (sampled == null || sampled.isRecycled()) return;
+        long stamp = backdrop.frameStamp();
+        if (stamp != 0L && stamp == lastStamp[0]) return;
+        lastStamp[0] = stamp;
+        Bitmap copy = null;
+        try {
+            copy = sampled.copy(Bitmap.Config.ARGB_8888, false);
+        } catch (Throwable t) {
+            Dydock.warnOnce("iso-backdrop-copy", "背景位图复制失败: " + t);
+        }
+        if (copy != null) iso.setBackdrop(copy);
+    }
+
+    /** 把官方导航项的文字 / 图标 / 选中态同步给玻璃层。 */
+    private static void refreshTabs(IsoDock iso, List<View> tabs, View plus) {
+        if (iso == null || tabs == null || tabs.isEmpty()) return;
+        try {
+            int count = tabs.size();
+            String[] labels = new String[count];
+            Bitmap[] icons = new Bitmap[count];
+            int selected = -1;
+            for (int i = 0; i < count; i++) {
+                View item = tabs.get(i);
+                String label = findText(item, 0);
+                labels[i] = label.length() == 0 ? defaultLabel(i) : label;
+                icons[i] = drawableToBitmap(findDrawable(item, 0));
+                if (selected < 0 && isSelectedDeep(item, 0)) selected = i;
+            }
+            iso.setTabs(labels, icons, selected < 0 ? 0 : selected);
+        } catch (Throwable t) {
+            Dydock.warnOnce("iso-tabs", "同步导航状态失败: " + t);
+        }
+    }
+
+    private static String defaultLabel(int index) {
+        switch (index) {
+            case 0:
+                return "首页";
+            case 1:
+                return "朋友";
+            case 2:
+                return "消息";
+            default:
+                return "我";
+        }
+    }
+
+    private static String findText(View view, int depth) {
+        if (view == null || depth > 7) return "";
+        if (view instanceof android.widget.TextView) {
+            CharSequence text = ((android.widget.TextView) view).getText();
+            if (text != null && text.toString().trim().length() > 0) {
+                return text.toString().trim();
+            }
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                String found = findText(group.getChildAt(i), depth + 1);
+                if (found.length() > 0) return found;
+            }
+        }
+        return "";
+    }
+
+    private static android.graphics.drawable.Drawable findDrawable(View view, int depth) {
+        if (view == null || depth > 7) return null;
+        if (view instanceof android.widget.ImageView) {
+            android.graphics.drawable.Drawable drawable =
+                    ((android.widget.ImageView) view).getDrawable();
+            if (drawable != null) return drawable;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                android.graphics.drawable.Drawable found =
+                        findDrawable(group.getChildAt(i), depth + 1);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    /** 自己画一份图标位图：不走 androidx.core 的 toBitmap，避开宿主那份老 androidx 缺方法。 */
+    private static Bitmap drawableToBitmap(android.graphics.drawable.Drawable drawable) {
+        if (drawable == null) return null;
+        try {
+            int width = Math.max(1, Math.min(96, drawable.getIntrinsicWidth()));
+            int height = Math.max(1, Math.min(96, drawable.getIntrinsicHeight()));
+            Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas canvas = new android.graphics.Canvas(bitmap);
+            Rect old = new Rect(drawable.getBounds());
+            drawable.setBounds(0, 0, width, height);
+            drawable.draw(canvas);
+            drawable.setBounds(old);
+            return bitmap;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static boolean isSelectedDeep(View view, int depth) {
+        if (view == null || depth > 8) return false;
+        if (view.isSelected() || view.isActivated()
+                || (view instanceof Checkable && ((Checkable) view).isChecked())) {
+            return true;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                if (isSelectedDeep(group.getChildAt(i), depth + 1)) return true;
+            }
+        }
+        return false;
     }
 
     /** 一次性提示：只在本次进程里弹一次，用来一眼确认模块到底有没有接管到。 */
@@ -708,6 +902,9 @@ final class DockController {
 
         private static java.lang.ref.WeakReference<View> pending;
         private static int pendingHits;
+        /** 上一次扫描里最高分的候选，用来在日志里说明「为什么没认出来」。 */
+        static volatile float lastBestScore = -1f;
+        static volatile String lastBestClass = "无";
 
         static ViewGroup findDock(View root) {
             if (root == null) return null;
@@ -716,6 +913,10 @@ final class DockController {
             if (rw <= 0 || rh <= 0) return null;
             Best best = new Best();
             walk(root, root, best, 0, new int[]{2600});
+            if (best.view != null) {
+                lastBestScore = best.score;
+                lastBestClass = best.view.getClass().getName();
+            }
             if (best.view == null || best.score < ACCEPT) {
                 pending = null;
                 pendingHits = 0;
