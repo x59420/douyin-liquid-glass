@@ -85,8 +85,6 @@ public final class Backdrop {
                 }
             };
 
-    /** 窗口帧多久算过期：过期后不再当底图用，免得画面停在一秒前。 */
-    private static final long WINDOW_FRAME_TTL_MS = 1600L;
     /** 两次窗口抓取的最小间隔。 */
     private static final long WINDOW_FRAME_MIN_GAP_MS = 650L;
     /** 视频帧多久算「新鲜」，新鲜时不抓窗口帧。 */
@@ -174,10 +172,14 @@ public final class Backdrop {
         return false;
     }
 
-    /** 手上有没有一帧还能用的窗口画面。 */
+    /**
+     * 手上有没有一帧窗口画面。
+     *
+     * 这里不按时间过期：画面有没有变由宿主的重绘计数决定（见 pumpWindow）。
+     * 静态页面本来就不重绘，按时间作废只会让背景凭空消失、然后又补一帧闪一下。
+     */
     private boolean hasWindowFrame() {
-        return winFrame != null && !winFrame.isRecycled()
-                && SystemClock.uptimeMillis() - winStamp <= WINDOW_FRAME_TTL_MS;
+        return winFrame != null && !winFrame.isRecycled();
     }
 
     /** 有没有一帧可用的画面（没有就别指望玻璃透出东西来） */
@@ -409,11 +411,8 @@ public final class Backdrop {
                 && videoCoversAll(out.getWidth(), out.getHeight()) && videoFresh()) return;
         attachPreDraw();
         int drawn = drawCount.get();
-        if (hasWindowFrame()) {
-            // 宿主一次都没重绘：屏幕上还是那一帧，再拍一次只会让玻璃白闪一下。
-            if (drawn == lastPumpedDrawCount) return;
-            if (SystemClock.uptimeMillis() - winStamp < 400L) return;
-        }
+        // 宿主一次都没重绘：屏幕上还是那一帧，再拍一次只会让玻璃白闪一下。
+        if (hasWindowFrame() && drawn == lastPumpedDrawCount) return;
         if (requestWindowFrame()) lastPumpedDrawCount = drawn;
     }
 

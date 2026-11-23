@@ -61,6 +61,9 @@ final class DockController {
     /** Host video view currently holding a recognized long press. */
     private static final WeakHashMap<Activity, View> LONG_PRESS_TARGETS =
             new WeakHashMap<Activity, View>();
+    /** 上一次识别到长按的系统时间，用来兜底清理没等到 UP 的残留。 */
+    private static final WeakHashMap<Activity, long[]> LONG_PRESS_AT =
+            new WeakHashMap<Activity, long[]>();
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
     private static final WeakHashMap<Activity, IsoDock> OVERLAYS =
             new WeakHashMap<Activity, IsoDock>();
@@ -112,6 +115,9 @@ final class DockController {
         if (content == null || !Shield.hasVideoSurface(content)) return;
         synchronized (LONG_PRESS_TARGETS) {
             LONG_PRESS_TARGETS.put(act, view);
+        }
+        synchronized (LONG_PRESS_AT) {
+            LONG_PRESS_AT.put(act, new long[]{android.os.SystemClock.uptimeMillis()});
         }
         Dydock.log("宿主视频长按已识别，隐藏 Dock");
     }
@@ -333,6 +339,7 @@ final class DockController {
         synchronized (LONG_PRESS_TARGETS) {
             if (LONG_PRESS_TARGETS.get(act) == view) {
                 LONG_PRESS_TARGETS.remove(act);
+                synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
                 removed = true;
             }
         }
@@ -341,7 +348,19 @@ final class DockController {
 
     private static boolean isHostLongPressActive(Activity act, boolean pageHasVideo) {
         synchronized (LONG_PRESS_TARGETS) {
-            if (LONG_PRESS_TARGETS.containsKey(act)) return pageHasVideo;
+            if (LONG_PRESS_TARGETS.containsKey(act)) {
+                // 兜底：宿主吞掉那次 UP 的话，状态会一直留着；过了 5 秒就当它结束了，
+                // 否则回到视频页的第一帧 Dock 会莫名消失。
+                long[] at;
+                synchronized (LONG_PRESS_AT) { at = LONG_PRESS_AT.get(act); }
+                if (at != null
+                        && android.os.SystemClock.uptimeMillis() - at[0] > 5000L) {
+                    LONG_PRESS_TARGETS.remove(act);
+                    synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
+                } else {
+                    return pageHasVideo;
+                }
+            }
         }
         long[] start;
         synchronized (PRESS) { start = PRESS.get(act); }
@@ -375,6 +394,7 @@ final class DockController {
     static void release(Activity act) {
         if (act == null) return;
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
+        synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
         synchronized (PRESS) { PRESS.remove(act); }
         synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
         synchronized (SPREAD) { SPREAD.remove(act); }
