@@ -108,13 +108,13 @@ class ComposeDockOverlay private constructor(
         }
     }
 
-    private data class TabSnapshot(
+    internal data class TabSnapshot(
         val label: String,
         val icon: ImageBitmap?,
         val selected: Boolean
     )
 
-    private data class DockLayout(
+    internal data class DockLayout(
         val band: Rect = Rect(),
         val region: Rect = Rect(),
         val left: Int = 0,
@@ -221,7 +221,6 @@ class ComposeDockOverlay private constructor(
         val bitmap = try { backdrop.bitmap() } catch (_: Throwable) { null }
         backdropImage = bitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
         dockLayout = dockLayout.copy(region = Rect(backdrop.region()))
-        refreshHostState()
         updateLayout()
         invalidate()
     }
@@ -292,6 +291,7 @@ class ComposeDockOverlay private constructor(
         selectedIndex = index
         try {
             target.performClick()
+            refreshHostState()
         } catch (t: Throwable) {
             Dydock.warnOnce("compose-tab-click", "转发原生导航点击失败: $t")
         }
