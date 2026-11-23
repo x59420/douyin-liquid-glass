@@ -33,11 +33,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private static final int MAX_SLOTS = 6;
 
-    /** 松手后位置进到总行程的这个比例以内，才收回放大 */
-    private static final float SETTLE_FRACTION = 0.025f;
-    /** 兜底：位置一直没停稳也别把放大卡住 */
-    private static final long RELEASE_WATCHDOG_MS = 800L;
-
     private final Backdrop backdrop;
     private final float density;
 
@@ -59,14 +54,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private float pillH;
     private int count;
 
-    private final Spring pos = new Spring(0f);
-    private final Spring press = new Spring(0f);
     private final Spring plusPress = new Spring(0f);
     /** 0 → 1：整组出现 */
     private final Spring appear = new Spring(0f);
-    /** 0 → 1：按下时那块长条被压下去的形变 */
-    private final Spring squish = new Spring(0f);
-    /** Multi-channel droplet deformation ported from the TieBa reference. */
+    /** Tieba's independent position/pressure/shape/velocity/drag spring channels. */
     private final DropletMotion droplet = new DropletMotion();
 
     private int selected;
@@ -84,10 +75,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private boolean looping;
     private long lastFrame;
     private boolean drewOnce;
-
-    /** 松手后等位置快到位再收放大 */
-    private boolean releasePending;
-    private long releaseSince;
 
     /** 每帧跟着走的官方底栏 */
     private View dockView;
@@ -207,8 +194,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         plusTab = plus;
         count = Math.min(tabs.size(), MAX_SLOTS);
         selected = 0;
-        pos.set(0f);
-        droplet.snapToRest();
+        droplet.setSpan(Math.max(1f, count - 1f), 1f);
+        droplet.snapTo(0f);
         appear.to(1f, 260f, 34f);
         startLoop();
     }
@@ -356,9 +343,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         int alpha = (int) (255 * a);
         if (alpha <= 0) return;
 
-        float p = Math.max(0f, Math.min(1f, press.value));
+        float p = droplet.pressProgress();
         float pp = Math.max(0f, Math.min(1f, plusPress.value));
-        float sq = Math.max(0f, Math.min(1f, squish.value));
+        float panelOffset = dragOffsetPx();
 
         boolean framed = backdrop.hasFrame();
         int luma = framed ? backdrop.luma() : 128;
@@ -370,6 +357,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float panelPress = droplet.pressProgress();
         float panelScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * panelPress;
         scaled(leftPill, k * panelScale, tmp);
+        tmp.offset(panelOffset, 0f);
         drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, panelPress,
                 dragging && panelPress > 0.3f, alpha);
 
@@ -377,8 +365,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         scaled(plusPill, k * (1f - 0.04f * pp), rect);
         drawPlusGlass(canvas, rect, pp, alpha);
 
-        drawLens(canvas, a, p, framed, luma, light, ink);
-        drawIcons(canvas, a, p, ink);
+        drawLens(canvas, a, framed, luma, light, ink, panelOffset);
+        drawIcons(canvas, a, p, ink, panelOffset);
         drawPlus(canvas, a, pp, 0xFFFFFFFF);
         drawBadges(canvas, a);
         // 真的把玻璃画到画布上了才算数 —— 出现动画还没启动（整块全透明）时不算
@@ -414,25 +402,22 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
      * 选中块：平时是一块淡色胶囊，按住/拖动时放大成一块透镜，
      * 拖得越快沿运动方向拉得越长（KernelSU 的 scaleX /= 1 - velocity * 0.75）。
      */
-    private void drawLens(Canvas canvas, float a, float p, boolean framed,
-                          int luma, boolean light, int ink) {
-        float x = pos.value;
+    private void drawLens(Canvas canvas, float a, boolean framed,
+                          int luma, boolean light, int ink, float panelOffset) {
+        float x = droplet.x();
         float dropletPress = droplet.pressProgress();
 
-        // 与 Tieba 一致：单个 tab 槽宽、56dp 基础高度、78/56 长按放大。
-        // 横纵共用一个缩放值，保留胶囊宽高比例，不把透镜拉成宽条或圆球。
+        // Tieba uses independent X/Y spring channels; velocity stretches the lens
+        // along its travel direction instead of forcing a uniform scale.
         float baseH = Math.min(56f * density, Math.max(1f, leftPill.height()));
         float baseW = Math.max(1f, slotW);
-        float sx = clampF(droplet.scaleX(), 1f, DropletMotion.HELD_SCALE);
-        float sy = clampF(droplet.scaleY(), 1f, DropletMotion.HELD_SCALE);
-        float uniformScale = clampF(Math.max(sx, sy), 1f, DropletMotion.HELD_SCALE);
-        float w = baseW * uniformScale;
-        float h = baseH * uniformScale;
+        float sx = clampF(droplet.scaleX(), 0.80f, 1.75f);
+        float sy = clampF(droplet.scaleY(), 0.80f, 1.75f);
+        float w = baseW * sx;
+        float h = baseH * sy;
         float corner = Math.min(w, h) * 0.5f;
 
-        float dragLag = clampF(droplet.accumulatedDrag() * 0.12f,
-                -slotW * 0.18f, slotW * 0.18f);
-        float cx = slotCenterX(x) + dragLag;
+        float cx = slotCenterX(x) + panelOffset;
         float cy = leftPill.centerY();
         lens.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
 
@@ -442,18 +427,20 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         try {
             if (a < 1f) canvas.saveLayerAlpha(lens, (int) (255 * a));
 
-            if (framed) {
-                drawPane(canvas, lens, corner, true, luma, dropletPress, dragging, 255);
-            } else if (dropletPress > 0.02f) {
-                drawPane(canvas, lens, corner, false, luma, dropletPress, dragging, 255);
-            } else {
-                selPaint.setShader(null);
-                selPaint.setColor(light ? 0x24000000 : 0x26FFFFFF);
-                canvas.drawRoundRect(lens, corner, corner, selPaint);
-            }
+            // Tieba keeps the same glass material at rest and during interaction;
+            // only press progress changes the refraction/depth response.
+            drawPane(canvas, lens, corner, framed, luma, dropletPress, dragging, 255);
         } finally {
             canvas.restoreToCount(save);
         }
+    }
+
+    private float dragOffsetPx() {
+        float fraction = clampF(droplet.accumulatedDrag()
+                / Math.max(1f, leftPill.width()), -1f, 1f);
+        float magnitude = Math.abs(fraction);
+        float easeOut = 1f - (1f - magnitude) * (1f - magnitude);
+        return 4f * density * Math.signum(fraction) * easeOut;
     }
 
     private float slotCenterX(float index) {
@@ -467,11 +454,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     // ---------------------------------------------------------------- 图标
 
-    private void drawIcons(Canvas canvas, float a, float p, int ink) {
+    private void drawIcons(Canvas canvas, float a, float p, int ink, float panelOffset) {
         float size = 23f * density;
 
         for (int i = 0; i < count; i++) {
-            float d = Math.abs(pos.value - i);
+            float d = Math.abs(droplet.x() - i);
             boolean sel = d < 0.5f;
             float near = Math.max(0f, 1f - Math.min(1f, d));
             // 出现时依次亮起
@@ -479,12 +466,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             int alpha = (int) ((sel ? 255 : 176 + 44 * near) * seq);
             if (alpha <= 2) continue;
             // 按住时选中那个再放大一圈，像是被透镜托起来
-            float rowScale = 1f + (4f * density / Math.max(1f, leftPill.width())) * p;
+            float rowScale = 1f + 0.20f * p;
             float rowCx = leftPill.centerX();
             float rowCy = leftPill.centerY();
-            float s = (1f + 0.10f * near + 0.02f * p) * rowScale;
-            if (sel) s += 0.06f * p;
-            float cx = rowCx + (slots[i].centerX() - rowCx) * rowScale;
+            float s = rowScale;
+            float cx = rowCx + (slots[i].centerX() - rowCx) * rowScale + panelOffset;
             float cy = rowCy + (slots[i].centerY() - rowCy) * rowScale
                     + (1f - seq) * 4f * density;
             drawIcon(canvas, i, cx, cy, size * s, alpha, ink);
@@ -784,19 +770,16 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downY = y;
                     lastDragX = x;
                     dragging = false;
-                    releasePending = false;
                     pendingIndex = slotAt(x);
                     nativeTarget = pendingIndex >= 0 && pendingIndex < tabs.size()
                             ? tabs.get(pendingIndex) : null;
                     // 普通按下、点击和长按先交给抖音原生子项。
                     dispatchToNative(nativeTarget, e);
                     // 按下就把透镜挪到这一格；形变由独立弹簧通道驱动。
-                    pos.to(pendingIndex, 1400f, 58f);
+                    droplet.moveTo(pendingIndex, true);
                     droplet.press();
                     droplet.touchDown();
                     selected = pendingIndex;
-                    press.to(1f, 1000f, 62f);
-                    squish.to(1f, 520f, 34f);
                     startLoop();
                     return true;
                 }
@@ -805,7 +788,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downInLeft = false;
                     nativeTarget = plusTab;
                     dispatchToNative(nativeTarget, e);
-                    squish.to(1f, 520f, 34f);
                     plusPress.to(1f, 700f, 40f);
                     startLoop();
                     return true;
@@ -823,11 +805,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                         // 这样系统会撤销点击/长按，而不是只清除 pressed 状态。
                         dispatchNativeCancel(nativeTarget, e);
                         dragStart = pendingIndex;
-                        if (Math.abs(pos.value - pendingIndex) < 0.6f) dragStart = pos.value;
+                        if (Math.abs(droplet.x() - pendingIndex) < 0.6f) dragStart = droplet.x();
                     }
                     if (dragging) {
                         float v = clampF(dragStart + dx / slotW, 0f, count - 1f);
-                        pos.to(v, 2000f, 68f);
+                        droplet.moveTo(v, true);
                         droplet.dragBy(x - lastDragX);
                         lastDragX = x;
                         droplet.touchDown();
@@ -850,7 +832,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                 boolean cancelled = e.getActionMasked() == MotionEvent.ACTION_CANCEL;
                 if (downInLeft) {
                     boolean wasDragging = dragging;
-                    int target = wasDragging ? clampIndex(pos.target) : pendingIndex;
+                    int target = wasDragging ? clampIndex(droplet.targetX()) : pendingIndex;
                     if (!wasDragging) {
                         // 没有拖动：原样把 UP/CANCEL 交给原生控件，保留点击与长按。
                         dispatchToNative(nativeTarget, e);
@@ -862,12 +844,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     dragging = false;
                     nativeTarget = null;
                     selected = target;
-                    pos.to(target, 900f, 46f);
+                    droplet.moveTo(target, true);
                     droplet.touchUp();
                     droplet.release();
-                    squish.to(0f, 420f, 30f);
-                    releasePending = true;
-                    releaseSince = SystemClock.uptimeMillis();
                     startLoop();
                     return true;
                 }
@@ -875,7 +854,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     dispatchToNative(nativeTarget, e);
                     downInPlus = false;
                     nativeTarget = null;
-                    squish.to(0f, 420f, 30f);
                     plusPress.to(0f, 600f, 42f);
                     startLoop();
                     return true;
@@ -968,33 +946,13 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         if (dt <= 0L) dt = 16L;
         lastFrame = t;
 
-        boolean a = pos.step(dt);
-        boolean b = press.step(dt);
-        boolean c = plusPress.step(dt);
-        boolean d = appear.step(dt);
-        boolean e = squish.step(dt);
-
-        boolean g = droplet.advance(dt / 1000f, pos.value, pos.target, pos.velocity, count);
-        boolean f = false;
-        long now = SystemClock.uptimeMillis();
-
-        // 松手后：位置进到 SETTLE 区间（或弹簧停了 / 超时）才收回放大
-        if (releasePending && !dragging && !downInLeft) {
-            float span = Math.max(1f, count - 1);
-            boolean settled = Math.abs(pos.value - pos.target) <= Math.max(span * SETTLE_FRACTION, 0.001f)
-                    || (Math.abs(pos.velocity) < 6f && Math.abs(pos.value - pos.target) < 0.02f);
-            boolean timeout = now - releaseSince > RELEASE_WATCHDOG_MS;
-            if (settled || timeout) {
-                releasePending = false;
-                press.to(0f, 620f, 44f);
-            } else {
-                f = true;
-            }
-        }
+        boolean a = plusPress.step(dt);
+        boolean b = appear.step(dt);
+        boolean c = droplet.advance(dt / 1000f);
 
         invalidate();
 
-        if (a || b || c || d || e || f || g) {
+        if (a || b || c) {
             Choreographer.getInstance().postFrameCallback(this);
         } else {
             looping = false;
