@@ -19,7 +19,7 @@ final class Api33Glass {
 
     static boolean draw(Canvas canvas, RectF bounds, float radius, Bitmap bitmap,
                         Rect region, View owner, float press, boolean dispersion,
-                        float density) {
+                        float density, boolean selectedLens) {
         try {
             int[] location = GlassPainter.LOC;
             owner.getLocationInWindow(location);
@@ -42,12 +42,19 @@ final class Api33Glass {
             shader.setFloatUniform("cornerRadii", radius, radius, radius, radius);
 
             float minSide = Math.min(bounds.width(), bounds.height());
-            float lensHeight = Math.min(24f * density, minSide * 0.42f);
-            float lensAmount = Math.min(26f * density, minSide * 0.46f);
-            shader.setFloatUniform("refractionHeight", Math.max(1f, lensHeight));
-            shader.setFloatUniform("refractionAmount", -Math.max(1f, lensAmount));
-            shader.setFloatUniform("depthEffect", 0.6f * GlassPainter.clamp01(press));
-            if (dispersion) shader.setFloatUniform("chromaticAberration", 1f);
+            float progress = GlassPainter.clamp01(press);
+            float lensHeight = selectedLens
+                    ? 10f * density * progress
+                    : Math.min(24f * density, minSide * 0.42f);
+            float lensAmount = selectedLens
+                    ? 14f * density * progress
+                    : Math.min(24f * density, minSide * 0.46f);
+            shader.setFloatUniform("refractionHeight", Math.max(0.001f, lensHeight));
+            shader.setFloatUniform("refractionAmount", -Math.max(0.001f, lensAmount));
+            shader.setFloatUniform("depthEffect", selectedLens ? progress : 0f);
+            if (dispersion && selectedLens) {
+                shader.setFloatUniform("chromaticAberration", 0.5f);
+            }
 
             GlassPainter.FILL.setShader(shader);
             GlassPainter.FILL.setColorFilter(GlassPainter.vibrant());
