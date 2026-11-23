@@ -275,7 +275,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float plusSize = Math.min(pillH, 64f * density);
         float plusGap = 12f * density;
         float edge = 16f * density;
-        slotPad = 10f * density;
+        // Tieba's native horizontal inset is 4dp, matching the 4dp vertical inset.
+        // This makes the resting lens sit equally close to all four panel edges and
+        // gives the held 78/56 lens the same overhang beyond the dock at either end.
+        slotPad = 4f * density;
 
         // Tieba 的列宽基准约 76dp；抖音这里有 4 个槽位和独立的右侧按钮，
         // 因此先按 72dp 计算，再根据屏幕实际宽度收敛，避免两块玻璃相撞。
