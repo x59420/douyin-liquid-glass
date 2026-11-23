@@ -1,6 +1,7 @@
 package com.zaka.douyin.glass;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -88,6 +89,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final boolean[] badgeDot = new boolean[MAX_SLOTS];
 
     private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    // KernelSU combines the live backdrop with a separately captured tab layer
+    // before applying the selected lens. Keep a reusable low-resolution buffer.
+    private Bitmap lensComposite;
+    private final Paint lensCompositePaint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Path path = new Path();
     private final RectF rect = new RectF();
 
@@ -378,7 +383,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         scaled(plusPill, k * (1f - 0.04f * pp), rect);
         drawPlusGlass(canvas, rect, pp, alpha);
 
-        drawLens(canvas, a, framed, luma, ink, panelOffset);
+        Bitmap combinedBackdrop = framed
+                ? buildLensBackdrop(a, p, ink, panelOffset) : null;
+        drawLens(canvas, a, framed, luma, ink, panelOffset, combinedBackdrop);
         drawIcons(canvas, a, p, ink, panelOffset);
         drawPlus(canvas, a, pp, 0xFFFFFFFF);
         drawBadges(canvas, a);
@@ -417,7 +424,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
      * 拖得越快沿运动方向拉得越长（KernelSU 的 scaleX /= 1 - velocity * 0.75）。
      */
     private void drawLens(Canvas canvas, float a, boolean framed,
-                          int luma, int ink, float panelOffset) {
+                          int luma, int ink, float panelOffset, Bitmap combinedBackdrop) {
         float x = droplet.x();
         float dropletPress = droplet.pressProgress();
 
@@ -444,8 +451,14 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             // KernelSU selected lens: pressure drives refraction, depth and dispersion.
             if (framed) {
                 try {
-                    GlassPainter.drawLens(canvas, lens, corner, backdrop, this,
-                            dropletPress, luma, density);
+                    Rect region = backdrop.region();
+                    if (combinedBackdrop != null && !region.isEmpty()) {
+                        GlassPainter.drawLens(canvas, lens, corner, combinedBackdrop,
+                                region, backdrop, this, dropletPress, luma, density);
+                    } else {
+                        GlassPainter.drawLens(canvas, lens, corner, backdrop, this,
+                                dropletPress, luma, density);
+                    }
                 } catch (Throwable t) {
                     Dydock.warnOnce("lens-gl", "透镜绘制失败，退回磨砂: " + t);
                     GlassPainter.drawFrosted(canvas, lens, corner, density, luma);
@@ -455,6 +468,44 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             }
         } finally {
             canvas.restoreToCount(save);
+        }
+    }
+
+    /**
+     * Mirrors KernelSU's combinedBackdrop(backdrop, tabsBackdrop): render the
+     * live background first, then the tab artwork into the same sampled layer.
+     */
+    private Bitmap buildLensBackdrop(float a, float p, int ink, float panelOffset) {
+        Bitmap source = backdrop.bitmap();
+        Rect region = backdrop.region();
+        if (source == null || source.isRecycled() || region.isEmpty()) return null;
+        try {
+            if (lensComposite == null || lensComposite.isRecycled()
+                    || lensComposite.getWidth() != source.getWidth()
+                    || lensComposite.getHeight() != source.getHeight()) {
+                if (lensComposite != null && !lensComposite.isRecycled()) {
+                    lensComposite.recycle();
+                }
+                lensComposite = Bitmap.createBitmap(source.getWidth(), source.getHeight(),
+                        Bitmap.Config.ARGB_8888);
+            }
+            Canvas layer = new Canvas(lensComposite);
+            layer.drawColor(android.graphics.Color.TRANSPARENT,
+                    android.graphics.PorterDuff.Mode.CLEAR);
+            layer.drawBitmap(source, 0f, 0f, lensCompositePaint);
+
+            getLocationInWindow(winLoc);
+            int save = layer.save();
+            float sx = source.getWidth() / (float) region.width();
+            float sy = source.getHeight() / (float) region.height();
+            layer.scale(sx, sy);
+            layer.translate(winLoc[0] - region.left, winLoc[1] - region.top);
+            drawIcons(layer, a, p, ink, panelOffset);
+            layer.restoreToCount(save);
+            return lensComposite;
+        } catch (Throwable t) {
+            Dydock.warnOnce("lens-composite", "透镜图标层合成失败: " + t);
+            return null;
         }
     }
 
