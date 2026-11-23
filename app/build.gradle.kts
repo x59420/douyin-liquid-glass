@@ -24,6 +24,8 @@ android {
         getByName("main") {
             manifest.srcFile(rootProject.file("app/AndroidManifest.xml"))
             java.srcDirs(rootProject.file("src"))
+            // AGP 9 built-in Kotlin has a separate Kotlin source directory set.
+            kotlin.directories.add(rootProject.file("src"))
             res.srcDirs(rootProject.file("app/res"))
             assets.srcDirs(rootProject.file("app/assets"))
             resources.srcDirs(rootProject.file("app/resources"))
