@@ -72,6 +72,15 @@ final class DockController {
             new WeakHashMap<Activity, Runnable>();
     private static final WeakHashMap<Activity, boolean[]> POLL_STATES =
             new WeakHashMap<Activity, boolean[]>();
+    /** 每个 Activity 的背景采样器：设置改了要立刻重算几何，得能拿回它。 */
+    private static final WeakHashMap<Activity, Backdrop> BACKDROPS =
+            new WeakHashMap<Activity, Backdrop>();
+    /** 原生底栏那一带的窗口坐标（底栏被设成 GONE 之后就只能靠这份缓存）。 */
+    private static final WeakHashMap<Activity, Rect> BANDS =
+            new WeakHashMap<Activity, Rect>();
+    /** 见过的宿主页面：设置里重新打开开关时，要能把它们重新接管一遍。 */
+    private static final WeakHashMap<Activity, Boolean> KNOWN =
+            new WeakHashMap<Activity, Boolean>();
     /** 手指按住视频的起点，用来判断「长按倍速」——抖音自己不一定走 performLongClick。 */
     private static final WeakHashMap<Activity, long[]> PRESS =
             new WeakHashMap<Activity, long[]>();
@@ -297,23 +306,62 @@ final class DockController {
     }
 
     /**
-     * 宿主是不是把底栏所在的容器整个隐藏了。
+     * 接管那一刻，宿主底栏上面几层祖先容器的可见性快照。
      *
-     * 这一条和 isHostChromeHidden 的区别：**只看可见性 / 透明度，不看位置**。
-     * 抖音在消息页、我的页上下滚动时是给底栏做位移动画（甚至平移到屏幕外），
-     * 那是「滚动隐藏」，跟着它走 Dock 就一路闪；而进入会话页、覆盖页时，
-     * 它是真的把整条底栏容器设成不可见，这时候 Dock 必须跟着收，
-     * 否则就会浮在会话页上（从聊天框看完视频返回时最明显）。
+     * 0.4.0 是直接看「父链上有没有 GONE / alpha≈0 的祖先」，结果抖音的底栏外壳本身就带一层
+     * 常驻不可见的容器（我们又把底栏本身设成了 GONE，外层壳跟着收缩也常见），判据一装上就恒成立 ——
+     * 接管大约 400ms 后玻璃被自己的判据收掉，用户看到的就是「Dock 出来一下立马消失」。
+     *
+     * 现在只认**变化**：接管时明明可见、接管之后不可见了，才算「宿主把底栏藏了」。
+     * 常驻隐藏的层、我们自己的玻璃层、content / decor 这两个根节点都不参与判断。
      */
-    private static boolean isHostChromeInvisible(View dock) {
-        if (dock == null) return false;
-        ViewParent parent = dock.getParent();
-        for (int i = 0; i < 4 && parent instanceof View; i++) {
-            View v = (View) parent;
-            if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) return true;
-            parent = v.getParent();
+    private static final class ChromeSnapshot {
+        private static final int DEPTH = 5;
+
+        private final View content;
+        private final View decor;
+        private final int[] baseVis = new int[DEPTH];
+        private final float[] baseAlpha = new float[DEPTH];
+
+        ChromeSnapshot(View dock, View content, View decor) {
+            this.content = content;
+            this.decor = decor;
+            View v = dock;
+            for (int i = 0; i < DEPTH; i++) {
+                ViewParent parent = v == null ? null : v.getParent();
+                if (!(parent instanceof View)) {
+                    baseVis[i] = -1;
+                    continue;
+                }
+                v = (View) parent;
+                baseVis[i] = v.getVisibility();
+                baseAlpha[i] = v.getAlpha();
+            }
         }
-        return false;
+
+        /** 接管后有没有哪一层祖先从「可见」变成了「不可见」。 */
+        boolean isHiddenNow(View dock) {
+            if (dock == null) return false;
+            View v = dock;
+            for (int i = 0; i < DEPTH; i++) {
+                ViewParent parent = v.getParent();
+                if (!(parent instanceof View) || baseVis[i] < 0) return false;
+                v = (View) parent;
+                if (v == content || v == decor || isOursGlass(v)) continue;
+                // 接管前它就是隐藏/透明的，这层没有参考价值。
+                if (baseVis[i] != View.VISIBLE || baseAlpha[i] < 0.05f) continue;
+                if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) return true;
+            }
+            return false;
+        }
+
+        private static boolean isOursGlass(View v) {
+            try {
+                return v.getClass().getName().startsWith("com.zaka.douyin.glass");
+            } catch (Throwable t) {
+                return false;
+            }
+        }
     }
 
     /** 清屏状态推进：确认过一次隐藏之后，看到宿主 UI 回来就算退出。 */
@@ -429,6 +477,8 @@ final class DockController {
         synchronized (OVERLAYS) {
             iso = OVERLAYS.remove(act);
         }
+        synchronized (BACKDROPS) { BACKDROPS.remove(act); }
+        synchronized (BANDS) { BANDS.remove(act); }
         Runnable poller;
         boolean[] pollState;
         synchronized (POLLERS) {
@@ -455,6 +505,7 @@ final class DockController {
 
     static void onActivity(final Activity act) {
         if (act == null) return;
+        synchronized (KNOWN) { KNOWN.put(act, Boolean.TRUE); }
         try {
             if (DONE.containsKey(act)) return;
             DONE.put(act, Boolean.TRUE);
@@ -462,6 +513,12 @@ final class DockController {
         } catch (Throwable t) {
             Dydock.error("底栏:处理 Activity", t);
         }
+    }
+
+    /** 设置页这类页面里根本没有 Dock，不必反复去认，免得误伤列表里的一排按钮。 */
+    private static boolean looksLikeSettings(Activity act) {
+        String n = act.getClass().getName().toLowerCase();
+        return n.contains("setting");
     }
 
     private static boolean looksLikeChat(Activity act) {
@@ -476,7 +533,7 @@ final class DockController {
             public void run() {
                 try {
                     if (act.isFinishing()) return;
-                    if (looksLikeChat(act)) {
+                    if (looksLikeChat(act) || looksLikeSettings(act)) {
                         Dydock.log("底栏:这不是主界面（" + act.getClass().getSimpleName() + "），跳过");
                         return;
                     }
@@ -496,7 +553,27 @@ final class DockController {
         }, n == 0 ? 120L : RETRY_MS);
     }
 
+    /** 把当前成立的隐藏理由拼成一行，只在状态变化时写日志。 */
+    private static String hideReason(boolean speedPlayback, boolean longPress, boolean clearScreen,
+                                     int coveredTicks, int expandedTicks, int dockMissingTicks,
+                                     int hostHiddenTicks) {
+        StringBuilder sb = new StringBuilder();
+        if (speedPlayback) sb.append("倍速播放 ");
+        if (longPress) sb.append("长按加速 ");
+        if (clearScreen) sb.append("清屏 ");
+        if (coveredTicks >= COVER_CONFIRM_TICKS) sb.append("整屏覆盖页 ");
+        if (expandedTicks >= COVER_CONFIRM_TICKS) sb.append("展开浮层 ");
+        if (dockMissingTicks >= 12) sb.append("原生底栏脱离窗口 ");
+        if (hostHiddenTicks >= 25) sb.append("宿主隐藏了底栏容器 ");
+        if (sb.length() == 0) sb.append("复合判据");
+        return sb.toString().trim();
+    }
+
     private static boolean install(Activity act) {
+        if (!DockPrefs.enabled(act)) {
+            // 用户在设置里关掉了玻璃 Dock：原生底栏我们一概不碰。
+            return true;
+        }
         final View decor = act.getWindow() == null ? null : act.getWindow().getDecorView();
         final View content = act.findViewById(android.R.id.content);
         if (decor == null || content == null) return false;
@@ -515,6 +592,9 @@ final class DockController {
         View plus = Finder.pickPlus(items);
         final List<View> initialTabs = new ArrayList<View>(items);
         if (plus != null) initialTabs.remove(plus);
+
+        // 必须在把原生底栏设成 GONE 之前拍：之后父链的可见性变化才算「宿主把底栏藏了」。
+        final ChromeSnapshot chrome = new ChromeSnapshot(dock, content, decor);
 
         // 原生底栏那一带的深色底/渐变是「玻璃一片黑」的来源：我们的采样是隔着它采的。
         // 把它拿掉之后，视频画面才能真正透到 Dock 后面来。
@@ -581,6 +661,9 @@ final class DockController {
         synchronized (OVERLAYS) {
             OVERLAYS.put(act, iso);
         }
+        synchronized (BACKDROPS) {
+            BACKDROPS.put(act, backdrop);
+        }
 
         backdrop.setOnFrame(new Runnable() {
             @Override public void run() {
@@ -643,6 +726,12 @@ final class DockController {
         final int[] dockMissingTicks = new int[]{0};
         /** 宿主把底栏容器真正隐藏了：持续约 400ms 才认，滚动动画那一小段不算。 */
         final int[] hostHiddenTicks = new int[]{0};
+        /** 这条隐藏理由第一次成立的时刻，用来做误报兜底。 */
+        final long[] hostHiddenSince = new long[]{0L};
+        /** 这条理由被认定成误报之后，本 Activity 内不再参与判断（否则底栏再也回不来）。 */
+        final boolean[] chromeUntrusted = new boolean[]{false};
+        /** 上一次隐藏是什么原因，只在变化时记一条日志，方便对着日志定位。 */
+        final String[] lastHideReason = new String[]{""};
 
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
@@ -707,6 +796,7 @@ final class DockController {
                                     refreshTabs(iso, lf, p);
                                     applyGeometry(iso, backdrop, fresh, lf.size());
                                     bandRect[0] = rectInWindow(fresh);
+                                    synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
                                     lastAccountedBandW[0] = fresh.getWidth();
                                     lastAccountedBandH[0] = fresh.getHeight();
                                     d = fresh;
@@ -774,9 +864,27 @@ final class DockController {
                     boolean dockAttached = d != null && d.isAttachedToWindow();
                     dockMissingTicks[0] = dockAttached
                             ? 0 : Math.min(60, dockMissingTicks[0] + 1);
-                    boolean hostHidden = d != null && isHostChromeInvisible(d);
+                    boolean hostHidden = !chromeUntrusted[0] && chrome.isHiddenNow(d);
+                    if (hostHidden) {
+                        if (hostHiddenSince[0] == 0L) hostHiddenSince[0] = now;
+                    } else {
+                        hostHiddenSince[0] = 0L;
+                    }
                     hostHiddenTicks[0] = hostHidden
                             ? Math.min(60, hostHiddenTicks[0] + 1) : 0;
+                    // 误报兜底：宿主那条底栏还好端端挂在窗口里、页面也没被整屏盖住、
+                    // 既不在清屏也不在倍速，只是某个祖先报了不可见 —— 这不是「进会话页」。
+                    // 撑过 3.5 秒还是这样，就把这条理由在本 Activity 里彻底关掉，
+                    // 保证玻璃不会因为一条判据错到底而永远出不来。
+                    if (hostHidden && dockAttached
+                            && !coveredState[0] && !clearScreen && !speedPlayback
+                            && now - hostHiddenSince[0] > 3500L) {
+                        chromeUntrusted[0] = true;
+                        hostHiddenTicks[0] = 0;
+                        hostHiddenSince[0] = 0L;
+                        Dydock.warn("底栏:祖先层报不可见但底栏仍在窗口内，判定为误报，"
+                                + "本次运行不再用这条理由隐藏 Dock");
+                    }
                     boolean hidden = speedPlayback || longPress || clearScreen
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
@@ -784,8 +892,18 @@ final class DockController {
                             || hostHiddenTicks[0] >= 25;
                     if (hidden) {
                         revealTicks[0] = 0;
+                        String why = hideReason(speedPlayback, longPress, clearScreen,
+                                coveredTicks[0], expandedTicks[0], dockMissingTicks[0],
+                                hostHiddenTicks[0]);
+                        if (!why.equals(lastHideReason[0])) {
+                            lastHideReason[0] = why;
+                            Dydock.log("底栏隐藏：" + why);
+                        }
                     } else if (revealTicks[0] < SHOW_CONFIRM_FRAMES) {
                         revealTicks[0]++;
+                    } else if (!lastHideReason[0].isEmpty()) {
+                        lastHideReason[0] = "";
+                        Dydock.log("底栏恢复显示");
                     }
                     boolean show = !hidden && revealTicks[0] >= SHOW_CONFIRM_FRAMES;
 
@@ -802,6 +920,7 @@ final class DockController {
                             lastAccountedBandH[0] = h;
                             lastBandSig[0] = bandSignature(d);
                             bandRect[0] = rectInWindow(d);
+                            synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
                             applyGeometry(iso, backdrop, d, tabTargets[0].size());
                             try {
                                 backdrop.capture();
@@ -812,6 +931,7 @@ final class DockController {
                     // 从隐藏回到显示：页面切回来了，按当前底栏重新贴一次位置，避免用的是旧坐标。
                     if (show && !overlayTargetVisible[0] && d != null) {
                         bandRect[0] = rectInWindow(d);
+                        synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
                         applyGeometry(iso, backdrop, d, tabTargets[0].size());
                         try {
                             backdrop.capture();
@@ -977,6 +1097,125 @@ final class DockController {
         }
     }
 
+    /** 设置里重新打开「启用玻璃 Dock」：把见过的页面重新接管一遍。 */
+    static void requestReinstall() {
+        List<Activity> acts;
+        synchronized (KNOWN) {
+            acts = new ArrayList<Activity>(KNOWN.keySet());
+        }
+        for (Activity act : acts) {
+            if (act == null || act.isFinishing() || act.isDestroyed()) continue;
+            synchronized (DONE) {
+                DONE.remove(act);
+            }
+            onActivity(act);
+        }
+    }
+
+    /**
+     * 设置改完立刻作用到所有活着的 Dock，不用重开抖音。
+     *
+     * 只做两件便宜事：重新同步图标/文字、按当前底栏坐标重算一次位置。
+     * 底栏那一带的坐标用缓存——原生底栏已经被设成 GONE，现场量出来可能是 0。
+     */
+    static void applySettingsToAll() {
+        List<Activity> acts;
+        synchronized (OVERLAYS) {
+            acts = new ArrayList<Activity>(OVERLAYS.keySet());
+        }
+        for (Activity act : acts) {
+            try {
+                applySettingsNow(act);
+            } catch (Throwable t) {
+                Dydock.warnOnce("apply-settings", "应用设置失败: " + t);
+            }
+        }
+    }
+
+    private static void applySettingsNow(Activity act) {
+        if (act == null || act.isFinishing() || act.isDestroyed()) return;
+        if (!DockPrefs.enabled(act)) {
+            teardown(act);
+            return;
+        }
+        IsoDock iso;
+        synchronized (OVERLAYS) {
+            iso = OVERLAYS.get(act);
+        }
+        if (iso == null) {
+            // 之前被关掉了（或者还没挂上），重新走一遍接管流程。
+            synchronized (DONE) {
+                DONE.remove(act);
+            }
+            onActivity(act);
+            return;
+        }
+        View dock = dockOf(act);
+        if (dock == null) return;
+
+        List<View> items = Finder.tabItems(dock);
+        View plus = Finder.pickPlus(items);
+        List<View> tabs = new ArrayList<View>(items);
+        if (plus != null) tabs.remove(plus);
+        if (tabs.isEmpty()) return;
+        refreshTabs(iso, tabs, plus);
+
+        Backdrop backdrop;
+        synchronized (BACKDROPS) {
+            backdrop = BACKDROPS.get(act);
+        }
+        Rect band;
+        synchronized (BANDS) {
+            band = BANDS.get(act);
+        }
+        applyGeometryInBand(iso, backdrop, dock, band, tabs.size());
+        if (backdrop != null) {
+            try {
+                backdrop.capture();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
+     * 关掉玻璃 Dock：停轮询、拆覆盖层、把原生底栏原样还回去。
+     *
+     * 只还原可见性/透明度，不动抖音自己的布局参数 —— 我们从头到尾没改过那些。
+     */
+    static void teardown(Activity act) {
+        if (act == null) return;
+        IsoDock iso;
+        synchronized (OVERLAYS) {
+            iso = OVERLAYS.remove(act);
+        }
+        View dock;
+        synchronized (DOCKS) {
+            dock = DOCKS.remove(act);
+        }
+        Runnable poller;
+        synchronized (POLLERS) {
+            poller = POLLERS.remove(act);
+        }
+        boolean[] state;
+        synchronized (POLL_STATES) {
+            state = POLL_STATES.remove(act);
+        }
+        if (state != null) state[0] = false;
+        if (poller != null) MAIN.removeCallbacks(poller);
+        if (iso != null) {
+            detachOverlay(iso);
+            try {
+                iso.dispose();
+            } catch (Throwable ignored) {
+            }
+        }
+        restoreNative(dock);
+        synchronized (BACKDROPS) { BACKDROPS.remove(act); }
+        synchronized (BANDS) { BANDS.remove(act); }
+        synchronized (DONE) { DONE.put(act, Boolean.TRUE); }
+        Dydock.log("底栏:已按设置关闭玻璃 Dock，恢复原生底栏");
+    }
+
     /** 把玻璃层从窗口上摘掉（不销毁，dispose 由 release 负责）。 */
     private static void detachOverlay(IsoDock iso) {
         if (iso == null) return;
@@ -1007,54 +1246,70 @@ final class DockController {
      */
     private static void applyGeometry(IsoDock iso, Backdrop backdrop, View dock, int tabsCount) {
         if (iso == null || dock == null) return;
+        Rect band = rectInWindow(dock);
+        applyGeometryInBand(iso, backdrop, dock, band, tabsCount);
+    }
+
+    /**
+     * 真正算位置的地方。
+     *
+     * 参数全部来自设置（高度 / 单格宽度 / 左右安全边距 / 离底部间距），默认值就是
+     * KernelSU FloatBottomBar 那一套：64dp 高、每格 76dp、组内 8dp 间隔。
+     * 「＋」可以在设置里关掉，关掉时给它一个空矩形，玻璃层自然就不画那个圆球。
+     */
+    private static void applyGeometryInBand(IsoDock iso, Backdrop backdrop, View dock,
+                                            Rect bandRect, int tabsCount) {
+        if (iso == null || dock == null) return;
         try {
             float density = dock.getResources().getDisplayMetrics().density;
             int count = Math.max(1, tabsCount);
-            Rect band = rectInWindow(dock);
+            Rect band = bandRect == null ? rectInWindow(dock) : new Rect(bandRect);
             if (band.width() <= 0 || band.height() <= 0) return;
+
+            android.content.Context ctx = dock.getContext();
 
             int[] overlayLocation = new int[2];
             iso.view.getLocationInWindow(overlayLocation);
 
             int bandLeft = band.left - overlayLocation[0];
             int bandTop = band.top - overlayLocation[1];
-            int edge = (int) (24f * density);
-            // 以下全是 KernelSU FloatBottomBar 的原参数：
-            // 整条 64dp 高、每格最少 76dp、内部左右各 4dp（合起来 8dp）。
+            int edge = (int) (DockPrefs.sideMarginDp(ctx) * density);
             int gap = (int) (8f * density);
-            int pill = (int) (64f * density);
-            int plusSize = pill;
-            int tabWidth = (int) (76f * density);
+            int pill = (int) (DockPrefs.heightDp(ctx) * density);
+            int plusSize = DockPrefs.showPlusButton(ctx) ? pill : 0;
+            int tabWidth = (int) (DockPrefs.tabWidthDp(ctx) * density);
             int innerPad = (int) (8f * density);
 
             int tabsWidth = tabWidth * count + innerPad;
-            int total = tabsWidth + gap + plusSize;
+            int plusBlock = plusSize > 0 ? gap + plusSize : 0;
+            int total = tabsWidth + plusBlock;
             int available = band.width() - edge * 2;
             if (total > available) {
                 // 窄屏：先压胶囊，保住「＋」，但不低过每格 48dp，再窄就让它居中溢出一点。
-                tabsWidth = Math.max((int) (56f * density) * count,
-                        Math.min(tabsWidth, available - gap - plusSize));
-                total = tabsWidth + gap + plusSize;
+                tabsWidth = Math.max((int) (48f * density) * count,
+                        Math.min(tabsWidth, available - plusBlock));
+                total = tabsWidth + plusBlock;
             }
             if (tabsWidth <= 0) return;
 
             // 两个 dock 作为一整组水平居中；「＋」紧贴胶囊右边，只留 8dp。
             int groupLeft = bandLeft + (band.width() - total) / 2;
-            int top = bandTop + band.height() - (int) (8f * density) - pill;
+            int top = bandTop + band.height() - (int) (DockPrefs.bottomGapDp(ctx) * density) - pill;
 
             Rect tabsRect = new Rect(groupLeft, top, groupLeft + tabsWidth, top + pill);
-            Rect plusRect = new Rect(tabsRect.right + gap, top,
-                    tabsRect.right + gap + plusSize, top + plusSize);
+            Rect plusRect = plusSize > 0
+                    ? new Rect(tabsRect.right + gap, top, tabsRect.right + gap + plusSize, top + plusSize)
+                    : new Rect();
             int pad = (int) (40f * density);
             Rect region = new Rect(
                     tabsRect.left - pad,
                     top - pad,
-                    plusRect.right + pad,
+                    (plusSize > 0 ? plusRect.right : tabsRect.right) + pad,
                     top + pill + pad);
             Rect regionInWindow = new Rect(region);
             regionInWindow.offset(overlayLocation[0], overlayLocation[1]);
 
-            backdrop.setRegion(regionInWindow);
+            if (backdrop != null) backdrop.setRegion(regionInWindow);
             iso.setGeometry(region, tabsRect, plusRect);
         } catch (Throwable t) {
             Dydock.warnOnce("iso-geometry", "玻璃定位失败: " + t);
@@ -1155,6 +1410,7 @@ final class DockController {
     private static void refreshTabs(IsoDock iso, List<View> tabs, View plus) {
         if (iso == null || tabs == null || tabs.isEmpty()) return;
         try {
+            boolean showLabels = DockPrefs.showLabels(tabs.get(0).getContext());
             int count = tabs.size();
             String[] labels = new String[count];
             Bitmap[] icons = new Bitmap[count];
@@ -1165,7 +1421,10 @@ final class DockController {
                 // 抖音的消息 tab 里还挂着一个角标（未读数）节点，它在树里排在文字前面，
                 // 以前取「第一个非空文本」就会把「3」当成标签，玻璃上就只剩个数字。
                 String label = Finder.navigationLabel(item, 0);
-                labels[i] = label.length() == 0 ? defaultLabel(i) : label;
+                // 设置里关掉文字标签时给空串，玻璃只留图标。
+                labels[i] = showLabels
+                        ? (label.length() == 0 ? defaultLabel(i) : label)
+                        : "";
                 icons[i] = drawableToBitmap(findDrawable(item, 0));
                 if (selected < 0 && isSelectedDeep(item, 0)) selected = i;
             }

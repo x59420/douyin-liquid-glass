@@ -421,11 +421,19 @@ final class Shield {
             // 抖音「我的」页右上角那个菜单、以及各种侧滑面板，常常就是一个普通 FrameLayout，
             // 类名里没有 drawer/menu/sheet 这些字样。这里按几何兜住：
             // 既然它排在 Dock 之后（调用方已经筛过）、又和 Dock 那一带相交、
-            // 还占走了半屏以上，那它一定是盖在 Dock 上的浮层。
-            // 真正的页面内容容器排在 Dock 前面，走不到这里。
+            // 还占走了半屏以上，那它大概率是盖在 Dock 上的浮层。
+            // 但必须排除「整屏容器」：那种要么是覆盖页（pageCoversDock 管），
+            // 要么就是页面自己的内容层 —— 把它当浮层就是「Dock 刚出来就被收掉」的老毛病。
+            // 判据：至少要有一条边比页面内缩 4% 以上，浮层/抽屉/半屏面板天然满足。
             boolean tall = r.height() >= page.height() * 0.45f;
             boolean wide = r.width() >= page.width() * 0.28f;
-            return tall && wide && hasContent((ViewGroup) view, 0);
+            float insetX = page.width() * 0.04f;
+            float insetY = page.height() * 0.04f;
+            boolean inset = r.top - page.top > insetY
+                    || page.bottom - r.bottom > insetY
+                    || r.left - page.left > insetX
+                    || page.right - r.right > insetX;
+            return tall && wide && inset && hasContent((ViewGroup) view, 0);
         }
         boolean profilePage = name.contains("userprofile") || name.contains("userdetail")
                 || name.contains("personalpage") || name.contains("profiledetail")

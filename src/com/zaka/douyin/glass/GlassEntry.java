@@ -229,6 +229,8 @@ public final class GlassEntry implements IXposedHookLoadPackage {
         try {
             makeNavigationAreaTransparent(act);
             DockController.onActivity(act);
+            // 抖音自己的设置页里挂一个 dydock 入口（不是设置页就什么也不做）。
+            DockSettingsUi.onHostActivity(act);
         } catch (Throwable t) {
             Dydock.error("底栏入口", t);
         }
