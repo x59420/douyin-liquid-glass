@@ -22,11 +22,11 @@ android {
 
     sourceSets {
         getByName("main") {
-            manifest.srcFile("app/AndroidManifest.xml")
-            java.srcDirs("src")
-            res.srcDirs("app/res")
-            assets.srcDirs("app/assets")
-            resources.srcDirs("app/resources")
+            manifest.srcFile(rootProject.file("app/AndroidManifest.xml"))
+            java.srcDirs(rootProject.file("src"))
+            res.srcDirs(rootProject.file("app/res"))
+            assets.srcDirs(rootProject.file("app/assets"))
+            resources.srcDirs(rootProject.file("app/resources"))
         }
     }
 
