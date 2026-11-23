@@ -51,6 +51,24 @@ public final class Dydock {
         synchronized (FILE_LOCK) {
             if (appContext != null) return;
             appContext = context.getApplicationContext();
+        }
+        // 诊断文件走 MediaStore，放到后台线程建，别在宿主启动那一下卡主线程。
+        Thread worker = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                initFile();
+            }
+        }, "dydock-diagnostics");
+        worker.setDaemon(true);
+        try {
+            worker.start();
+        } catch (Throwable t) {
+            Log.e(TAG, "Unable to start diagnostic writer", t);
+        }
+    }
+
+    private static void initFile() {
+        synchronized (FILE_LOCK) {
             try {
                 if (Build.VERSION.SDK_INT >= 29) {
                     logUri = findOrCreateDownloadLog(appContext);

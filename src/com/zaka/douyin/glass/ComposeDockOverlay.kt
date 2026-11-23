@@ -112,6 +112,7 @@ class ComposeDockOverlay private constructor(
     private var tabSnapshots by mutableStateOf<List<TabSnapshot>>(emptyList())
     private var selectedIndex by mutableIntStateOf(0)
     private var drawn = AtomicBoolean(false)
+    private var lastFrameStamp = 0L
     private var disposed = false
 
     private val hostPoll = object : Runnable {
@@ -140,7 +141,7 @@ class ComposeDockOverlay private constructor(
                 // detaches and reattaches the overlay.
                 // PixelCopy is asynchronous and each layer has a pending guard, so
                 // slow devices skip requests rather than queueing an unbounded backlog.
-                main.postDelayed(this, 66L)
+                main.postDelayed(this, 33L)
             }
         }
     }
@@ -247,7 +248,26 @@ class ComposeDockOverlay private constructor(
             return
         }
         val bitmap = try { backdrop.bitmap() } catch (_: Throwable) { null }
-        backdropImage = bitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
+        if (bitmap == null || bitmap.isRecycled) {
+            updateLayout()
+            return
+        }
+        val stamp = try { backdrop.frameStamp() } catch (_: Throwable) { 0L }
+        if (stamp != 0L && stamp == lastFrameStamp && backdropImage != null) {
+            // 同一帧就不要再造一份了
+            updateLayout()
+            return
+        }
+        lastFrameStamp = stamp
+        // 关键：复制一份交给 Compose。
+        // Backdrop 那边会按需 recycle 自己的 ui / vid / out 位图，
+        // 一旦 Compose 手里拿的是同一块内存，回收之后再画就是原生崩溃（直接闪退）。
+        val copy = try {
+            if (bitmap.isRecycled) null else bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        } catch (_: Throwable) {
+            null
+        }
+        backdropImage = copy?.asImageBitmap()
         updateLayout()
         invalidate()
     }

@@ -62,6 +62,10 @@ public final class Backdrop {
 
     private final List<Layer> layers = new ArrayList<Layer>();
     private long lastScan;
+    /** 同一时刻只允许一个 PixelCopy 在飞：30fps 叠多层视频层会堆几十个请求，
+     *  渲染线程被压住之后宿主会直接崩，这里统一收口。 */
+    private int inflight;
+    private long lastRequestAt;
     private long frameStamp;
     private int lastLoggedLayerCount = -1;
 private int blurRadius = 6;
@@ -495,11 +499,18 @@ private int blurRadius = 6;
                 return;
             }
 
+            long nowMs = SystemClock.uptimeMillis();
+            if (inflight > 0 || nowMs - lastRequestAt < 8L) return;
+            lastRequestAt = nowMs;
+            inflight++;
             l.pending = true;
             PixelCopy.request(sv, inter, l.frame, new PixelCopy.OnPixelCopyFinishedListener() {
                 @Override
                 public void onPixelCopyFinished(int result) {
                     l.pending = false;
+                    synchronized (Backdrop.this) {
+                        if (inflight > 0) inflight--;
+                    }
                     if (result == PixelCopy.SUCCESS) {
                         l.valid = true;
                         l.stamp = SystemClock.uptimeMillis();
@@ -512,7 +523,12 @@ private int blurRadius = 6;
                 }
             }, main);
         } catch (Throwable t) {
-            l.pending = false;
+            if (l.pending) {
+                l.pending = false;
+                synchronized (Backdrop.this) {
+                    if (inflight > 0) inflight--;
+                }
+            }
             l.valid = false;
             Dydock.warnOnce("pixelcopy-err", "抓视频画面异常: " + t);
         }
