@@ -63,6 +63,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private int selected;
     private boolean downInLeft;
     private int pendingIndex;
+    private int dragOriginSelected;
     private boolean downInPlus;
     private boolean dragging;
     /** 正在接收原生触摸序列的底栏子项；未开始拖动前由它处理点击和长按。 */
@@ -361,9 +362,12 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float panelOffset = dragOffsetPx();
 
         boolean framed = backdrop.hasFrame();
-        int luma = framed ? backdrop.luma() : 128;
-        boolean light = luma >= 140;
-        int ink = light ? 0xFF1A1A1A : 0xFFFFFFFF;
+        // KernelSU uses the theme's onSurface color; never infer icon color from video pixels.
+        boolean darkTheme = (getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+        int ink = darkTheme ? 0xFFFFFFFF : 0xFF1A1A1A;
+        int luma = 128; // compatibility argument only; GlassPainter does not consume frame brightness.
 
         // Tieba 面板按压力做等比缩放：宽度最多增加约 16dp，高度按比例变化，
         // 不再把上下边缘额外撑开 8dp，避免点击底色显得又厚又胖。
@@ -863,15 +867,13 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     lastDragX = x;
                     dragging = false;
                     pendingIndex = slotAt(x);
+                    dragOriginSelected = selected;
                     nativeTarget = pendingIndex >= 0 && pendingIndex < tabs.size()
                             ? tabs.get(pendingIndex) : null;
                     // 普通按下、点击和长按先交给抖音原生子项。
                     nativeDownHandled = dispatchToNative(nativeTarget, e);
-                    // 按下就把透镜挪到这一格；形变由独立弹簧通道驱动。
-                    // Match KernelSU: do not expand the lens on a simple DOWN.
-                    // Press/scale begins only after the drag gesture crosses touch slop.
-                    droplet.moveTo(pendingIndex, true);
-                    selected = pendingIndex;
+                    // KernelSU keeps the indicator still on DOWN; taps animate through activateTab,
+                    // while a drag starts only after horizontal touch slop is crossed.
                     startLoop();
                     return true;
                 }
@@ -893,8 +895,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     if (!dragging && Math.abs(dx) > touchSlop
                             && Math.abs(dx) > Math.abs(dy) * 0.75f) {
                         dragging = true;
-                        // KernelSU starts press/scale when drag recognition begins,
-                        // not on the initial finger-down (a normal tap stays compact).
+                        // KernelSU's onDragStarted updates the tab value, then starts press/scale.
+                        droplet.moveTo(clampF(pendingIndex + dx / Math.max(1f, slotW), 0f, count - 1f), true);
                         droplet.press();
                         droplet.touchDown();
                         // 拖动正式接管时，给原生子项发送真实 CANCEL，
@@ -937,14 +939,22 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                         // 已拖动：原生序列此前已 CANCEL，松手时只触发最终落点一次。
                         clickTab(target);
                     }
+                    if (cancelled && wasDragging) target = dragOriginSelected;
+
                     downInLeft = false;
                     dragging = false;
                     nativeTarget = null;
                     nativeDownHandled = false;
                     selected = target;
-                    droplet.moveTo(target, true);
+                    if (!cancelled && !wasDragging
+                            && e.getEventTime() - e.getDownTime() < ViewConfiguration.getLongPressTimeout()) {
+                        // KernelSU activateTab(): press -> animate value -> delayed release.
+                        droplet.animateToValue(target);
+                    } else {
+                        droplet.moveTo(target, true);
+                        droplet.release();
+                    }
                     droplet.touchUp();
-                    droplet.release();
                     startLoop();
                     return true;
                 }
@@ -1134,6 +1144,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         choreographer.removeFrameCallback(this);
         choreographer.removeFrameCallback(follow);
         backdrop.release();
+        droplet.dispose();
     }
 
     @Override
