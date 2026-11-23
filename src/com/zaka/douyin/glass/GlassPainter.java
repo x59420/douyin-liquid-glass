@@ -65,8 +65,7 @@ final class GlassPainter {
      * @param luma   底下画面的亮度，决定表面膜是加白还是加黑
      */
     static void draw(Canvas canvas, RectF b, float rad, Backdrop bd, View owner,
-                     float press, boolean dispersion, int luma, float density,
-                     float glow, float touchX) {
+                     float press, boolean dispersion, int luma, float density) {
         if (canvas == null || b == null || b.width() <= 0 || b.height() <= 0) return;
         float r = Math.max(0f, Math.min(rad, Math.min(b.width(), b.height()) / 2f));
 
@@ -82,9 +81,6 @@ final class GlassPainter {
 
             // 3. 表面膜
             surface(canvas, b, luma, press);
-
-            // Tieba's press glow is drawn above the surface and below the rim highlight.
-            if (glow > 0f) drawGlow(canvas, b, glow, touchX);
 
             // 4. 高光（45°）
             highlight(canvas, b, r, density, luma);
@@ -198,19 +194,6 @@ final class GlassPainter {
         if (press > 0.01f) {
             FILL.setColor(Color.argb((int) (10 * clamp01(press)), 255, 255, 255));
             canvas.drawRect(b, FILL);
-        }
-    }
-
-    // ---------------------------------------------------------------- 按压泛光
-
-    private static void drawGlow(Canvas canvas, RectF b, float progress, float touchX) {
-        FILL.setShader(null);
-        FILL.setColorFilter(null);
-        FILL.setColor(Color.argb(
-                (int) (255f * 0.06f * clamp01(progress)), 255, 255, 255));
-        canvas.drawRect(b, FILL);
-        if (HAS_SHADER) {
-            Api33Glow.draw(canvas, b, clamp01(progress), touchX, FILL);
         }
     }
 
