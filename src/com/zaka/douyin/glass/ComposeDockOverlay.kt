@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.compose.foundation.Image
@@ -44,10 +45,6 @@ import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.LifecycleRegistry
-import androidx.lifecycle.ViewTreeLifecycleOwner
 import androidx.core.graphics.drawable.toBitmap
 import com.zaka.douyin.glass.ksu.FloatingBottomBar
 import com.zaka.douyin.glass.ksu.FloatingBottomBarItem
@@ -70,41 +67,9 @@ class ComposeDockOverlay private constructor(
     context: Context,
     private val backdrop: Backdrop,
     private val densityScale: Float
-) : ComposeView(context) {
+) : FrameLayout(context) {
 
-    private class OverlayLifecycleOwner : LifecycleOwner {
-        private val registry = LifecycleRegistry(this)
-        override val lifecycle: Lifecycle get() = registry
-
-        init {
-            registry.currentState = Lifecycle.State.CREATED
-        }
-
-        fun start() {
-            if (registry.currentState == Lifecycle.State.CREATED) {
-                registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
-            }
-            if (registry.currentState == Lifecycle.State.STARTED) {
-                registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-            }
-        }
-
-        fun stop() {
-            if (registry.currentState == Lifecycle.State.RESUMED) {
-                registry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
-            }
-            if (registry.currentState == Lifecycle.State.STARTED) {
-                registry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-            }
-        }
-
-        fun destroy() {
-            stop()
-            if (registry.currentState != Lifecycle.State.DESTROYED) {
-                registry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-            }
-        }
-    }
+    private val composeView = ComposeView(context)
 
     internal data class TabSnapshot(
         val label: String,
@@ -123,7 +88,6 @@ class ComposeDockOverlay private constructor(
         val plusSize: Int = 0
     )
 
-    private val lifecycleOwner = OverlayLifecycleOwner()
     private val main = Handler(Looper.getMainLooper())
     private val tabs = ArrayList<View>()
     private var plusTab: View? = null
@@ -159,11 +123,10 @@ class ComposeDockOverlay private constructor(
     init {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         setWillNotDraw(false)
-        setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-        ViewTreeLifecycleOwner.set(this, lifecycleOwner)
-        lifecycleOwner.start()
+        composeView.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        addView(composeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        setContent {
+        composeView.setContent {
             MiuixTheme {
                 ComposeDockSurface(
                     image = backdropImage,
@@ -213,7 +176,6 @@ class ComposeDockOverlay private constructor(
         disposed = true
         main.removeCallbacks(videoPump)
         main.removeCallbacks(hostPoll)
-        lifecycleOwner.destroy()
         // Release PixelCopy/TextureView frames and bitmap buffers when the Activity is destroyed.
         backdrop.setOnFrame(null)
         backdrop.release()
@@ -354,7 +316,6 @@ class ComposeDockOverlay private constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        lifecycleOwner.start()
         main.removeCallbacks(videoPump)
         main.post(videoPump)
         main.post(hostPoll)
@@ -364,7 +325,6 @@ class ComposeDockOverlay private constructor(
     override fun onDetachedFromWindow() {
         main.removeCallbacks(videoPump)
         main.removeCallbacks(hostPoll)
-        lifecycleOwner.stop()
         super.onDetachedFromWindow()
     }
 }
