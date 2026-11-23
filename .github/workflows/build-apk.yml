@@ -34,7 +34,7 @@ jobs:
       - name: Install Android build packages
         run: |
           yes | sdkmanager --licenses
-          sdkmanager "platforms;android-37" "build-tools;37.0.0" --channel=3
+          sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
 
       - name: Build signed APK
         run: bash build.sh
