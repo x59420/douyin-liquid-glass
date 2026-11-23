@@ -44,6 +44,9 @@ final class DockController {
 
     /** 每个 Activity 识别出的官方 Dock。 */
     private static final WeakHashMap<Activity, View> DOCKS = new WeakHashMap<Activity, View>();
+    /** Host video view currently holding a recognized long press. */
+    private static final WeakHashMap<Activity, View> LONG_PRESS_TARGETS =
+            new WeakHashMap<Activity, View>();
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
     private static final WeakHashMap<Activity, DockOverlay> OVERLAYS =
             new WeakHashMap<Activity, DockOverlay>();
@@ -54,6 +57,38 @@ final class DockController {
             new WeakHashMap<Activity, boolean[]>();
 
     private DockController() {
+    }
+
+    /** Called by the Xposed View hooks when Douyin accepts a long press. */
+    static void onHostLongPress(View view) {
+        Activity act = Shield.activityOf(view);
+        if (act == null || !Shield.isVideoLongPressTarget(view, act)) return;
+        synchronized (LONG_PRESS_TARGETS) {
+            LONG_PRESS_TARGETS.put(act, view);
+        }
+        Dydock.log("宿主视频长按已识别，隐藏 Dock");
+    }
+
+    /** Release only the same view's long-press state after its UP/CANCEL is dispatched. */
+    static void onHostTouchEnd(View view, int action) {
+        if (view == null || (action != android.view.MotionEvent.ACTION_UP
+                && action != android.view.MotionEvent.ACTION_CANCEL)) return;
+        Activity act = Shield.activityOf(view);
+        if (act == null) return;
+        boolean removed = false;
+        synchronized (LONG_PRESS_TARGETS) {
+            if (LONG_PRESS_TARGETS.get(act) == view) {
+                LONG_PRESS_TARGETS.remove(act);
+                removed = true;
+            }
+        }
+        if (removed) Dydock.log("宿主视频长按结束，检查其他隐藏状态");
+    }
+
+    private static boolean isHostLongPressActive(Activity act) {
+        synchronized (LONG_PRESS_TARGETS) {
+            return LONG_PRESS_TARGETS.containsKey(act);
+        }
     }
 
     static View dockOf(Activity act) {
@@ -71,6 +106,7 @@ final class DockController {
      */
     static void release(Activity act) {
         if (act == null) return;
+        synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         View dock;
         DockOverlay overlay;
         synchronized (DOCKS) {
@@ -285,12 +321,15 @@ final class DockController {
                     }
 
                     boolean speedPlayback = Shield.hasSpeedPlaybackOverlay(decor);
+                    boolean longPress = isHostLongPressActive(act);
+                    boolean clearScreen = Shield.hasClearScreenState(decor);
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
-                    // Speed-playback is a transient, explicit state: hide immediately.
-                    // Other panels keep two samples to filter one-frame layout noise.
-                    boolean show = !speedPlayback && expandedTicks[0] < 2;
+                    // Every hide reason is independent: leaving one state must not reveal
+                    // the Dock while another hide reason is still active.
+                    boolean show = !speedPlayback && !longPress && !clearScreen
+                            && expandedTicks[0] < 2;
 
                     // 原生 Dock 永远透明；玻璃层用短淡入淡出，不再直接 GONE/VISIBLE 跳变。
                     if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
