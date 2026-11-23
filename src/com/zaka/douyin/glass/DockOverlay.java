@@ -33,8 +33,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private static final int MAX_SLOTS = 6;
 
-    /** 按住时透镜放大到的倍数（KernelSU: 78 / 56） */
-    private static final float PRESSED_SCALE = 1.06f;
     /** 松手后位置进到总行程的这个比例以内，才收回放大 */
     private static final float SETTLE_FRACTION = 0.025f;
     /** 兜底：位置一直没停稳也别把放大卡住 */
