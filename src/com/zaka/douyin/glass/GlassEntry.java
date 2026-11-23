@@ -59,12 +59,15 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                                 && param.args.length > 0 && param.args[0] instanceof MotionEvent) {
                             MotionEvent event = (MotionEvent) param.args[0];
                             int action = event.getActionMasked();
-                            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                                DockController.onHostTouchEnd((View) param.thisObject, action);
+                            if (action == MotionEvent.ACTION_DOWN
+                                    || action == MotionEvent.ACTION_MOVE
+                                    || action == MotionEvent.ACTION_UP
+                                    || action == MotionEvent.ACTION_CANCEL) {
+                                DockController.onHostTouch((View) param.thisObject, event);
                             }
                         }
                     } catch (Throwable t) {
-                        Dydock.warnOnce("host-touch-end-hook", "长按结束状态回调失败: " + t);
+                        Dydock.warnOnce("host-touch-hook", "触摸状态回调失败: " + t);
                     }
                 }
             });

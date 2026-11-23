@@ -84,13 +84,15 @@ final class Shield {
         String name = view.getClass().getName().toLowerCase();
         if (name.contains("clearscreen") || name.contains("clear_screen")
                 || name.contains("cleanscreen") || name.contains("clean_screen")
-                || name.contains("screenclean")) return true;
+                || name.contains("screenclean") || name.contains("clearview")
+                || name.contains("qingping")) return true;
         int id = view.getId();
         if (id != View.NO_ID) {
             try {
                 String resource = view.getResources().getResourceEntryName(id).toLowerCase();
                 if (resource.contains("clear_screen") || resource.contains("clearscreen")
-                        || resource.contains("clean_screen") || resource.contains("cleanscreen")) {
+                        || resource.contains("clean_screen") || resource.contains("cleanscreen")
+                        || resource.contains("qingping") || resource.contains("clear_view")) {
                     return true;
                 }
             } catch (Throwable ignored) {
@@ -103,9 +105,13 @@ final class Shield {
         }
         CharSequence desc = view.getContentDescription();
         if (desc != null) value += " " + desc;
+        String lowerValue = value.toLowerCase();
         if (value.contains("退出清屏") || value.contains("退出清屏模式")
                 || value.contains("恢复显示") || value.contains("退出纯净模式")
-                || value.toLowerCase().contains("exit clear screen")) return true;
+                || value.contains("清屏播放") || value.contains("清屏模式")
+                || value.contains("纯净模式") || value.contains("轻触屏幕退出")
+                || lowerValue.contains("exit clear screen")
+                || lowerValue.contains("clear screen mode")) return true;
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
@@ -208,9 +214,26 @@ final class Shield {
         CharSequence desc = view.getContentDescription();
         if (desc != null) value += " " + desc;
         String lower = value.toLowerCase();
-        if (value.contains("倍速") || value.contains("倍速播放")
-                || lower.contains("speed playback")
-                || lower.matches(".*(?:1\\.[25]|1\\.5|2\\.0|2)x.*")) return true;
+        if (value.contains("倍速") || lower.contains("倍速")
+                || lower.contains("长按加速") || lower.contains("加速播放中")
+                || lower.contains("speed playback") || lower.contains("playback speed")
+                || lower.contains("speed up")) return true;
+        // 只显示「2x / 1.5x / ×2」这类纯倍率标签，避免正文里的数字被误判。
+        String trimmed = value.trim();
+        if (trimmed.matches("(?i)^\\d{1,2}(\\.\\d{1,2})?\\s*[x×]$")) return true;
+        // 视图类名 / 资源名里带 speed 的提示控件也算（换皮时文字节点可能被换掉）。
+        String cls = view.getClass().getName().toLowerCase();
+        if (cls.contains("speedplay") || cls.contains("speedtip")
+                || cls.contains("playbackspeed") || cls.contains("playbackrate")) return true;
+        int vid = view.getId();
+        if (vid != View.NO_ID) {
+            try {
+                String res = view.getResources().getResourceEntryName(vid).toLowerCase();
+                if (res.contains("speed_play") || res.contains("play_speed")
+                        || res.contains("speed_tip") || res.contains("playback_rate")) return true;
+            } catch (Throwable ignored) {
+            }
+        }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {

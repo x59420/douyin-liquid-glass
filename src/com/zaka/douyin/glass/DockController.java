@@ -55,6 +55,11 @@ final class DockController {
             new WeakHashMap<Activity, Runnable>();
     private static final WeakHashMap<Activity, boolean[]> POLL_STATES =
             new WeakHashMap<Activity, boolean[]>();
+    /** 手指按住视频的起点，用来判断「长按倍速」——抖音自己不一定走 performLongClick。 */
+    private static final WeakHashMap<Activity, long[]> PRESS =
+            new WeakHashMap<Activity, long[]>();
+    /** 抖音长按大约 400ms 进入倍速，这里取 420ms 作为判定线。 */
+    private static final long PRESS_SPEED_DELAY_MS = 420L;
 
     private DockController() {
     }
@@ -67,6 +72,41 @@ final class DockController {
             LONG_PRESS_TARGETS.put(act, view);
         }
         Dydock.log("宿主视频长按已识别，隐藏 Dock");
+    }
+
+    /**
+     * 统管视频上的触摸：按下记时间，滑动超过阈值就作废，抬手取消。
+     *
+     * 抖音的长按倍速是它自己的手势识别器触发的，不一定走 View.performLongClick，
+     * 所以只挂那条回调在真机上经常「长按了但底栏还在」。这里按「按住不放」来判断：
+     * 按下 420ms 没怎么动，就当倍速开始，抬手立刻恢复。
+     */
+    static void onHostTouch(View view, android.view.MotionEvent event) {
+        if (view == null || event == null) return;
+        Activity act = Shield.activityOf(view);
+        if (act == null) return;
+        int action = event.getActionMasked();
+        if (action == android.view.MotionEvent.ACTION_DOWN) {
+            if (!Shield.isVideoLongPressTarget(view, act)) return;
+            synchronized (PRESS) {
+                PRESS.put(act, new long[]{android.os.SystemClock.uptimeMillis(),
+                        (long) event.getRawX(), (long) event.getRawY()});
+            }
+        } else if (action == android.view.MotionEvent.ACTION_MOVE) {
+            long[] start;
+            synchronized (PRESS) { start = PRESS.get(act); }
+            if (start == null) return;
+            float slop = 18f * act.getResources().getDisplayMetrics().density;
+            float dx = event.getRawX() - start[1];
+            float dy = event.getRawY() - start[2];
+            if (dx * dx + dy * dy > slop * slop) {
+                synchronized (PRESS) { PRESS.remove(act); }
+            }
+        } else if (action == android.view.MotionEvent.ACTION_UP
+                || action == android.view.MotionEvent.ACTION_CANCEL) {
+            synchronized (PRESS) { PRESS.remove(act); }
+            onHostTouchEnd(view, action);
+        }
     }
 
     /** Release only the same view's long-press state after its UP/CANCEL is dispatched. */
@@ -87,8 +127,12 @@ final class DockController {
 
     private static boolean isHostLongPressActive(Activity act) {
         synchronized (LONG_PRESS_TARGETS) {
-            return LONG_PRESS_TARGETS.containsKey(act);
+            if (LONG_PRESS_TARGETS.containsKey(act)) return true;
         }
+        long[] start;
+        synchronized (PRESS) { start = PRESS.get(act); }
+        return start != null
+                && android.os.SystemClock.uptimeMillis() - start[0] >= PRESS_SPEED_DELAY_MS;
     }
 
     static View dockOf(Activity act) {
@@ -107,6 +151,7 @@ final class DockController {
     static void release(Activity act) {
         if (act == null) return;
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
+        synchronized (PRESS) { PRESS.remove(act); }
         View dock;
         ComposeDockOverlay overlay;
         synchronized (DOCKS) {
@@ -250,6 +295,7 @@ final class DockController {
         final long[] lastFindAt = new long[]{0L};
         final long[] lastClearScanAt = new long[]{0L};
         final boolean[] clearScreenState = new boolean[]{false};
+        final boolean[] speedPlaybackState = new boolean[]{false};
         final Runnable backdropRefresh = new Runnable() {
             @Override public void run() {
                 if (!live[0]) return;
@@ -341,12 +387,15 @@ final class DockController {
                         }
                     }
 
-                    boolean speedPlayback = Shield.hasSpeedPlaybackOverlay(decor);
                     boolean longPress = isHostLongPressActive(act);
-                    if (now - lastClearScanAt[0] >= 200L) {
+                    // 每 40ms 走一遍视图树太贵，这两项改成定量节流；长按本身由触摸状态给，
+                    // 所以隐藏仍然是实时的。
+                    if (now - lastClearScanAt[0] >= 150L) {
+                        speedPlaybackState[0] = Shield.hasSpeedPlaybackOverlay(decor);
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
                         lastClearScanAt[0] = now;
                     }
+                    boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0];
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
