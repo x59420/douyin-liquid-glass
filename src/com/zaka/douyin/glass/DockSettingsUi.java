@@ -12,6 +12,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewParent;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -155,6 +156,16 @@ final class DockSettingsUi {
         ViewGroup.LayoutParams source = hit.item.getLayoutParams();
         boolean horizontal = parent instanceof LinearLayout
                 && ((LinearLayout) parent).getOrientation() == LinearLayout.HORIZONTAL;
+        if (!horizontal) {
+            // 竖排列表里「设置」独占一行：把这一行包进一个横排容器，
+            // 我们这一项放在它**左边**，原生那一行保持原样在右边。
+            // （只是包一层，原生控件还是原来那个实例，点击/绑定都不受影响。）
+            if (wrapBeside(act, parent, index, hit.item, row)) {
+                synchronized (ENTRIES) { ENTRIES.put(act, row); }
+                Dydock.log("设置入口:已放在「设置」左边");
+                return true;
+            }
+        }
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 horizontal
                         ? (source != null && source.width > 0
@@ -353,6 +364,51 @@ final class DockSettingsUi {
             }
         });
         return row;
+    }
+
+    /**
+     * 把一个竖排列表里的某一行包成「[我们的入口][原生那一行]」的横排。
+     *
+     * 只换容器，不动原生 View 本身：它还是原来那个实例、原来的点击监听，
+     * 只是宽度交给 weight 撑满剩下的位置。任何一步出错都回滚，绝不让菜单少一项。
+     */
+    private static boolean wrapBeside(Activity act, ViewGroup parent, int index,
+                                      View item, View entry) {
+        ViewGroup.LayoutParams itemLp = item.getLayoutParams();
+        LinearLayout.LayoutParams wrapperLp = new LinearLayout.LayoutParams(
+                itemLp != null && itemLp.width > 0
+                        ? itemLp.width : ViewGroup.LayoutParams.MATCH_PARENT,
+                itemLp != null && itemLp.height > 0
+                        ? itemLp.height : ViewGroup.LayoutParams.WRAP_CONTENT);
+        if (itemLp instanceof LinearLayout.LayoutParams) {
+            LinearLayout.LayoutParams src = (LinearLayout.LayoutParams) itemLp;
+            wrapperLp.setMargins(src.leftMargin, src.topMargin, src.rightMargin, src.bottomMargin);
+        }
+        try {
+            parent.removeViewAt(index);
+            LinearLayout wrapper = new LinearLayout(act);
+            wrapper.setOrientation(LinearLayout.HORIZONTAL);
+            wrapper.setGravity(Gravity.CENTER_VERTICAL);
+            parent.addView(wrapper, index, wrapperLp);
+            int height = itemLp != null && itemLp.height > 0
+                    ? itemLp.height : ViewGroup.LayoutParams.WRAP_CONTENT;
+            wrapper.addView(entry, new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, height));
+            wrapper.addView(item, new LinearLayout.LayoutParams(0, height, 1f));
+            return true;
+        } catch (Throwable t) {
+            // 回滚：把原生那一行放回原处。
+            try {
+                ViewParent holder = item.getParent();
+                if (holder instanceof ViewGroup) ((ViewGroup) holder).removeView(item);
+                if (item.getParent() == null) {
+                    parent.addView(item, Math.min(index, parent.getChildCount()), itemLp);
+                }
+            } catch (Throwable ignored) {
+            }
+            Dydock.warnOnce("settings-wrap", "把入口放到设置左边失败，这一行不插: " + t);
+            return false;
+        }
     }
 
     private static int withAlpha(int color, float factor) {

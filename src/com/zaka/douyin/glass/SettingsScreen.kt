@@ -85,49 +85,69 @@ internal class SettingsState(context: Context) {
     fun setEnabled(value: Boolean) {
         enabled.value = value
         DockPrefs.setEnabled(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
     }
 
     fun setShowPlus(value: Boolean) {
         showPlus.value = value
         DockPrefs.setShowPlusButton(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
     }
 
     fun setShowLabels(value: Boolean) {
         showLabels.value = value
         DockPrefs.setShowLabels(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
     }
 
     fun setLogEnabled(value: Boolean) {
         logEnabled.value = value
         DockPrefs.setLogEnabled(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
     }
 
     fun setHeight(value: Int) {
         height.value = value
         DockPrefs.setHeightDp(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
     }
 
     fun setTabWidth(value: Int) {
         tabWidth.value = value
         DockPrefs.setTabWidthDp(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
     }
 
     fun setSideMargin(value: Int) {
         sideMargin.value = value
         DockPrefs.setSideMarginDp(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
     }
 
     fun setBottomGap(value: Int) {
         bottomGap.value = value
         DockPrefs.setBottomGapDp(ctx, value)
-        DockPrefs.publish(ctx)
+        push()
+    }
+
+    /**
+     * 把当前这一份配置推给抖音进程。
+     *
+     * 走广播（最快、不依赖文件权限）：宿主收到之后写进自己的 prefs 并立刻重排 Dock。
+     * 同时 DockPrefs 那边还会把 prefs 文件设成可读，作为下次启动的兜底。
+     */
+    private fun push() {
+        SettingsSync.push(
+            ctx,
+            enabled.value,
+            showPlus.value,
+            showLabels.value,
+            logEnabled.value,
+            height.value,
+            tabWidth.value,
+            sideMargin.value,
+            bottomGap.value,
+        )
     }
 
     fun reset() {

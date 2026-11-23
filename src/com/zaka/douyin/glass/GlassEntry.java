@@ -190,6 +190,8 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                     Application app = (Application) param.thisObject;
                     Dydock.attach(app);
                     Dydock.installCrashHandler();
+                    // 设置界面的改动走广播即时同步进来（不依赖 prefs 文件权限）。
+                    SettingsSync.register(app);
                     Dydock.log("宿主 Application 已创建；诊断日志已启用");
                 }
             });

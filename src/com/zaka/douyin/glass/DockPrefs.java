@@ -206,8 +206,21 @@ final class DockPrefs {
 
     private static void writeBool(Context context, String key, boolean value) {
         try {
+            // 用 commit()：设置界面（模块进程）写完马上要 publish 让宿主读得到，
+            // apply() 是异步落盘，紧接着 publish 会作用在旧文件上，权限也就丢了。
             prefs(context).edit().putBoolean(key, value)
-                    .putLong(KEY_REV, System.currentTimeMillis()).apply();
+                    .putLong(KEY_REV, System.currentTimeMillis()).commit();
+            publishIfModule(context);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 只有模块自己那个进程写盘时才需要把文件开放给宿主读。 */
+    private static void publishIfModule(Context context) {
+        try {
+            if (context != null && Dydock.PKG.equals(context.getPackageName())) {
+                publish(context);
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -223,7 +236,8 @@ final class DockPrefs {
     private static void writeInt(Context context, String key, int value) {
         try {
             prefs(context).edit().putInt(key, value)
-                    .putLong(KEY_REV, System.currentTimeMillis()).apply();
+                    .putLong(KEY_REV, System.currentTimeMillis()).commit();
+            publishIfModule(context);
         } catch (Throwable ignored) {
         }
     }
