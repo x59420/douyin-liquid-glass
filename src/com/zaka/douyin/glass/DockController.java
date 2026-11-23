@@ -263,7 +263,7 @@ final class DockController {
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
-                    // Two 120ms samples reject one-frame layout noise without the old 800ms lag.
+                    // Two 60ms samples keep transitions responsive while filtering one-frame layout noise.
                     // Window focus is not a reliable menu/profile signal during transitions.
                     boolean show = expandedTicks[0] < 2;
 
@@ -277,9 +277,9 @@ final class DockController {
                                 overlay.setVisibility(View.VISIBLE);
                             }
                             // 从当前透明度继续，避免反向切换时闪一下。
-                            overlay.animate().alpha(1f).setDuration(140L).start();
+                            overlay.animate().alpha(1f).setDuration(75L).start();
                         } else {
-                            overlay.animate().alpha(0f).setDuration(120L)
+                            overlay.animate().alpha(0f).setDuration(65L)
                                     .withEndAction(new Runnable() {
                                         @Override public void run() {
                                             if (!overlayTargetVisible[0]) {
@@ -292,12 +292,12 @@ final class DockController {
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 120L);
+                MAIN.postDelayed(this, 60L);
             }
         };
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
-        MAIN.postDelayed(visibilityPoll, 120L);
+        MAIN.postDelayed(visibilityPoll, 60L);
 
 
         //
