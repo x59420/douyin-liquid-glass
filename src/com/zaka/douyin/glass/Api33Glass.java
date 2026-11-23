@@ -13,6 +13,8 @@ import android.view.View;
 final class Api33Glass {
     private static RuntimeShader refract;
     private static RuntimeShader disperse;
+    private static RuntimeShader blurHorizontal;
+    private static RuntimeShader blurVertical;
 
     private Api33Glass() {
     }
@@ -35,8 +37,11 @@ final class Api33Glass {
                     (location[1] - region.top) * sy);
             content.setLocalMatrix(matrix);
 
+            // Miuix order: vibrancy -> 4dp Gaussian blur -> rounded-rect lens.
+            // The captured bitmap is already recorded at Miuix's adaptive downscale level.
+            Shader blurred = gaussianBlur(content, bitmap, bdSigma(bd), bdScale(bd));
             RuntimeShader shader = shader(dispersion);
-            shader.setInputShader("content", content);
+            shader.setInputShader("content", blurred);
             shader.setFloatUniform("size", bounds.width(), bounds.height());
             shader.setFloatUniform("offset", -bounds.left, -bounds.top);
             shader.setFloatUniform("cornerRadii", radius, radius, radius, radius);
@@ -68,6 +73,31 @@ final class Api33Glass {
             GlassPainter.FILL.setShader(null);
             GlassPainter.FILL.setColorFilter(null);
         }
+    }
+
+    private static float bdSigma(Backdrop backdrop) {
+        return backdrop.blurSigmaInTexels();
+    }
+
+    private static float bdScale(Backdrop backdrop) {
+        return backdrop.downscaleFactor();
+    }
+
+    private static Shader gaussianBlur(Shader source, Bitmap bitmap, float sigma, float scale) {
+        if (blurHorizontal == null) {
+            blurHorizontal = new RuntimeShader(GlassShader.GAUSSIAN_BLUR);
+        }
+        if (blurVertical == null) {
+            blurVertical = new RuntimeShader(GlassShader.GAUSSIAN_BLUR);
+        }
+        // One texel in the downscaled backdrop corresponds to 'scale' screen pixels.
+        blurHorizontal.setInputShader("content", source);
+        blurHorizontal.setFloatUniform("direction", scale, 0f);
+        blurHorizontal.setFloatUniform("sigma", sigma);
+        blurVertical.setInputShader("content", blurHorizontal);
+        blurVertical.setFloatUniform("direction", 0f, scale);
+        blurVertical.setFloatUniform("sigma", sigma);
+        return blurVertical;
     }
 
     private static RuntimeShader shader(boolean dispersion) {
