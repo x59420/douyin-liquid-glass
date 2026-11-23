@@ -432,7 +432,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             // Tieba keeps the same glass material at rest and during interaction;
             // only press progress changes the refraction/depth response.
             drawPane(canvas, lens, corner, framed, luma, dropletPress,
-                    dragging, 255, 0f, 0f);
+                    dragging, 255);
         } finally {
             canvas.restoreToCount(save);
         }
