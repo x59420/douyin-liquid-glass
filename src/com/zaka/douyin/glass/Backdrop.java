@@ -34,8 +34,10 @@ import java.util.List;
  */
 final class Backdrop {
 
-    /** 缩小倍数：条越小越省，1/4 在这个尺寸下看不出糊 */
-    private static final int DOWN = 4;
+    /** API 33+ uses Miuix's adaptive quarter-octave recording scale; older APIs keep 1/4. */
+    private float downscaleFactor = 4f;
+    /** Miuix blur radius -> Gaussian sigma in physical pixels (4dp * density * 0.45). */
+    private float blurSigmaPx = 1.8f;
     /** 视频层重新扫描的间隔 */
     private static final long RESCAN_MS = 1500L;
 
@@ -67,13 +69,37 @@ final class Backdrop {
     private int blurRadius = 6;
     private int meanAlpha;
     private String note = "未采集";
+    private String lastDiagnostic = "";
+    private long lastDiagnosticAt;
 
     Backdrop() {
         clear.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
     }
 
     void setBlurDp(float dp, float density) {
-        blurRadius = Math.max(1, Math.round(dp * density / DOWN));
+        // Miuix: sigma = radius * 0.45; choose a stable 1/4-octave level around sigma / 2.5.
+        blurSigmaPx = Math.max(0.1f, dp * density * 0.45f);
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            float raw = Math.max(1f, Math.min(16f, blurSigmaPx / 2.5f));
+            int bucket = Math.max(0, Math.min(16,
+                    Math.round((float) (Math.log(raw) / Math.log(2.0)) * 4f)));
+            downscaleFactor = (float) Math.pow(2.0, bucket / 4.0);
+        } else {
+            downscaleFactor = 4f;
+        }
+        blurRadius = Math.max(1, Math.round(dp * density / downscaleFactor));
+    }
+
+    float downscaleFactor() {
+        return downscaleFactor;
+    }
+
+    float blurSigmaInTexels() {
+        return Math.max(0.1f, blurSigmaPx / downscaleFactor);
+    }
+
+    float blurSigmaPx() {
+        return blurSigmaPx;
     }
 
     void setContent(View v) {
@@ -154,8 +180,8 @@ final class Backdrop {
             return false;
         }
 
-        int sw = Math.max(8, region.width() / DOWN);
-        int sh = Math.max(8, region.height() / DOWN);
+        int sw = Math.max(8, Math.round(region.width() / downscaleFactor));
+        int sh = Math.max(8, Math.round(region.height() / downscaleFactor));
         float kx = sw / (float) region.width();
         float ky = sh / (float) region.height();
 
@@ -219,6 +245,7 @@ final class Backdrop {
 
         compose();
         note = "ok";
+        logCaptureState(now);
         return true;
     }
 
@@ -247,6 +274,16 @@ final class Backdrop {
         }
     }
 
+    private void logCaptureState(long now) {
+        String state = (hasFrame() ? "frame" : "no-frame") + " · " + desc();
+        if (!state.equals(lastDiagnostic) || now - lastDiagnosticAt >= 5000L) {
+            lastDiagnostic = state;
+            lastDiagnosticAt = now;
+            Dydock.log("背景采样: " + state
+                    + (layers.isEmpty() ? " · 当前只采 UI 树，未发现视频 Surface/Texture 层" : ""));
+        }
+    }
+
     private void compose() {
         if (out == null || ui == null || vid == null) return;
         try {
@@ -268,7 +305,11 @@ final class Backdrop {
         }
 
         try {
-            BoxBlur.blur(out, blurRadius);
+            // API 33+ follows Miuix's GPU Gaussian shader chain in Api33Glass.
+            // Keep the CPU box blur only as a compatibility path for older Android versions.
+            if (android.os.Build.VERSION.SDK_INT < 33) {
+                BoxBlur.blur(out, blurRadius);
+            }
         } catch (Throwable t) {
             Dydock.error("模糊背景", t);
         }
@@ -398,8 +439,8 @@ final class Backdrop {
             if (l.view instanceof TextureView) {
                 TextureView tv = (TextureView) l.view;
                 if (!tv.isAvailable()) return;
-                int fullW = Math.max(4, tv.getWidth() / DOWN);
-                int fullH = Math.max(4, tv.getHeight() / DOWN);
+                int fullW = Math.max(4, Math.round(tv.getWidth() / downscaleFactor));
+                int fullH = Math.max(4, Math.round(tv.getHeight() / downscaleFactor));
                 if (l.textureFull == null || l.textureFull.isRecycled()
                         || l.textureFull.getWidth() != fullW
                         || l.textureFull.getHeight() != fullH) {
