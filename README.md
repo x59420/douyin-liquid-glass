@@ -143,7 +143,7 @@ out/dydock-0.1.2.apk
 - **修复背景采样导致的崩溃**：玻璃背景会周期性回收采样用的位图，而 Compose 之前直接引用了同一块内存，回收之后再绘制就是原生崩溃。现在交给 Compose 的一律是副本，采样缓冲可以放心回收；同一时刻也只允许一个抓帧请求在飞，避免 30fps 多视频层把渲染线程压死。玻璃观感（30fps 跟随视频）保持不变。
 - 图标取样不再走 `androidx.core` 的 `toBitmap`，改为自己绘制，避开模块与宿主 androidx 版本不一致导致的 `NoSuchMethodError`。
 - 清理 0.1.x 遗留的 Java 渲染器（`DockOverlay` / `GlassPainter` / `Api33Glass` / `GlassShader` / `DropletMotion` / `Spring` / `InteractiveHighlight`）以及仓库里的历史 APK，仓库和产物都更小。
-- 重新打开 R8 代码/资源收缩来压缩体积；只收缩不重命名（`-dontobfuscate`），LSPosed 按名字加载的入口保持稳定。
+- 重新打开 R8 代码/资源收缩来压缩体积；只收缩不重命名（`-dontobfuscate`），LSPosed 按名字加载的入口保持稳定。`versionCode` 必须始终大于设备上已安装的版本（0.1.21 是 1921，本版是 2100），否则安卓会以「降级」为由拒绝覆盖安装。
 
 ### 0.1.14
 

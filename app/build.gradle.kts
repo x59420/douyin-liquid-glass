@@ -16,7 +16,7 @@ android {
         applicationId = "com.zaka.douyin.glass"
         minSdk = 26
         targetSdk = 34
-        versionCode = 201
+        versionCode = 2100
         versionName = "0.2.1"
     }
 
