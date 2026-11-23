@@ -1,36 +1,31 @@
 package com.zaka.douyin.glass;
 
-/*
- * Copyright 2026, compose-miuix-ui contributors.
- * SPDX-License-Identifier: Apache-2.0
- *
- * Native Java adaptation of ForbidAd4TieBa DropletMotion.kt, which adapts
- * miuix DampedDragAnimation / Kyant0 AndroidLiquidGlass.
- * The independent position, pressure, width, height, velocity, glow and
- * drag-offset channels are intentionally kept separate.
- * Source: https://github.com/aikavvak12una/ForbidAd4TieBa
- * Reference revision: 3f1272cc54dafa991d7253f6423af261eb86853b
- * Local changes: Kotlin/Compose state and callbacks translated to Java.
- */
+import android.os.SystemClock;
+import android.view.MotionEvent;
+import android.view.VelocityTracker;
+
+/** Java port of KernelSU Manager's DampedDragAnimation. */
 final class DropletMotion {
     static final float HELD_SCALE = 78f / 56f;
 
-    private final Channel position = new Channel(0f, Math.sqrt(1000.0), 1.0, 0.1f);
+    private final Channel position = new Channel(0f, Math.sqrt(1000.0), 1.0, 0.001f);
     private final Channel pressure = new Channel(0f, Math.sqrt(1000.0), 1.0, 0.001f);
     private final Channel width = new Channel(1f, Math.sqrt(250.0), 0.6, 0.001f);
     private final Channel height = new Channel(1f, Math.sqrt(250.0), 0.7, 0.001f);
-    private final Channel velocity = new Channel(0f, Math.sqrt(300.0), 0.5, 0.01f);
-    private final Channel glow = new Channel(0f, Math.sqrt(300.0), 0.5, 0.001f);
+    private final Channel velocity = new Channel(0f, Math.sqrt(300.0), 0.5, 5f);
     private final Channel dragOffset = new Channel(0f, Math.sqrt(300.0), 1.0, 0.5f);
 
+    private final VelocityTracker velocityTracker = VelocityTracker.obtain();
     private float span = 1f;
     private boolean releasePending;
+    private boolean releaseArmed;
     private boolean trackVelocity = true;
+    private long downTime;
+    private long lastVelocityEventTime;
 
     float x() { return position.value; }
     float targetX() { return position.target; }
     float pressProgress() { return clamp(pressure.value, 0f, 1f); }
-    float glowProgress() { return Math.max(0f, glow.value); }
     float accumulatedDrag() { return dragOffset.value; }
 
     float scaleX() {
@@ -44,12 +39,12 @@ final class DropletMotion {
     boolean isAnimating() {
         return releasePending || position.moving() || pressure.moving()
                 || width.moving() || height.moving() || velocity.moving()
-                || glow.moving() || dragOffset.moving();
+                || dragOffset.moving();
     }
 
-    void setSpan(float value, float columnWidth) {
-        span = Math.max(1f, value);
-        position.threshold = Math.max(1f, columnWidth) * 0.001f;
+    void setSpan(float value, float ignoredColumnWidth) {
+        span = Math.max(1e-6f, value);
+        position.threshold = 0.001f;
     }
 
     void moveTo(float x, boolean trackVelocity) {
@@ -62,26 +57,26 @@ final class DropletMotion {
         dragOffset.snapTo(dragOffset.value + delta);
     }
 
-    void touchDown() {
-        glow.target = 1f;
-    }
+    void touchDown() { }
 
     void touchUp() {
-        glow.target = 0f;
         dragOffset.target = 0f;
     }
 
     void press() {
         releasePending = false;
+        releaseArmed = false;
         pressure.target = 1f;
         width.target = HELD_SCALE;
         height.target = HELD_SCALE;
+        velocityTracker.clear();
+        downTime = SystemClock.uptimeMillis();
+        lastVelocityEventTime = downTime;
     }
 
-    /** Keep the lens expanded until its position spring reaches the target. */
     void release() {
         releasePending = true;
-        releaseIfArrived();
+        releaseArmed = false;
     }
 
     void snapTo(float x) {
@@ -90,47 +85,54 @@ final class DropletMotion {
         width.snapTo(1f);
         height.snapTo(1f);
         velocity.snapTo(0f);
-        glow.snapTo(0f);
         dragOffset.snapTo(0f);
         releasePending = false;
+        releaseArmed = false;
+        velocityTracker.clear();
     }
 
     boolean advance(float seconds) {
         if (!Float.isFinite(seconds) || seconds <= 0f) return isAnimating();
 
         position.advance(seconds);
-        releaseIfArrived();
+        if (releasePending) {
+            if (!releaseArmed) {
+                releaseArmed = true;
+            } else if (Math.abs(position.value - position.target) < span * 0.025f) {
+                releasePending = false;
+                pressure.target = 0f;
+                width.target = 1f;
+                height.target = 1f;
+            }
+        }
         pressure.advance(seconds);
         width.advance(seconds);
         height.advance(seconds);
-        glow.advance(seconds);
         dragOffset.advance(seconds);
 
-        if (!position.moving() && trackVelocity) {
-            velocity.snapTo(0f);
-        } else if (trackVelocity) {
-            // The source uses a VelocityTracker over the animated position.
-            // Its analytical spring derivative is the native equivalent.
-            velocity.snapTo(position.velocity / span);
+        if (trackVelocity) {
+            long eventTime = SystemClock.uptimeMillis();
+            if (eventTime <= lastVelocityEventTime) eventTime = lastVelocityEventTime + 1L;
+            MotionEvent sample = MotionEvent.obtain(
+                    downTime, eventTime, MotionEvent.ACTION_MOVE, position.value, 0f, 0);
+            try {
+                velocityTracker.addMovement(sample);
+            } finally {
+                sample.recycle();
+            }
+            lastVelocityEventTime = eventTime;
+            velocityTracker.computeCurrentVelocity(1000);
+            velocity.snapTo(velocityTracker.getXVelocity() / span);
         } else {
             velocity.advance(seconds);
         }
         return isAnimating();
     }
 
-    private void releaseIfArrived() {
-        if (!releasePending || Math.abs(position.value - position.target) > span * 0.025f) return;
-        releasePending = false;
-        pressure.target = 0f;
-        width.target = 1f;
-        height.target = 1f;
-    }
-
     private static float clamp(float value, float low, float high) {
         return Math.max(low, Math.min(high, value));
     }
 
-    /** Exact analytical damped-oscillator step used by the Tieba native port. */
     private static final class Channel {
         float value;
         float target;
@@ -163,11 +165,9 @@ final class DropletMotion {
                 snapTo(target);
                 return;
             }
-
             double offset = value - target;
             double speed = velocity;
             double decay = Math.exp(-damping * frequency * seconds);
-
             if (damping == 1.0) {
                 double slope = speed + frequency * offset;
                 value = (float) (target + decay * (offset + slope * seconds));
@@ -182,7 +182,6 @@ final class DropletMotion {
                 velocity = (float) (decay * (angular * (slope * cosine - offset * sine)
                         - damping * frequency * wave));
             }
-
             if (!moving()) snapTo(target);
         }
     }
