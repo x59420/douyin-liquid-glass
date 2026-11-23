@@ -7,10 +7,11 @@ cd "$ROOT"
 mkdir -p libs out
 if [ -z "${DYDOCK_KEYSTORE_PASSWORD:-}" ]; then
   git fetch origin main --depth=1
-  DYDOCK_KEYSTORE_PASSWORD="$(git show origin/main:build.sh | sed -n 's/.*--ks-pass pass:\\([^ ]*\\).*/\\1/p' | head -n1)"
+  DYDOCK_KEYSTORE_PASSWORD="$(git show origin/main:build.sh | grep -o -- '--ks-pass pass:[^[:space:]]*' | head -n1 | cut -d: -f3)"
   export DYDOCK_KEYSTORE_PASSWORD
 fi
 test -n "$DYDOCK_KEYSTORE_PASSWORD"
+
 if [ ! -f libs/api-82.jar ]; then
   echo "== Download Xposed API 82 =="
   curl -fsSL -o libs/api-82.jar https://api.xposed.info/de/robv/android/xposed/api/82/api-82.jar
