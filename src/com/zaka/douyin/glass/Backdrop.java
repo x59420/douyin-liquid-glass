@@ -20,16 +20,20 @@ import java.util.List;
 /**
  * 玻璃底下那块真实画面。
  *
- * 只采**底栏那一条**（区域由 DockController 给），不是整屏：
- *  - 便宜。只采 1080 x 240 左右的一条，交给 Miuix 在 GPU 上做模糊，CPU 不做任何模糊。
- *  - 不会把自己画进去。采集根是 Activity 的 android.R.id.content，
- *    而 dock 挂在 DecorView 上，跟 content 是兄弟节点 —— 天然没有回授，
- *    不需要「采集时把玻璃藏起来」那种会闪一下的招。
+ * 取景方式和 KernelSU 的 layerBackdrop 是同一个思路：**只画玻璃后面那块内容**，
+ * 不截屏、不拍窗口。
  *
- * 视频层（SurfaceView / TextureView）的像素不在 View 的绘制里，
- * 直接画树只会得到一块黑 —— 老版本满屏黑块就是这么来的。
- * 这里对每个视频层单独走 PixelCopy 抓它**在底栏那一条里的**像素，
- * 再把 UI 层里那块挖空，两层叠起来才是「玻璃后面真实看到的画面」。
+ *  - 采集根是 Activity 的 android.R.id.content。dock 挂在 DecorView 上，和 content
+ *    是兄弟节点，所以这里画出来的东西永远不含玻璃自己 —— 不存在回授，
+ *    也就不会出现「玻璃里套着一层玻璃」的重影。
+ *  - 也不含别的界面：画的是这棵内容树的当前状态，翻页了树就变了，
+ *    不会把上一页的像素留在缓冲里。
+ *  - 只在宿主重绘过、且间隔够久的时候重画一次（泵在 DockController 的轮询里），
+ *    费用按区域大小算，不按整屏算。
+ *
+ * 视频层（SurfaceView / TextureView）的像素不在 View 的绘制里，画树只会得到一块透明。
+ * 这部分单独走 PixelCopy 抓**落在底栏那一条里的**像素，并把 UI 层里那块挖空，
+ * 两层叠起来才是玻璃后面真实看到的画面。
  */
 public final class Backdrop {
 
@@ -37,6 +41,10 @@ public final class Backdrop {
     private float downscaleFactor = 4f;
     /** 视频层重新扫描的间隔 */
     private static final long RESCAN_MS = 1500L;
+    /** 两次内容树重绘之间的最小间隔（约 10fps）。玻璃后面还压着一层 4dp 模糊，够用且不抢帧。 */
+    private static final long UI_GAP_MS = 96L;
+    /** 视频层帧多久算过期。过期就不参与合成 —— 换页后残留的旧画面就是「别的界面」。 */
+    private static final long LAYER_MAX_AGE_MS = 500L;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -53,42 +61,11 @@ public final class Backdrop {
     }
 
     private View content;
+    private View excluded;
     private final Rect region = new Rect();
     private Bitmap ui;
     private Bitmap vid;
     private Bitmap out;
-
-    /** 宿主窗口：抓「屏幕上真实画面」的那一路。 */
-    private android.view.Window window;
-    /** 窗口帧（已缩到采样分辨率），和视频层一起决定玻璃后面是什么。 */
-    private Bitmap winFrame;
-    private long winStamp;
-    /** 1:1 抓取缓冲，抓完再缩到采样分辨率。 */
-    private Bitmap winBuffer;
-    private boolean winPending;
-    private long lastWinRequestAt;
-    private int winFailures;
-    /** 抓窗口帧之前 / 之后动一下玻璃层（几乎透明一帧，避免把自己的样子抓进去）。 */
-    private Runnable maskBefore;
-    private Runnable maskAfter;
-    /** 宿主这一页重绘了多少次：没重绘就说明画面没变，不用再拍。 */
-    private final java.util.concurrent.atomic.AtomicInteger drawCount =
-            new java.util.concurrent.atomic.AtomicInteger();
-    private int lastPumpedDrawCount;
-    private android.view.ViewTreeObserver registeredVto;
-    private final android.view.ViewTreeObserver.OnPreDrawListener preDrawListener =
-            new android.view.ViewTreeObserver.OnPreDrawListener() {
-                @Override
-                public boolean onPreDraw() {
-                    drawCount.incrementAndGet();
-                    return true;
-                }
-            };
-
-    /** 两次窗口抓取的最小间隔。 */
-    private static final long WINDOW_FRAME_MIN_GAP_MS = 650L;
-    /** 视频帧多久算「新鲜」，新鲜时不抓窗口帧。 */
-    private static final long VIDEO_FRESH_MS = 420L;
 
     private final List<Layer> layers = new ArrayList<Layer>();
     private long lastScan;
@@ -103,6 +80,23 @@ public final class Backdrop {
     private String note = "未采集";
     private String lastDiagnostic = "";
     private long lastDiagnosticAt;
+
+    /** 宿主这一页重绘了多少次：没重绘就说明画面没变，不用再画一遍树。 */
+    private final java.util.concurrent.atomic.AtomicInteger drawCount =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private int lastPumpedDrawCount = -1;
+    private long lastUiAt;
+    private boolean force;
+    private boolean uiValid;
+    private android.view.ViewTreeObserver registeredVto;
+    private final android.view.ViewTreeObserver.OnPreDrawListener preDrawListener =
+            new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    drawCount.incrementAndGet();
+                    return true;
+                }
+            };
 
     Backdrop() {
         clear.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
@@ -123,24 +117,20 @@ public final class Backdrop {
         content = v;
         releaseLayers();
         releaseBitmaps();
+        uiValid = false;
+        force = true;
         attachPreDraw();
         note = "换采集根";
     }
 
-    void setWindow(android.view.Window w) {
-        window = w;
-    }
-
     /**
-     * 抓窗口帧前后要做的动作。
+     * 不属于「玻璃后面的画面」的视图：抖音原生底栏。
      *
-     * 玻璃层就画在这个窗口上，直接抓会把自己的样子也拍进去（越糊越糊，还会自激）。
-     * 抓之前把玻璃压到几乎透明，窗口像素里它只剩 2%，采样结果基本就是真实画面；
-     * 抓完再抬回去。代价是一帧的变淡，几乎看不出来。
+     * 正常情况下它已经被隐藏了，这里只是兜一层：万一宿主又把它设回可见，
+     * 宁可这一帧不画树，也不能把一条原生底栏画进玻璃里。
      */
-    void setCaptureMask(Runnable before, Runnable after) {
-        maskBefore = before;
-        maskAfter = after;
+    void setExcluded(View v) {
+        excluded = v;
     }
 
     View content() {
@@ -151,7 +141,13 @@ public final class Backdrop {
     void setRegion(Rect r) {
         if (r == null || r.isEmpty()) return;
         if (r.equals(region)) return;
+        boolean sizeChanged = r.width() != region.width() || r.height() != region.height();
         region.set(r);
+        if (sizeChanged) {
+            releaseBitmaps();
+            uiValid = false;
+        }
+        force = true;
         note = "换区域 " + r.width() + "x" + r.height();
     }
 
@@ -161,7 +157,7 @@ public final class Backdrop {
 
     Bitmap bitmap() {
         if (out == null || out.isRecycled()) return null;
-        if (meanAlpha < 8 && !hasVideo() && !hasWindowFrame()) return null;
+        if (meanAlpha < 8 && !hasVideo()) return null;
         return out;
     }
 
@@ -170,16 +166,6 @@ public final class Backdrop {
             if (l.valid) return true;
         }
         return false;
-    }
-
-    /**
-     * 手上有没有一帧窗口画面。
-     *
-     * 这里不按时间过期：画面有没有变由宿主的重绘计数决定（见 pumpWindow）。
-     * 静态页面本来就不重绘，按时间作废只会让背景凭空消失、然后又补一帧闪一下。
-     */
-    private boolean hasWindowFrame() {
-        return winFrame != null && !winFrame.isRecycled();
     }
 
     /** 有没有一帧可用的画面（没有就别指望玻璃透出东西来） */
@@ -192,12 +178,11 @@ public final class Backdrop {
     /**
      * 这一帧采出来是不是整片发黑。
      *
-     * 有视频层帧、或者拿到过窗口画面时不判黑（暗场视频、暗色页面都属于画面内容）；
-     * 只有在两路都没有、采样又几乎全黑时，才说明底下画的是抖音那层底栏背景色，
-     * 这时候把背景图丢掉，玻璃只保留自己的模糊，不会变成一块黑玻璃。
+     * 有视频层帧时不判黑（暗场视频属于画面内容）；只有在视频层也没有、采样又几乎全黑时，
+     * 才说明底下根本没画出东西，这时候把背景图丢掉，玻璃只保留自己的模糊。
      */
     boolean looksBlack() {
-        return meanLuma < 14 && !hasFrameLayer() && !hasWindowFrame();
+        return meanLuma < 14 && !hasFrameLayer();
     }
 
     private boolean hasFrameLayer() {
@@ -214,7 +199,7 @@ public final class Backdrop {
     String desc() {
         return note + " · " + region.width() + "x" + region.height()
                 + " · 视频层 " + layers.size()
-                + " · alpha " + meanAlpha;
+                + " · alpha " + meanAlpha + " · luma " + meanLuma;
     }
 
     void setOnFrame(Runnable r) {
@@ -223,9 +208,31 @@ public final class Backdrop {
 
     private Runnable onFrame;
 
+    // ------------------------------------------------------------------ 泵
+
+    /**
+     * 外部按帧（DockController 的可见性轮询）调。
+     *
+     * 只在「宿主重绘过」或者「区域/采集根换过」的时候才真的重画，
+     * 静态页面（比如个人页）不会每秒画十遍树。
+     */
+    void pump() {
+        if (content == null || region.isEmpty()) return;
+        attachPreDraw();
+        int drawn = drawCount.get();
+        boolean changed = drawn != lastPumpedDrawCount;
+        if (!changed && !force) return;
+        long now = SystemClock.uptimeMillis();
+        if (now - lastUiAt < UI_GAP_MS) return;
+        lastUiAt = now;
+        lastPumpedDrawCount = drawn;
+        force = false;
+        capture();
+    }
+
     // ------------------------------------------------------------------ 采集
 
-    /** 整条重采集：UI 层 + 视频层。开销比 pumpVideo 大，别每帧都调。 */
+    /** 重采一帧：内容树 + 视频层。开销按区域算，别每帧都调（走 pump）。 */
     boolean capture() {
         View c = content;
         if (c == null || region.isEmpty()) {
@@ -251,6 +258,7 @@ public final class Backdrop {
                 ui = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888);
                 vid = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888);
                 out = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888);
+                uiValid = false;
             }
         } catch (Throwable t) {
             Dydock.error("建背景位图", t);
@@ -268,22 +276,31 @@ public final class Backdrop {
             updateDst(l, c, kx, ky);
         }
 
-        // 2. UI 层。视频已经把这一条铺满的时候就不用画树了 ——
+        // 2. 内容树。视频已经把这一条铺满的时候就不用画树了 ——
         //    抖音首页每 1.2 秒重画一遍整棵信息流，卡顿就是这么来的
         boolean covered = videoCoversAll(sw, sh);
-        try {
-            Canvas uc = new Canvas(ui);
-            uc.drawColor(0, PorterDuff.Mode.CLEAR);
-            if (!covered) {
+        boolean skipTree = excluded != null && excluded.isShown() && !covered;
+        if (!covered && !skipTree) {
+            try {
+                Canvas uc = new Canvas(ui);
+                uc.drawColor(0, PorterDuff.Mode.CLEAR);
                 uc.scale(kx, ky);
                 int[] cl = new int[2];
                 c.getLocationInWindow(cl);
                 uc.translate(cl[0] - region.left, cl[1] - region.top);
                 c.draw(uc);
+                uiValid = true;
+            } catch (Throwable t) {
+                // 宿主树里常有 SurfaceView / 硬件位图，软件画布画到一半失败是常态
+                Dydock.warnOnce("ui-draw", "内容树绘制中断（通常无害）: " + t);
             }
-        } catch (Throwable t) {
-            // 宿主树里常有 SurfaceView / 硬件位图，软件画布画到一半失败是常态
-            Dydock.warnOnce("ui-draw", "UI 层绘制中断（通常无害）: " + t);
+        } else if (covered) {
+            try {
+                Canvas uc = new Canvas(ui);
+                uc.drawColor(0, PorterDuff.Mode.CLEAR);
+                uiValid = true;
+            } catch (Throwable ignored) {
+            }
         }
 
         // 3. 请求新帧
@@ -294,52 +311,33 @@ public final class Backdrop {
         // 4. UI 层里视频所在的那块挖空，否则视频会被容器自己的深色底盖住 —— 就是黑块
         try {
             Canvas uc = new Canvas(ui);
-            if (covered) {
-                // 视频已经把这一条铺满：整块 UI 层都不要了。
-                // 底栏那一带的渐变遮罩、容器底色全在这一层里，留着就是「玻璃一片黑」。
-                uc.drawColor(0, PorterDuff.Mode.CLEAR);
-            } else {
-                for (Layer l : layers) {
-                    if (l.dst.isEmpty()) continue;
-                    uc.drawRect(l.dst.left, l.dst.top, l.dst.right, l.dst.bottom, clear);
-                }
+            for (Layer l : layers) {
+                if (l.dst.isEmpty()) continue;
+                uc.drawRect(l.dst.left, l.dst.top, l.dst.right, l.dst.bottom, clear);
             }
         } catch (Throwable t) {
             Dydock.warnOnce("ui-erase", "挖空视频区失败: " + t);
         }
 
         compose();
+        notifyFrame();
         note = "ok";
         logCaptureState(now);
-        // 手里还没有可用的窗口画面时先补一帧：这是「不管屏幕上是什么画面」
-        // 都能映射到位的那一路，视频层抓不到时全靠它。
-        if (!hasWindowFrame()) requestWindowFrame();
         return true;
     }
 
-    /** 视频层是不是已经把这一条铺满了（以最近抓到的帧为准） */
+    /** 视频层是不是已经把这一条铺满了（以新鲜帧为准） */
     private boolean videoCoversAll(int sw, int sh) {
         if (layers.isEmpty()) return false;
+        long now = SystemClock.uptimeMillis();
         long total = (long) sw * sh;
         long sum = 0;
         for (Layer l : layers) {
-            if (!l.valid || l.dst.isEmpty()) return false;
+            if (!l.valid || l.dst.isEmpty() || l.frame == null || l.frame.isRecycled()) return false;
+            if (now - l.stamp > LAYER_MAX_AGE_MS) return false;
             sum += (long) l.dst.width() * l.dst.height();
         }
         return sum >= total * 0.94f;
-    }
-
-    /** 只推视频帧：整条重采集太贵，但视频在动，玻璃得跟着动 */
-    void pumpVideo() {
-        if (layers.isEmpty() || vid == null || vid.isRecycled()) return;
-        View c = content;
-        if (c == null || region.isEmpty()) return;
-        float kx = vid.getWidth() / (float) region.width();
-        float ky = vid.getHeight() / (float) region.height();
-        for (Layer l : layers) {
-            updateDst(l, c, kx, ky);
-            if (!l.pending) requestFrame(l);
-        }
     }
 
     private void logCaptureState(long now) {
@@ -348,33 +346,31 @@ public final class Backdrop {
             lastDiagnostic = state;
             lastDiagnosticAt = now;
             Dydock.log("背景采样: " + state
-                    + (layers.isEmpty() ? " · 当前只采 UI 树，未发现视频 Surface/Texture 层" : ""));
+                    + (layers.isEmpty() ? " · 当前只画内容树，未发现视频 Surface/Texture 层" : ""));
         }
     }
 
     private void compose() {
         if (out == null || ui == null || vid == null) return;
+        long now = SystemClock.uptimeMillis();
         try {
             Canvas vc = new Canvas(vid);
             vc.drawColor(0, PorterDuff.Mode.CLEAR);
             for (Layer l : layers) {
                 if (!l.valid || l.frame == null || l.frame.isRecycled()) continue;
                 if (l.dst.isEmpty()) continue;
+                // 过期的视频帧直接丢：换页之后残留的那一帧就是「别的界面」的来源。
+                if (now - l.stamp > LAYER_MAX_AGE_MS) {
+                    l.valid = false;
+                    continue;
+                }
                 vc.drawBitmap(l.frame, null, l.dst, paint);
             }
 
             Canvas oc = new Canvas(out);
             oc.drawColor(0, PorterDuff.Mode.CLEAR);
-            if (hasWindowFrame()) {
-                // 窗口真实画面打底：视频、图片、直播、网页、聊天页……屏幕上是什么就是什么。
-                oc.drawBitmap(winFrame, null, new Rect(0, 0, out.getWidth(), out.getHeight()), paint);
-                // 视频层再叠一次：窗口帧间隔较大，视频要跟上 30fps 的节奏才不糊成一片。
-                oc.drawBitmap(vid, 0f, 0f, paint);
-            } else {
-                // 窗口帧拿不到（部分机型/受保护画面）才退回「软件画 UI 树 + 视频层」。
-                oc.drawBitmap(vid, 0f, 0f, paint);
-                oc.drawBitmap(ui, 0f, 0f, paint);
-            }
+            oc.drawBitmap(ui, 0f, 0f, paint);
+            oc.drawBitmap(vid, 0f, 0f, paint);
         } catch (Throwable t) {
             Dydock.error("合成背景", t);
             return;
@@ -386,42 +382,20 @@ public final class Backdrop {
 
     private void onVideoFrame() {
         compose();
+        notifyFrame();
+    }
+
+    /** 有新的一帧：把图推给玻璃层。视频帧和内容树帧走同一条出口。 */
+    private void notifyFrame() {
         Runnable cb = onFrame;
-        if (cb != null) {
-            try {
-                cb.run();
-            } catch (Throwable t) {
-                Dydock.error("玻璃刷新", t);
-            }
+        if (cb == null) return;
+        try {
+            cb.run();
+        } catch (Throwable t) {
+            Dydock.error("玻璃刷新", t);
         }
     }
 
-    // ------------------------------------------------------------------ 窗口帧
-
-    /**
-     * 外部每隔几百毫秒调一次，需要的时候补一帧窗口画面。
-     *
-     * 抓窗口的时候玻璃要压到几乎透明一帧（否则会把自己拍进去），所以这里只在
-     * 「没有实时视频层可用」的时候抓：刷视频时视频层本来就 30fps 跟着，玻璃不动也不闪；
-     * 图片、直播封面、网页、聊天页这些静态或低频画面才走窗口帧，这一段本来也不需要 30fps。
-     */
-    void pumpWindow() {
-        if (window == null || region.isEmpty() || winPending) return;
-        if (out != null && !out.isRecycled()
-                && videoCoversAll(out.getWidth(), out.getHeight()) && videoFresh()) return;
-        attachPreDraw();
-        int drawn = drawCount.get();
-        // 宿主一次都没重绘：屏幕上还是那一帧，再拍一次只会让玻璃白闪一下。
-        if (hasWindowFrame() && drawn == lastPumpedDrawCount) return;
-        if (requestWindowFrame()) lastPumpedDrawCount = drawn;
-    }
-
-    /**
-     * 盯住宿主页面的重绘。
-     *
-     * 视频走 SurfaceView，不动 View 树，所以刷视频时这里几乎不增长（正好，视频有自己那一路）；
-     * 滚动列表、切页、图片加载会重绘，这时候才需要补一帧窗口画面。
-     */
     private void attachPreDraw() {
         View c = content;
         if (c == null) return;
@@ -443,117 +417,6 @@ public final class Backdrop {
         } catch (Throwable ignored) {
         }
         registeredVto = null;
-    }
-
-    private boolean videoFresh() {
-        long now = SystemClock.uptimeMillis();
-        for (Layer l : layers) {
-            if (l.valid && now - l.stamp <= VIDEO_FRESH_MS) return true;
-        }
-        return false;
-    }
-
-    private boolean requestWindowFrame() {
-        final android.view.Window w = window;
-        if (w == null || region.isEmpty() || winPending) return false;
-        long now = SystemClock.uptimeMillis();
-        if (now - lastWinRequestAt < WINDOW_FRAME_MIN_GAP_MS) return false;
-
-        // 采集区域必须落在窗口里：PixelCopy 对越界的 srcRect 会直接抛异常，
-        // 有的机型底栏会贴着/压过窗口底边，这里先裁一刀。
-        final Rect src = new Rect(region);
-        try {
-            View decor = w.peekDecorView();
-            int dw = decor == null ? 0 : decor.getWidth();
-            int dh = decor == null ? 0 : decor.getHeight();
-            if (dw > 0 && dh > 0) {
-                if (!src.intersect(0, 0, dw, dh)) return false;
-            }
-        } catch (Throwable ignored) {
-        }
-        final int rw = src.width();
-        final int rh = src.height();
-        if (rw <= 0 || rh <= 0) return false;
-        try {
-            if (winBuffer == null || winBuffer.isRecycled()
-                    || winBuffer.getWidth() != rw || winBuffer.getHeight() != rh) {
-                winBuffer = recycle(winBuffer);
-                winBuffer = Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888);
-            }
-        } catch (Throwable t) {
-            note = "窗口缓冲建不出来";
-            return false;
-        }
-
-        lastWinRequestAt = now;
-        winPending = true;
-        runMask(maskBefore);
-        try {
-            PixelCopy.request(w, src, winBuffer,
-                    new PixelCopy.OnPixelCopyFinishedListener() {
-                        @Override
-                        public void onPixelCopyFinished(int result) {
-                            winPending = false;
-                            runMask(maskAfter);
-                            if (result != PixelCopy.SUCCESS) {
-                                if (winFailures++ < 3) {
-                                    Dydock.warnOnce("window-pixelcopy",
-                                            "抓窗口画面失败 code=" + result + "，暂时用 UI 层采样");
-                                }
-                                return;
-                            }
-                            winFailures = 0;
-                            storeWindowFrame();
-                        }
-                    }, main);
-            return true;
-        } catch (Throwable t) {
-            winPending = false;
-            runMask(maskAfter);
-            if (winFailures++ < 3) {
-                Dydock.warnOnce("window-pixelcopy-err", "抓窗口画面异常: " + t);
-            }
-            return false;
-        }
-    }
-
-    private void storeWindowFrame() {
-        if (winBuffer == null || winBuffer.isRecycled()) return;
-        if (ui == null || ui.isRecycled()) return;
-        int w = ui.getWidth();
-        int h = ui.getHeight();
-        if (w <= 0 || h <= 0) return;
-        try {
-            if (winFrame == null || winFrame.isRecycled()
-                    || winFrame.getWidth() != w || winFrame.getHeight() != h) {
-                winFrame = recycle(winFrame);
-                winFrame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-            }
-            Canvas c = new Canvas(winFrame);
-            c.drawColor(0, PorterDuff.Mode.CLEAR);
-            c.drawBitmap(winBuffer, null, new Rect(0, 0, w, h), paint);
-            winStamp = SystemClock.uptimeMillis();
-        } catch (Throwable t) {
-            Dydock.warnOnce("window-frame-store", "保存窗口画面失败: " + t);
-            return;
-        }
-        compose();
-        Runnable cb = onFrame;
-        if (cb != null) {
-            try {
-                cb.run();
-            } catch (Throwable t) {
-                Dydock.error("玻璃刷新", t);
-            }
-        }
-    }
-
-    private void runMask(Runnable r) {
-        if (r == null) return;
-        try {
-            r.run();
-        } catch (Throwable ignored) {
-        }
     }
 
     private void measure() {
@@ -661,6 +524,11 @@ public final class Backdrop {
     private void requestFrame(final Layer l) {
         try {
             if (l.dst.isEmpty()) return;
+            // 视图已经不在窗口上/被隐藏：立刻丢掉旧帧，绝不让它留在合成里。
+            if (!l.view.isAttachedToWindow() || !l.view.isShown()) {
+                l.valid = false;
+                return;
+            }
 
             if (l.view instanceof TextureView) {
                 TextureView tv = (TextureView) l.view;
@@ -752,7 +620,7 @@ public final class Backdrop {
                     } else {
                         l.valid = false;
                         Dydock.warnOnce("pixelcopy", "抓视频画面失败 code=" + result
-                                + "（画面受保护时玻璃退回 UI 层）");
+                                + "（画面受保护时玻璃退回内容树采样）");
                     }
                 }
             }, main);
@@ -794,6 +662,7 @@ public final class Backdrop {
         ui = recycle(ui);
         vid = recycle(vid);
         out = recycle(out);
+        uiValid = false;
     }
 
     private static Bitmap recycle(Bitmap b) {
@@ -811,13 +680,7 @@ public final class Backdrop {
         detachPreDraw();
         releaseLayers();
         releaseBitmaps();
-        winFrame = recycle(winFrame);
-        winBuffer = recycle(winBuffer);
-        winPending = false;
-        winStamp = 0L;
-        window = null;
-        maskBefore = null;
-        maskAfter = null;
         content = null;
+        excluded = null;
     }
 }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.defaultMinSize
@@ -44,6 +45,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.ContentScale
@@ -100,7 +102,8 @@ class IsoOverlay private constructor(
     context: Context,
     private val onLog: Consumer<String>,
     private val onTabClick: IntConsumer,
-    private val onPlusClick: Runnable
+    private val onPlusClick: Runnable,
+    private val onLongPress: Runnable
 ) : FrameLayout(context) {
 
     private val overlayOwner = OverlayLifecycleOwner()
@@ -192,6 +195,7 @@ class IsoOverlay private constructor(
                     selectedIndex = selectedIndex,
                     onTabClick = { index -> onTabClick.accept(index) },
                     onPlusClick = { onPlusClick.run() },
+                    onLongPress = { onLongPress.run() },
                     onDrawn = {
                         if (drawn.compareAndSet(false, true)) log("玻璃已绘制")
                     }
@@ -206,8 +210,9 @@ class IsoOverlay private constructor(
             context: Context,
             onLog: Consumer<String>,
             onTabClick: IntConsumer,
-            onPlusClick: Runnable
-        ): IsoOverlay = IsoOverlay(context, onLog, onTabClick, onPlusClick)
+            onPlusClick: Runnable,
+            onLongPress: Runnable
+        ): IsoOverlay = IsoOverlay(context, onLog, onTabClick, onPlusClick, onLongPress)
     }
 
     /** 宿主算好的位置（都在覆盖层自己的坐标系里）。 */
@@ -381,6 +386,7 @@ private fun GlassSurface(
     selectedIndex: Int,
     onTabClick: (Int) -> Unit,
     onPlusClick: () -> Unit,
+    onLongPress: () -> Unit,
     onDrawn: () -> Unit
 ) {
     val backdrop = rememberLayerBackdrop()
@@ -419,7 +425,12 @@ private fun GlassSurface(
             Box(
                 modifier = Modifier
                     .offset(with(density) { tabsRect.left.toDp() }, with(density) { tabsRect.top.toDp() })
-                    .width(with(density) { tabsRect.width().toDp() }),
+                    .width(with(density) { tabsRect.width().toDp() })
+                    // 长按 Dock 打开设置：设置入口最稳的一条路，不依赖抖音自己的设置页。
+                    // 只挂在胶囊这一块，不占整屏，宿主其余地方的触摸完全不受影响。
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { onLongPress() })
+                    },
                 contentAlignment = Alignment.TopCenter
             ) {
                 FloatingBottomBar(

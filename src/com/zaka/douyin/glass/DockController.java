@@ -638,6 +638,15 @@ final class DockController {
                             Dydock.warnOnce("iso-plus-click", "转发发布点击失败: " + t);
                         }
                     }
+                },
+                new Runnable() {
+                    @Override public void run() {
+                        try {
+                            DockSettingsUi.showDialog(act);
+                        } catch (Throwable t) {
+                            Dydock.warnOnce("iso-longpress-settings", "长按打开设置失败: " + t);
+                        }
+                    }
                 });
 
         if (iso == null) {
@@ -713,8 +722,10 @@ final class DockController {
         final long[] lastFailLogAt = new long[]{0L};
         final int[] lastAccountedBandW = new int[]{-1};
         final int[] lastAccountedBandH = new int[]{-1};
-        /** 窗口帧补采的节流。 */
-        final long[] lastWinPumpAt = new long[]{0L};
+        /** 背景采样的泵：只在宿主重绘过/区域变过的时候真的重画。 */
+        final long[] lastBackdropPumpAt = new long[]{0L};
+        /** 模块设置页（桌面图标）改配置的同步节流。 */
+        final long[] lastPrefsSyncAt = new long[]{0L};
         /**
          * 原生底栏连续几帧不在窗口里。
          *
@@ -787,6 +798,7 @@ final class DockController {
                                     if (p != null) lf.remove(p);
                                     fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
+                                    backdrop.setExcluded(fresh);
                                     tabTargets[0] = lf;
                                     plusTarget[0] = p;
                                     synchronized (DOCKS) {
@@ -928,6 +940,15 @@ final class DockController {
                             }
                         }
                     }
+                    // 模块自己那个设置页改过配置：读进来立刻生效，不用重开抖音。
+                    if (now - lastPrefsSyncAt[0] >= 1000L) {
+                        lastPrefsSyncAt[0] = now;
+                        if (DockPrefs.syncFromModule(act)) {
+                            Dydock.log("设置:已同步桌面设置页的改动");
+                            applySettingsNow(act);
+                        }
+                    }
+
                     // 从隐藏回到显示：页面切回来了，按当前底栏重新贴一次位置，避免用的是旧坐标。
                     if (show && !overlayTargetVisible[0] && d != null) {
                         bandRect[0] = rectInWindow(d);
@@ -938,9 +959,10 @@ final class DockController {
                         } catch (Throwable ignored) {
                         }
                     }
-                    if (show && now - lastWinPumpAt[0] >= 700L) {
-                        lastWinPumpAt[0] = now;
-                        backdrop.pumpWindow();
+                    if (show) {
+                        // 玻璃后面那块画面：跟宿主的重绘走，不截屏也不拍窗口。
+                        // 每帧都调，内部有 10fps 的节流和自我判重。
+                        backdrop.pump();
                     }
 
                     if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
@@ -969,31 +991,9 @@ final class DockController {
                 MAIN.postDelayed(this, 16L);
             }
         };
-        // 背景采样接上宿主窗口：屏幕上是什么画面就映射什么画面（视频/图片/直播/网页都算）。
-        // 抓取前把玻璃压到几乎透明一帧，避免把自己的样子拍进去；
-        // 抓完按当前显隐状态还原，不会把已经收起来的玻璃又露出来。
-        backdrop.setWindow(act.getWindow());
-        backdrop.setCaptureMask(
-                new Runnable() {
-                    @Override public void run() {
-                        try {
-                            if (iso.view.getVisibility() == View.VISIBLE) {
-                                iso.view.setAlpha(0.02f);
-                            }
-                        } catch (Throwable ignored) {
-                        }
-                    }
-                },
-                new Runnable() {
-                    @Override public void run() {
-                        try {
-                            if (iso.view.getVisibility() == View.VISIBLE) {
-                                iso.view.setAlpha(overlayTargetVisible[0] ? 1f : 0f);
-                            }
-                        } catch (Throwable ignored) {
-                        }
-                    }
-                });
+        // 原生底栏绝不能被画进玻璃的背景里。它平时已经被藏起来了，
+        // 这里再兜一层：万一宿主把它设回可见，Backdrop 会跳过这一帧的内容树。
+        backdrop.setExcluded(dockRef[0]);
 
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }

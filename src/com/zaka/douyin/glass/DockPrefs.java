@@ -12,7 +12,7 @@ import android.content.SharedPreferences;
  */
 final class DockPrefs {
 
-    private static final String NAME = "dydock_settings";
+    static final String NAME = "dydock_settings";
 
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_HEIGHT = "dock_height_dp";
@@ -22,6 +22,8 @@ final class DockPrefs {
     private static final String KEY_SHOW_PLUS = "show_plus";
     private static final String KEY_SHOW_LABELS = "show_labels";
     private static final String KEY_ENTRY_OFFSET = "entry_top_offset_dp";
+    /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
+    private static final String KEY_REV = "settings_rev";
 
     /** 默认值就是 0.4.x 一直在用的那套参数：64dp 高、单格 76dp、左右各 24dp、离底 8dp。 */
     static final int DEF_HEIGHT = 64;
@@ -115,8 +117,51 @@ final class DockPrefs {
 
     static void resetAll(Context context) {
         try {
-            prefs(context).edit().clear().apply();
+            prefs(context).edit().clear()
+                    .putLong(KEY_REV, System.currentTimeMillis()).apply();
         } catch (Throwable ignored) {
+        }
+    }
+
+    // ---------------------------------------------------------------- 模块设置页
+
+    private static long lastSyncAt;
+
+    /**
+     * 把模块自己那个设置页（桌面图标的 dydock 设置）里改的东西同步进来。
+     *
+     * 设置页跑在模块进程里，写的是模块包名的 SharedPreferences；
+     * 这边（抖音进程）用 XSharedPreferences 直接读那份文件，谁的版本号新用谁的。
+     * 读不到（旧式框架/文件不可读）就什么也不做，Dock 继续用本地配置，不会崩。
+     *
+     * @return 有变化返回 true
+     */
+    static boolean syncFromModule(Context context) {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastSyncAt < 1000L) return false;
+        lastSyncAt = now;
+        try {
+            de.robv.android.xposed.XSharedPreferences remote =
+                    new de.robv.android.xposed.XSharedPreferences(Dydock.PKG, NAME);
+            remote.reload();
+            long remoteRev = remote.getLong(KEY_REV, 0L);
+            long localRev = prefs(context).getLong(KEY_REV, 0L);
+            if (remoteRev <= localRev) return false;
+
+            SharedPreferences.Editor editor = prefs(context).edit();
+            editor.putBoolean(KEY_ENABLED, remote.getBoolean(KEY_ENABLED, true));
+            editor.putBoolean(KEY_SHOW_PLUS, remote.getBoolean(KEY_SHOW_PLUS, true));
+            editor.putBoolean(KEY_SHOW_LABELS, remote.getBoolean(KEY_SHOW_LABELS, true));
+            editor.putInt(KEY_HEIGHT, remote.getInt(KEY_HEIGHT, DEF_HEIGHT));
+            editor.putInt(KEY_TAB_WIDTH, remote.getInt(KEY_TAB_WIDTH, DEF_TAB_WIDTH));
+            editor.putInt(KEY_SIDE_MARGIN, remote.getInt(KEY_SIDE_MARGIN, DEF_SIDE_MARGIN));
+            editor.putInt(KEY_BOTTOM_GAP, remote.getInt(KEY_BOTTOM_GAP, DEF_BOTTOM_GAP));
+            editor.putInt(KEY_ENTRY_OFFSET, remote.getInt(KEY_ENTRY_OFFSET, 0));
+            editor.putLong(KEY_REV, remoteRev);
+            editor.apply();
+            return true;
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -130,7 +175,8 @@ final class DockPrefs {
 
     private static void writeBool(Context context, String key, boolean value) {
         try {
-            prefs(context).edit().putBoolean(key, value).apply();
+            prefs(context).edit().putBoolean(key, value)
+                    .putLong(KEY_REV, System.currentTimeMillis()).apply();
         } catch (Throwable ignored) {
         }
     }
@@ -145,7 +191,8 @@ final class DockPrefs {
 
     private static void writeInt(Context context, String key, int value) {
         try {
-            prefs(context).edit().putInt(key, value).apply();
+            prefs(context).edit().putInt(key, value)
+                    .putLong(KEY_REV, System.currentTimeMillis()).apply();
         } catch (Throwable ignored) {
         }
     }
