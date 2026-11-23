@@ -173,6 +173,12 @@ final class DockController {
 
         final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
+        // Refresh the sampled background as feed content and video frames change.
+        backdrop.setOnFrame(new Runnable() {
+            @Override public void run() {
+                if (overlay.isAttachedToWindow()) overlay.invalidate();
+            }
+        });
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
@@ -206,6 +212,22 @@ final class DockController {
         final int[] expandedTicks = new int[]{0};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
+        final Runnable backdropRefresh = new Runnable() {
+            @Override public void run() {
+                if (!live[0]) return;
+                try {
+                    if (overlay.isAttachedToWindow() && overlay.getVisibility() == View.VISIBLE) {
+                        backdrop.capture();
+                        overlay.invalidate();
+                    }
+                } catch (Throwable t) {
+                    Dydock.warnOnce("backdrop-refresh", "背景刷新失败: " + t);
+                }
+                MAIN.postDelayed(this, 300L);
+            }
+        };
+        MAIN.postDelayed(backdropRefresh, 300L);
+
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
                 if (!live[0]) return;
@@ -213,6 +235,7 @@ final class DockController {
                     if (act.isFinishing() || act.isDestroyed()) {
                         live[0] = false;
                         MAIN.removeCallbacks(this);
+                        MAIN.removeCallbacks(backdropRefresh);
                         synchronized (POLLERS) { POLLERS.remove(act); }
                         synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                         return;
