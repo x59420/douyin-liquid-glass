@@ -48,8 +48,8 @@ final class DockController {
     private static final WeakHashMap<Activity, View> LONG_PRESS_TARGETS =
             new WeakHashMap<Activity, View>();
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
-    private static final WeakHashMap<Activity, ComposeDockOverlay> OVERLAYS =
-            new WeakHashMap<Activity, ComposeDockOverlay>();
+    private static final WeakHashMap<Activity, DockOverlay> OVERLAYS =
+            new WeakHashMap<Activity, DockOverlay>();
     /** Keep the per-Activity poller cancellable so destroyed pages do not retain work. */
     private static final WeakHashMap<Activity, Runnable> POLLERS =
             new WeakHashMap<Activity, Runnable>();
@@ -108,7 +108,7 @@ final class DockController {
         if (act == null) return;
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         View dock;
-        ComposeDockOverlay overlay;
+        DockOverlay overlay;
         synchronized (DOCKS) {
             dock = DOCKS.remove(act);
         }
@@ -207,12 +207,12 @@ final class DockController {
         // Match KernelSU FloatingBottomBar's 4dp backdrop blur.
         backdrop.setBlurDp(4f, density);
 
-        final ComposeDockOverlay overlay = ComposeDockOverlay.create(act, backdrop, density);
+        final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
         // Refresh the sampled background as feed content and video frames change.
         backdrop.setOnFrame(new Runnable() {
             @Override public void run() {
-                if (overlay.isAttachedToWindow()) overlay.refreshBackdrop();
+                if (overlay.isAttachedToWindow()) overlay.invalidate();
             }
         });
 
@@ -256,7 +256,7 @@ final class DockController {
                 try {
                     if (overlay.isAttachedToWindow() && overlay.getVisibility() == View.VISIBLE) {
                         backdrop.capture();
-                        overlay.refreshBackdrop();
+                        overlay.invalidate();
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("backdrop-refresh", "背景刷新失败: " + t);

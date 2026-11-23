@@ -76,6 +76,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private boolean looping;
     private long lastFrame;
     private boolean drewOnce;
+    /** 一旦绘制出过错，就不再走 GPU 折射那条路，永久退回磨砂。 */
+    private boolean forceFrosted;
 
     /** 每帧跟着走的官方底栏 */
     private View dockView;
@@ -346,9 +348,44 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     // ---------------------------------------------------------------- 绘制
 
+    /**
+     * 绘制的最后一道防线。
+     *
+     * 这里是跑在宿主主线程上的 onDraw：只要抛一次没接住的异常，
+     * 抖音整个人就没了（宿主直接闪退）。所以整条绘制链一律兜住，
+     * 出了事只降级成磨砂玻璃，绝不把异常往上冒。
+     */
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        try {
+            drawFrame(canvas);
+        } catch (Throwable t) {
+            forceFrosted = true;
+            Dydock.warnOnce("overlay-draw", "玻璃绘制失败，已降级为磨砂: " + t);
+            try {
+                drawFallback(canvas);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /** 玻璃画不出来时的兜底：两块实心圆角面板，只用最基本的 Canvas 操作。 */
+    private void drawFallback(Canvas canvas) {
+        if (leftPill.isEmpty()) return;
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(0xFF1C1C1E);
+        p.setAlpha(215);
+        float r = leftPill.height() / 2f;
+        canvas.drawRoundRect(leftPill, r, r, p);
+        if (!plusPill.isEmpty()) {
+            float pr = plusPill.height() / 2f;
+            canvas.drawRoundRect(plusPill, pr, pr, p);
+        }
+        drewOnce = true;
+    }
+
+    private void drawFrame(Canvas canvas) {
         if (count <= 0 || leftPill.isEmpty()) return;
 
         float a = Math.max(0f, Math.min(1f, appear.value));
@@ -360,7 +397,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float pp = Math.max(0f, Math.min(1f, plusPress.value));
         float panelOffset = dragOffsetPx();
 
-        boolean framed = backdrop.hasFrame();
+        boolean framed = !forceFrosted && backdrop.hasFrame();
         // KernelSU uses the theme's onSurface color; never infer icon color from video pixels.
         boolean darkTheme = (getResources().getConfiguration().uiMode
                 & android.content.res.Configuration.UI_MODE_NIGHT_MASK)

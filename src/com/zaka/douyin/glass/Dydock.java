@@ -27,7 +27,7 @@ import de.robv.android.xposed.XposedBridge;
 public final class Dydock {
 
     public static final String TAG = "dydock";
-    public static final String VER = "0.1.21";
+    public static final String VER = "0.2.0";
     public static final String HOST = "com.ss.android.ugc.aweme";
     public static final String PKG = "com.zaka.douyin.glass";
 
@@ -51,6 +51,25 @@ public final class Dydock {
         synchronized (FILE_LOCK) {
             if (appContext != null) return;
             appContext = context.getApplicationContext();
+        }
+        // 诊断文件的建立要走 MediaStore，放到后台线程去，
+        // 绝不能在宿主启动那一下卡主线程（那是 ANR 的来源）。
+        Thread worker = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                initFile();
+            }
+        }, "dydock-diagnostics");
+        worker.setDaemon(true);
+        try {
+            worker.start();
+        } catch (Throwable t) {
+            Log.e(TAG, "Unable to start diagnostic writer", t);
+        }
+    }
+
+    private static void initFile() {
+        synchronized (FILE_LOCK) {
             try {
                 if (Build.VERSION.SDK_INT >= 29) {
                     logUri = findOrCreateDownloadLog(appContext);

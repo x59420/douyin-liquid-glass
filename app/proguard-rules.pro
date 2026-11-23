@@ -5,5 +5,4 @@
 # Xposed APIs are supplied by the LSPosed runtime, not packaged into this APK.
 -dontwarn de.robv.android.xposed.**
 
-# Preserve Kotlin/Compose metadata used by reflection and tooling.
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod

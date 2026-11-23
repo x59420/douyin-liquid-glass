@@ -1,6 +1,5 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
@@ -16,24 +15,18 @@ android {
         applicationId = "com.zaka.douyin.glass"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1921
-        versionName = "0.1.21"
+        versionCode = 200
+        versionName = "0.2.0"
     }
 
     sourceSets {
         getByName("main") {
             manifest.srcFile(rootProject.file("app/AndroidManifest.xml"))
             java.srcDirs(rootProject.file("src"))
-            // AGP 9 built-in Kotlin has a separate Kotlin source directory set.
-            kotlin.directories.add(rootProject.file("src").absolutePath)
             res.srcDirs(rootProject.file("app/res"))
             assets.srcDirs(rootProject.file("app/assets"))
             resources.srcDirs(rootProject.file("app/resources"))
         }
-    }
-
-    buildFeatures {
-        compose = true
     }
 
     compileOptions {
@@ -53,7 +46,7 @@ android {
 
     buildTypes {
         release {
-            // Temporarily disable shrinking until LSPosed reflection hooks are fully verified.
+            // LSPosed loads GlassEntry by name from assets/xposed_init, so keep shrinking off.
             isMinifyEnabled = false
             isShrinkResources = false
             signingConfig = signingConfigs.getByName("release")
@@ -71,14 +64,5 @@ android {
 }
 
 dependencies {
-    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.animation:animation")
-    implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
-    implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
-    implementation("top.yukonga.miuix.kmp:miuix-blur-android:0.9.4")
     compileOnly(files(rootProject.file("libs/api-82.jar")))
 }
