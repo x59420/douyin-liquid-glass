@@ -66,6 +66,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private boolean dragging;
     /** 正在接收原生触摸序列的底栏子项；未开始拖动前由它处理点击和长按。 */
     private View nativeTarget;
+    private boolean nativeDownHandled;
     private float downX;
     private float downY;
     private float dragStart;
@@ -777,6 +778,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
         switch (e.getActionMasked()) {
             case MotionEvent.ACTION_DOWN: {
+                refreshNativeTargets();
                 if (leftPill.contains(x, y)) {
                     downInLeft = true;
                     downInPlus = false;
@@ -788,7 +790,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     nativeTarget = pendingIndex >= 0 && pendingIndex < tabs.size()
                             ? tabs.get(pendingIndex) : null;
                     // 普通按下、点击和长按先交给抖音原生子项。
-                    dispatchToNative(nativeTarget, e);
+                    nativeDownHandled = dispatchToNative(nativeTarget, e);
                     // 按下就把透镜挪到这一格；形变由独立弹簧通道驱动。
                     droplet.moveTo(pendingIndex, true);
                     droplet.press();
@@ -801,7 +803,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downInPlus = true;
                     downInLeft = false;
                     nativeTarget = plusTab;
-                    dispatchToNative(nativeTarget, e);
+                    nativeDownHandled = dispatchToNative(nativeTarget, e);
                     plusPress.to(1f, 700f, 40f);
                     startLoop();
                     return true;
@@ -849,7 +851,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     int target = wasDragging ? clampIndex(droplet.targetX()) : pendingIndex;
                     if (!wasDragging) {
                         // 没有拖动：原样把 UP/CANCEL 交给原生控件，保留点击与长按。
-                        dispatchToNative(nativeTarget, e);
+                        boolean upHandled = dispatchToNative(nativeTarget, e);
+                        if (!cancelled && (!nativeDownHandled || !upHandled)) clickTab(target);
                     } else if (!cancelled) {
                         // 已拖动：原生序列此前已 CANCEL，松手时只触发最终落点一次。
                         clickTab(target);
@@ -857,6 +860,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downInLeft = false;
                     dragging = false;
                     nativeTarget = null;
+                    nativeDownHandled = false;
                     selected = target;
                     droplet.moveTo(target, true);
                     droplet.touchUp();
@@ -865,9 +869,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     return true;
                 }
                 if (downInPlus) {
-                    dispatchToNative(nativeTarget, e);
+                    boolean upHandled = dispatchToNative(nativeTarget, e);
+                    if (!cancelled && (!nativeDownHandled || !upHandled)) clickPlus();
                     downInPlus = false;
                     nativeTarget = null;
+                    nativeDownHandled = false;
                     plusPress.to(0f, 600f, 42f);
                     startLoop();
                     return true;
@@ -882,8 +888,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
      * 把覆盖层收到的事件换算到原生 tab 的本地坐标。
      * 使用 raw 坐标定位，避免覆盖层与宿主子项处在不同父容器时产生偏移。
      */
-    private void dispatchToNative(View target, MotionEvent source) {
-        if (target == null || source == null || !target.isAttachedToWindow()) return;
+    private boolean dispatchToNative(View target, MotionEvent source) {
+        if (target == null || source == null || !target.isAttachedToWindow()) return false;
         MotionEvent copy = MotionEvent.obtain(source);
         try {
             int[] loc = new int[2];
@@ -891,11 +897,40 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             float dx = source.getRawX() - loc[0] - source.getX();
             float dy = source.getRawY() - loc[1] - source.getY();
             copy.offsetLocation(dx, dy);
-            target.dispatchTouchEvent(copy);
+            return target.dispatchTouchEvent(copy);
         } catch (Throwable t) {
             Dydock.warnOnce("native-touch", "转发原生底栏触摸失败: " + t);
+            return false;
         } finally {
             copy.recycle();
+        }
+    }
+
+    /** Refresh native tab references before each press; Douyin may rebuild its nav views. */
+    private void refreshNativeTargets() {
+        View dock = dockView;
+        if (dock == null || !dock.isAttachedToWindow()) return;
+        try {
+            List<View> current = DockController.Finder.tabItems(dock);
+            if (current.size() < 4) return;
+            View currentPlus = DockController.Finder.pickPlus(current);
+            List<View> currentTabs = new ArrayList<View>(current);
+            if (currentPlus != null) currentTabs.remove(currentPlus);
+            boolean same = currentTabs.size() == tabs.size() && currentPlus == plusTab;
+            if (same) {
+                for (int i = 0; i < currentTabs.size(); i++) {
+                    if (currentTabs.get(i) != tabs.get(i)) { same = false; break; }
+                }
+            }
+            if (!same) {
+                tabs.clear();
+                tabs.addAll(currentTabs);
+                plusTab = currentPlus;
+                count = Math.min(tabs.size(), MAX_SLOTS);
+                Dydock.log("底栏:点击目标已在触摸前刷新");
+            }
+        } catch (Throwable t) {
+            Dydock.warnOnce("refresh-tabs", "刷新原生导航项失败: " + t);
         }
     }
 
