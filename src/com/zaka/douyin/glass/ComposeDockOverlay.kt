@@ -130,7 +130,10 @@ class ComposeDockOverlay private constructor(
                 } catch (t: Throwable) {
                     Dydock.warnOnce("compose-video-pump", "Compose 背景视频刷新失败: $t")
                 }
-                main.postDelayed(this, 90L)
+                // Keep SurfaceView PixelCopy requests close to 30 fps. PixelCopy is
+                // asynchronous and each layer has a pending guard, so slow devices
+                // naturally skip requests rather than queueing an unbounded backlog.
+                main.postDelayed(this, 33L)
             }
         }
     }
