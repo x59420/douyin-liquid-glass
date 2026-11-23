@@ -35,12 +35,14 @@ import java.util.WeakHashMap;
  */
 final class DockController {
 
-    private static final int MAX_ATTEMPTS = 24;
+    private static final int MAX_ATTEMPTS = 40;
     private static final long RETRY_MS = 300L;
 
     private static final WeakHashMap<Activity, Boolean> DONE =
             new WeakHashMap<Activity, Boolean>();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    /** 只弹一次的提示文案，避免每个页面都提示一遍。 */
+    private static final java.util.HashSet<String> TOASTED = new java.util.HashSet<String>();
 
     /** 每个 Activity 识别出的官方 Dock。 */
     private static final WeakHashMap<Activity, View> DOCKS = new WeakHashMap<Activity, View>();
@@ -48,8 +50,8 @@ final class DockController {
     private static final WeakHashMap<Activity, View> LONG_PRESS_TARGETS =
             new WeakHashMap<Activity, View>();
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
-    private static final WeakHashMap<Activity, ComposeDockOverlay> OVERLAYS =
-            new WeakHashMap<Activity, ComposeDockOverlay>();
+    private static final WeakHashMap<Activity, DockOverlay> OVERLAYS =
+            new WeakHashMap<Activity, DockOverlay>();
     /** Keep the per-Activity poller cancellable so destroyed pages do not retain work. */
     private static final WeakHashMap<Activity, Runnable> POLLERS =
             new WeakHashMap<Activity, Runnable>();
@@ -108,7 +110,7 @@ final class DockController {
         if (act == null) return;
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         View dock;
-        ComposeDockOverlay overlay;
+        DockOverlay overlay;
         synchronized (DOCKS) {
             dock = DOCKS.remove(act);
         }
@@ -171,6 +173,7 @@ final class DockController {
                         attempt(act, n + 1);
                     } else if (n == MAX_ATTEMPTS) {
                         Dydock.warn("底栏:没认出底栏（这个页面可能不是首页）");
+                        toast(act, "Dydock " + Dydock.VER + "：没认出抖音底栏");
                     }
                 } catch (Throwable t) {
                     Dydock.error("底栏:安装", t);
@@ -207,12 +210,12 @@ final class DockController {
         // Match KernelSU FloatingBottomBar's 4dp backdrop blur.
         backdrop.setBlurDp(4f, density);
 
-        final ComposeDockOverlay overlay = ComposeDockOverlay.create(act, backdrop, density);
+        final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
         // Refresh the sampled background as feed content and video frames change.
         backdrop.setOnFrame(new Runnable() {
             @Override public void run() {
-                if (overlay.isAttachedToWindow()) overlay.refreshBackdrop();
+                if (overlay.isAttachedToWindow()) overlay.invalidate();
             }
         });
 
@@ -256,7 +259,7 @@ final class DockController {
                 try {
                     if (overlay.isAttachedToWindow() && overlay.getVisibility() == View.VISIBLE) {
                         backdrop.capture();
-                        overlay.refreshBackdrop();
+                        overlay.invalidate();
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("backdrop-refresh", "背景刷新失败: " + t);
@@ -270,26 +273,6 @@ final class DockController {
             @Override public void run() {
                 if (!live[0]) return;
                 try {
-                    // 玻璃框架在宿主里彻底画不出来（Compose/Miuix 抛过错）：
-                    // 立刻停掉所有轮询，把官方底栏还回去，别留一条空白、也别再画。
-                    if (overlay.isBroken()) {
-                        live[0] = false;
-                        MAIN.removeCallbacks(this);
-                        MAIN.removeCallbacks(backdropRefresh);
-                        synchronized (POLLERS) { POLLERS.remove(act); }
-                        synchronized (POLL_STATES) { POLL_STATES.remove(act); }
-                        View d0 = dockRef[0];
-                        try {
-                            if (d0 != null) {
-                                d0.setVisibility(View.VISIBLE);
-                                d0.setAlpha(1f);
-                            }
-                            overlay.setVisibility(View.GONE);
-                        } catch (Throwable ignored) {
-                        }
-                        Dydock.warn("底栏:玻璃绘制框架出错，已恢复官方 Dock");
-                        return;
-                    }
                     if (act.isFinishing() || act.isDestroyed()) {
                         live[0] = false;
                         MAIN.removeCallbacks(this);
@@ -301,7 +284,8 @@ final class DockController {
                     // A transition can leave the old overlay parented but detached.
                     // Remove/re-add it when the Activity decor is live; checking only
                     // getParent()==null misses this case and leaves the Dock gone forever.
-                    if (!overlay.isAttachedToWindow() && decor.isAttachedToWindow()) {                        ViewParent parent = overlay.getParent();
+                    if (!overlay.isAttachedToWindow() && decor.isAttachedToWindow()) {
+                        ViewParent parent = overlay.getParent();
                         if (parent instanceof ViewGroup) {
                             ((ViewGroup) parent).removeView(overlay);
                         }
@@ -421,11 +405,29 @@ final class DockController {
             }
         }, 2500L);
 
+        toast(act, "Dydock " + Dydock.VER + "：玻璃底栏已接管");
         Dydock.log("底栏已接管：" + left.size() + " 个图标"
                 + (plus != null ? " ＋ 独立一块" : "")
                 + "，底栏 " + dock.getWidth() + "x" + dock.getHeight()
                 + "（" + dock.getClass().getSimpleName() + "）");
         return true;
+    }
+
+    /** 一次性提示：只在本次进程里弹一次，用来一眼确认模块到底有没有接管到。 */
+    private static void toast(final Activity act, final String text) {
+        if (act == null) return;
+        synchronized (TOASTED) {
+            if (!TOASTED.add(text)) return;
+        }
+        MAIN.post(new Runnable() {
+            @Override public void run() {
+                try {
+                    android.widget.Toast.makeText(act.getApplicationContext(), text,
+                            android.widget.Toast.LENGTH_SHORT).show();
+                } catch (Throwable ignored) {
+                }
+            }
+        });
     }
 
     private static Rect rectInWindow(View v) {
@@ -436,92 +438,209 @@ final class DockController {
 
     // ------------------------------------------------------------------ 认底栏
 
+    /**
+     * 抖音底栏识别。
+     *
+     * 老版本是「必须正好 5 个子项 + 首页/朋友/消息/我 四个文字都在」一票否决。
+     * 抖音改版、换皮、文字被画进自绘 Canvas、角标把文字节点替换掉……只要命中一种，
+     * 就一辈子认不出来，用户看到的就是「装了模块，底栏一点没变」。
+     *
+     * 现在改成打分：先找「贴着屏幕底边的一排可点控件」，再按文字、个数、选中态、
+     * 中间那个发布按钮这些证据累加分数。分数不够就地不动 —— 宁可不接管，
+     * 也不能把正文里的一排按钮当成底栏去替换。
+     */
     static final class Finder {
 
         private static final int MAX_DEPTH = 44;
+        /** 已经攒够分数的门槛：≥70 直接认，55~70 要连续两帧都看到同一个才认。 */
+        private static final float STRONG = 70f;
+        private static final float ACCEPT = 55f;
+
+        private static java.lang.ref.WeakReference<View> pending;
+        private static int pendingHits;
 
         static ViewGroup findDock(View root) {
+            if (root == null) return null;
             int rw = root.getWidth();
             int rh = root.getHeight();
             if (rw <= 0 || rh <= 0) return null;
-            ViewGroup[] best = new ViewGroup[1];
-            float[] bestScore = new float[]{-1f};
-            walk(root, rw, rh, best, bestScore, 0, new int[]{1400});
-            return best[0];
+            Best best = new Best();
+            walk(root, root, best, 0, new int[]{2600});
+            if (best.view == null || best.score < ACCEPT) {
+                pending = null;
+                pendingHits = 0;
+                return null;
+            }
+            View last = pending == null ? null : pending.get();
+            if (last == best.view) pendingHits++;
+            else {
+                pending = new java.lang.ref.WeakReference<View>(best.view);
+                pendingHits = 1;
+            }
+            if (best.score >= STRONG || pendingHits >= 2) return best.view;
+            return null;
         }
 
-        private static void walk(View root, int rw, int rh,
-                                 ViewGroup[] best, float[] bestScore, int depth, int[] budget) {
-            if (root == null || depth > MAX_DEPTH || budget[0] <= 0) return;
-            budget[0]--;
+        private static final class Best {
+            ViewGroup view;
+            float score = -1f;
+        }
 
-            if (root instanceof ViewGroup && root != null && root.isShown()) {
-                ViewGroup g = (ViewGroup) root;
-                float density = g.getResources().getDisplayMetrics().density;
-                int w = g.getWidth();
-                int h = g.getHeight();
-                float hDp = h / density;
-                int[] l = new int[2];
-                g.getLocationInWindow(l);
-                int[] rl = new int[2];
-                View top = root;
-                // 用根视图的窗口位置换算相对坐标
-                ViewParent p = top.getParent();
-                while (p instanceof View) {
-                    top = (View) p;
-                    p = top.getParent();
+        private static void walk(View root, View node, Best best, int depth, int[] budget) {
+            if (node == null || depth > MAX_DEPTH || budget[0]-- <= 0) return;
+            if (node instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) node;
+                float score = score(g, root);
+                if (score > best.score) {
+                    best.score = score;
+                    best.view = g;
                 }
-                top.getLocationInWindow(rl);
-                int relTop = l[1] - rl[1];
-                int bottom = relTop + h;
-
-                // Restrict matching to the actual bottom navigation strip. Older broad bounds
-                // could mistake a search/result row near the bottom for the Dock.
-                boolean inBottom = bottom >= rh - 48f * density
-                        && relTop >= rh - 150f * density;
-                boolean sizeOk = hDp >= 34f && hDp <= 96f && w >= rw * 0.70f;
-                if (inBottom && sizeOk && !hasInput(g)) {
-                    List<View> items = tabItems(g);
-                    // Fail closed: geometry and clickability alone must never identify a Dock.
-                    if (isExpectedDouyinDock(items)) {
-                        float score = bottom + w * 0.2f;
-                        if (score > bestScore[0]) {
-                            bestScore[0] = score;
-                            best[0] = g;
-                        }
-                    }
-                }
-            }
-
-            if (root instanceof ViewGroup) {
-                ViewGroup g = (ViewGroup) root;
-                for (int i = 0; i < g.getChildCount(); i++) {
-                    walk(g.getChildAt(i), rw, rh, best, bestScore, depth + 1, budget);
+                for (int i = 0, n = g.getChildCount(); i < n && budget[0] > 0; i++) {
+                    walk(root, g.getChildAt(i), best, depth + 1, budget);
                 }
             }
         }
 
-        /**
-         * Positive identity check for the native Douyin bottom navigation:
-         * exactly four named destinations (Home/Friends/Messages/Profile) plus
-         * the center publish slot. Unknown rows are left untouched.
-         */
-        private static boolean isExpectedDouyinDock(List<View> items) {
-            if (items == null || items.size() != 5) return false;
-            boolean home = false;
-            boolean friends = false;
-            boolean messages = false;
-            boolean profile = false;
-            for (int i = 0; i < items.size(); i++) {
-                if (i == 2) continue; // Douyin's independent center publish button
+        /** 给一个容器打「它像不像抖音底栏」的分；不像就返回 -1。 */
+        private static float score(ViewGroup g, View root) {
+            String cn = g.getClass().getName();
+            if (cn.startsWith("com.zaka.douyin.glass")) return -1f;
+            if (!g.isShown() || g.getAlpha() < 0.2f) return -1f;
+
+            int rw = root.getWidth();
+            int rh = root.getHeight();
+            if (rw <= 0 || rh <= 0) return -1f;
+
+            int w = g.getWidth();
+            int h = g.getHeight();
+            float d = g.getResources().getDisplayMetrics().density;
+            if (w < rw * 0.55f || h <= 0) return -1f;
+            float hDp = h / d;
+            if (hDp < 30f || hDp > 150f) return -1f;
+
+            int[] rl = new int[2];
+            int[] gl = new int[2];
+            try {
+                root.getLocationOnScreen(rl);
+                g.getLocationOnScreen(gl);
+            } catch (Throwable t) {
+                return -1f;
+            }
+            int rootBottom = rl[1] + rh;
+            int gTop = gl[1] - rl[1];
+            int gBottom = gTop + h;
+            // 只认贴底那一条；正文滚动到一半经过底部的一排按钮会被这里刷掉。
+            if (gBottom < rh - (int) (120 * d)) return -1f;
+            if (gTop < rh - (int) (260 * d)) return -1f;
+            if (hasInput(g)) return -1f;   // 聊天页输入条不是底栏
+
+            List<View> items = rowItems(g);
+            if (items == null) return -1f;
+
+            int count = items.size();
+            boolean home = false, friends = false, messages = false, profile = false, anyLabel = false;
+            for (int i = 0; i < count; i++) {
                 String label = navigationLabel(items.get(i), 0);
+                if (label.isEmpty()) continue;
+                anyLabel = true;
                 if ("首页".equals(label)) home = true;
                 else if ("朋友".equals(label) || "好友".equals(label)) friends = true;
                 else if ("消息".equals(label)) messages = true;
                 else if ("我".equals(label) || "个人主页".equals(label)) profile = true;
-                else return false;
             }
-            return home && friends && messages && profile;
+
+            View plus = pickPlus(items);
+            boolean middlePlus = count == 5 && plus == items.get(2);
+
+            // 没有任何文字证据、结构也不像 5 格发布条：直接不算，避免误伤正文列表。
+            if (!anyLabel && !middlePlus) return -1f;
+
+            float score = 0f;
+            if (home) score += 45f;
+            if (friends) score += 18f;
+            if (messages) score += 18f;
+            if (profile) score += 18f;
+            if (count == 5) score += 12f;
+            else if (count == 4) score += 6f;
+
+            int gapToBottom = rootBottom - (gl[1] + h);
+            if (gapToBottom >= -(int) (6 * d) && gapToBottom <= (int) (14 * d)) score += 14f;
+            else if (gapToBottom > (int) (90 * d)) score -= 20f;
+
+            for (int i = 0; i < count; i++) {
+                if (selectedDeep(items.get(i), 0)) {
+                    score += 10f;
+                    break;
+                }
+            }
+            if (plus != null) score += 10f;
+            if (middlePlus) score += 12f;
+            return score;
+        }
+
+        /** 底栏里那一排可点的子项（从左到右）；不像一排就返回 null。 */
+        static List<View> tabItems(ViewGroup g) {
+            List<View> row = rowItems(g);
+            return row == null ? new ArrayList<View>() : row;
+        }
+
+        private static List<View> rowItems(ViewGroup g) {
+            List<View> direct = collectRow(g);
+            if (direct != null) return direct;
+            // 有些版本每个 tab 外面还套了一层容器：摊平一层再看。
+            for (int i = 0, n = g.getChildCount(); i < n; i++) {
+                View c = g.getChildAt(i);
+                if (c instanceof ViewGroup && c.getVisibility() == View.VISIBLE) {
+                    List<View> inner = collectRow((ViewGroup) c);
+                    if (inner != null && inner.size() >= 4) return inner;
+                }
+            }
+            return null;
+        }
+
+        private static List<View> collectRow(ViewGroup g) {
+            List<View> out = new ArrayList<View>();
+            List<View> all = new ArrayList<View>();
+            for (int i = 0, n = g.getChildCount(); i < n; i++) {
+                View c = g.getChildAt(i);
+                if (c == null || c.getVisibility() != View.VISIBLE) continue;
+                if (c.getAlpha() < 0.2f) continue;
+                if (c.getWidth() < 8 || c.getHeight() < 8) continue;
+                all.add(c);
+                if (clickableish(c)) out.add(c);
+            }
+            // 有的版本把点击挂在里面的图标上、外层容器不可点：可点的凑不够就放宽，
+            // 只要求是同一排、横着铺开、高度对得上（后面还有贴底 + 文字证据把关）。
+            if (out.size() < 4) out = all;
+            if (out.size() < 4 || out.size() > 7) return null;
+
+            Collections.sort(out, new Comparator<View>() {
+                @Override
+                public int compare(View a, View b) {
+                    return Integer.compare(a.getLeft(), b.getLeft());
+                }
+            });
+
+            // 必须是一排（垂直范围基本重合）
+            int top = out.get(0).getTop();
+            int hh = Math.max(1, out.get(0).getBottom() - top);
+            for (View v : out) {
+                if (Math.abs(v.getTop() - top) > hh * 0.45f) return null;
+            }
+            // 宽度不能差太远（中间那个发布按钮会小一些，给足余量）
+            int max = 1, min = Integer.MAX_VALUE;
+            for (View v : out) {
+                max = Math.max(max, v.getWidth());
+                min = Math.min(min, v.getWidth());
+            }
+            if (min < max * 0.22f) return null;
+            // 得横着铺开，不能挤在一角
+            int left = out.get(0).getLeft();
+            int right = out.get(out.size() - 1).getRight();
+            int w = g.getWidth();
+            if (w <= 0) return null;
+            if (left > w * 0.22f || right < w * 0.78f) return null;
+            return out;
         }
 
         private static String navigationLabel(View v, int depth) {
@@ -573,40 +692,6 @@ final class DockController {
             return false;
         }
 
-        /** 底栏里那一排可点的子项，按从左到右排好 */
-        static List<View> tabItems(ViewGroup g) {
-            List<View> out = new ArrayList<View>();
-            for (int i = 0; i < g.getChildCount(); i++) {
-                View c = g.getChildAt(i);
-                if (c == null || c.getVisibility() != View.VISIBLE) continue;
-                if (c.getWidth() < 8 || c.getHeight() < 8) continue;
-                if (clickableish(c)) out.add(c);
-            }
-            if (out.size() < 4) return out;
-
-            Collections.sort(out, new Comparator<View>() {
-                @Override
-                public int compare(View a, View b) {
-                    return Integer.compare(a.getLeft(), b.getLeft());
-                }
-            });
-
-            // 必须是一排（垂直范围基本重合），否则认错层
-            int top = out.get(0).getTop();
-            int bottom = out.get(0).getBottom();
-            int hh = Math.max(1, bottom - top);
-            for (View v : out) {
-                if (Math.abs(v.getTop() - top) > hh * 0.5f) return new ArrayList<View>();
-            }
-
-            // 宽度不能差太远（＋ 会窄一些，给点余量）
-            int w0 = out.get(0).getWidth();
-            for (View v : out) {
-                if (v.getWidth() < w0 * 0.35f) return new ArrayList<View>();
-            }
-            return out;
-        }
-
         private static boolean clickableish(View v) {
             if (v.isClickable() || v.hasOnClickListeners()) return true;
             return hasClickableDescendant(v, 0);
@@ -628,10 +713,10 @@ final class DockController {
 
         /** 认出「＋ / 发布」那一个 */
         static View pickPlus(List<View> items) {
+            if (items == null) return null;
             for (View v : items) {
                 if (looksLikePlus(v)) return v;
             }
-            // 认不出来：5 个的话，抖音的 ＋ 在中间
             if (items.size() == 5) return items.get(2);
             return null;
         }
@@ -669,25 +754,6 @@ final class DockController {
                 }
             }
             return false;
-        }
-
-        /** 只在明确确认首页处于选中状态时显示；无法确认就恢复原生底栏。 */
-        static boolean isHomeSelected(List<View> items) {
-            boolean homeSelected = false;
-            boolean otherDestinationSelected = false;
-            for (View item : items) {
-                if (!selectedDeep(item, 0)) continue;
-                String label = navigationLabel(item, 0);
-                if ("首页".equals(label)) {
-                    homeSelected = true;
-                } else if ("朋友".equals(label) || "好友".equals(label)
-                        || "消息".equals(label) || "我".equals(label)
-                        || "个人主页".equals(label)) {
-                    otherDestinationSelected = true;
-                }
-            }
-            // 安全优先：其他页明确选中，或当前选中状态无法识别时，都不显示自定义 Dock。
-            return homeSelected && !otherDestinationSelected;
         }
 
         private static boolean selectedDeep(View v, int depth) {
