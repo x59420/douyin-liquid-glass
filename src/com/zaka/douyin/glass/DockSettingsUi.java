@@ -99,6 +99,22 @@ final class DockSettingsUi {
         removeEntry(record);
     }
 
+    private static void pruneDuplicateEntries(ViewGroup group, View keep, int depth, int[] budget) {
+        if (group == null || depth > 36 || budget[0]-- <= 0) return;
+        for (int i = group.getChildCount() - 1; i >= 0 && budget[0] > 0; i--) {
+            View child = group.getChildAt(i);
+            if (child == null) continue;
+            if (child != keep && "Dydock settings entry".contentEquals(
+                    child.getContentDescription() == null ? "" : child.getContentDescription())) {
+                group.removeViewAt(i);
+                continue;
+            }
+            if (child instanceof ViewGroup) {
+                pruneDuplicateEntries((ViewGroup) child, keep, depth + 1, budget);
+            }
+        }
+    }
+
     /** 移除模块入口；若曾包裹原生「设置」行，则把原生 View 和原布局参数原样放回。 */
     private static void removeEntry(EntryRecord record) {
         if (record == null) return;
@@ -200,6 +216,8 @@ final class DockSettingsUi {
     private static boolean inject(Activity act) {
         View content = act.findViewById(android.R.id.content);
         if (!(content instanceof ViewGroup)) return false;
+        // 菜单被宿主重建、旧引用失效时，先清理残留的同名入口，避免重复累积。
+        pruneDuplicateEntries((ViewGroup) content, null, 0, new int[]{1800});
         Hit hit = new Hit();
         scan((ViewGroup) content, 0, new int[]{1600}, hit);
         if (hit.item == null || hit.parent == null) return false;
