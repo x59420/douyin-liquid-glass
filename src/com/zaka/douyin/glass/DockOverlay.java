@@ -94,6 +94,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     /** 每帧跟着走的官方底栏 */
     private View dockView;
     private boolean following;
+    private boolean fixedPosition;
     private boolean followScheduled;
     private final int[] dockLoc = new int[2];
 
@@ -217,8 +218,18 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     /** 认出来的官方底栏，之后每帧都跟它对齐 */
     void attachDock(View dock) {
         dockView = dock;
-        following = dock != null;
-        scheduleFollow();
+        if (!fixedPosition) {
+            following = dock != null;
+            scheduleFollow();
+        }
+    }
+
+    /** 固定玻璃的屏幕位置，但保留原生 View 引用用于点击与角标读取。 */
+    void pinPosition() {
+        fixedPosition = true;
+        following = false;
+        followScheduled = false;
+        Choreographer.getInstance().removeFrameCallback(follow);
     }
 
     private void scheduleFollow() {
@@ -1003,7 +1014,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         timer.post(pump);
         timer.post(recapture);
         timer.post(badgeTick);
-        if (dockView != null) {
+        if (dockView != null && !fixedPosition) {
             following = true;
             scheduleFollow();
         }
@@ -1013,7 +1024,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     protected void onVisibilityChanged(View changedView, int visibility) {
         super.onVisibilityChanged(changedView, visibility);
         if (visibility != VISIBLE) drewOnce = false;
-        if (visibility == VISIBLE && dockView != null) {
+        if (visibility == VISIBLE && dockView != null && !fixedPosition) {
             following = true;
             scheduleFollow();
         }
