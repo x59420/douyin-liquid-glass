@@ -12,6 +12,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.PeopleAlt
 import androidx.compose.material.icons.rounded.PersonOutline
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +39,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -63,6 +66,10 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeColorSpec
 import top.yukonga.miuix.kmp.theme.ThemeController
 import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.function.Consumer
 import java.util.function.IntConsumer
@@ -88,6 +95,19 @@ class IsoOverlay private constructor(
 ) : FrameLayout(context) {
 
     private val overlayOwner = OverlayLifecycleOwner()
+
+    /**
+     * 自己的 Recomposer。
+     *
+     * ComposeView attach 时会从 **rootView（抖音的 DecorView）** 往上找
+     * ViewTreeLifecycleOwner / SavedStateRegistryOwner 来取 windowRecomposer；
+     * DecorView 是抖音自己的，我们不能覆盖它的 tag，找不到就直接抛
+     * IllegalStateException，表现就是「玻璃整层不出现」。
+     * 所以这里给 ComposeView 一个自带 recomposer 的 parentContext，
+     * 完全不依赖宿主那棵树的 lifecycle。
+     */
+    private val recomposer = Recomposer(AndroidUiDispatcher.Main)
+    private val recomposerScope = CoroutineScope(AndroidUiDispatcher.Main + Job())
     private val composeView = SafeComposeHost(context)
     private val drawn = AtomicBoolean(false)
 
@@ -120,6 +140,24 @@ class IsoOverlay private constructor(
         composeView.inner.setViewCompositionStrategy(
             ViewCompositionStrategy.DisposeOnDetachedFromWindow
         )
+        // 先把 parentContext 设好再 setContent：AbstractComposeView 只允许在
+        // composition 建立之前赋值，之后设置会直接抛。
+        //
+        // 这个属性在部分 Compose 版本里是 private，所以走反射；设不进去也不影响，
+        // 外面已经给 ComposeView 挂了 ViewTreeLifecycleOwner，会退回 windowRecomposer。
+        if (attachRecomposer()) {
+            recomposerScope.launch { recomposer.runRecomposeAndApplyChanges() }
+        } else {
+            try {
+                recomposer.cancel()
+            } catch (_: Throwable) {
+            }
+            try {
+                recomposerScope.cancel()
+            } catch (_: Throwable) {
+            }
+            log("自定义 Recomposer 未启用，回退到宿主 lifecycle")
+        }
         addView(composeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         composeView.inner.setContent {
@@ -210,6 +248,14 @@ class IsoOverlay private constructor(
             composeView.inner.disposeComposition()
         } catch (_: Throwable) {
         }
+        try {
+            recomposer.cancel()
+        } catch (_: Throwable) {
+        }
+        try {
+            recomposerScope.cancel()
+        } catch (_: Throwable) {
+        }
         overlayOwner.destroy()
         backdropImage = null
     }
@@ -218,6 +264,25 @@ class IsoOverlay private constructor(
         try {
             onLog.accept(message)
         } catch (_: Throwable) {
+        }
+    }
+
+    /**
+     * 把自带的 Recomposer 挂到 ComposeView 上。
+     *
+     * 返回 false 表示这版 Compose 的 parentContext 拿不到（不同版本的可见性不一样），
+     * 此时安静回退到宿主 lifecycle，绝不让整层玻璃因为一个反射失败而不出现。
+     */
+    private fun attachRecomposer(): Boolean {
+        return try {
+            val field = androidx.compose.ui.platform.AbstractComposeView::class.java
+                .getDeclaredField("parentContext")
+            field.isAccessible = true
+            field.set(composeView.inner, recomposer)
+            true
+        } catch (t: Throwable) {
+            log("反射设置 parentContext 失败：$t")
+            false
         }
     }
 }
@@ -285,7 +350,11 @@ private fun GlassSurface(
                     labels.forEachIndexed { index, label ->
                         FloatingBottomBarItem(
                             selected = index == selectedIndex,
-                            onClick = { activate(index) }
+                            onClick = { activate(index) },
+                            // KernelSU 的 BottomBarMiuix 就是给每个 item 定 76dp 最小宽度，
+                            // FloatingBottomBar 用的是 width(IntrinsicSize.Min)，没有这个下限
+                            // 胶囊会被内容挤到很窄，看起来像「玻璃没出来」。
+                            modifier = Modifier.defaultMinSize(minWidth = 76.dp)
                         ) {
                             val fallback = when (index) {
                                 0 -> Icons.Rounded.Home

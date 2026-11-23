@@ -2,11 +2,54 @@
 
 一个面向抖音 Android 客户端的 LSPosed 模块：**把底部导航栏换成悬浮液态玻璃 Dock**，只动底栏这一块，其余界面保持抖音原样。
 
-> 当前版本：**0.3.1**（versionCode 2310）
+> 当前版本：**0.3.2**（versionCode 2320）
 >
 > APK 下载：**[GitHub Releases](https://github.com/x59420/douyin-liquid-glass/releases)**
 >
 > 自动构建：推送到 `main` 且构建成功后，GitHub Actions 会自动创建带 APK 的 Release。
+
+---
+
+## 关于 0.3.2：三处让「打开抖音没反应」的地方
+
+0.3.1 已经用独立类加载器把 Compose 隔开了，但装上还是不生效。这次把三条会让整层玻璃**静默消失**的路径逐条堵掉——渲染器和玻璃参数一个字没动，仍然完全是 KernelSU 那一套。
+
+### 1. Compose 的 Recomposer 拿不到宿主 lifecycle
+
+`ComposeView` attach 时会从 **rootView（抖音的 DecorView）** 往上找 `ViewTreeLifecycleOwner` / `ViewTreeSavedStateRegistryOwner`，用它取 `windowRecomposer`。DecorView 是抖音自己的，模块不能覆盖它的 tag；找不到就直接抛 `IllegalStateException`，整层玻璃一帧都不会画。
+
+0.3.2 给 `ComposeView` 挂自己的 `Recomposer`（`AndroidUiDispatcher.Main` + 自己的 scope），完全不依赖宿主那棵树。个别 Compose 版本里 `AbstractComposeView.parentContext` 是 private，就用反射设置；设不进去会退回原来的路径，不会因此把玻璃弄没。
+
+### 2. `DexClassLoader` 的 native 库路径是无效路径
+
+Compose 的 `androidx.graphics.path` 需要 `libandroidx.graphics.path.so`。0.3.1 传的是 `apk!/lib/abi`，ART 不认这种写法，`System.loadLibrary` 会抛 `UnsatisfiedLinkError`——而且是在第一帧绘制里抛，表现就是「玻璃自己消失」。
+
+现在先取 `ApplicationInfo.nativeLibraryDir`；Android 11+ 有包可见性限制查不到时，直接从模块 APK 里把 `.so` 解到缓存目录，再把**真实目录**交给 `DexClassLoader`。
+
+### 3. 模块 APK 路径可能整个拿不到
+
+隔离加载必须知道模块 APK 在哪。原来只问 LSPosed 的 `modulePath` 和 `CodeSource`，两个都可能为空（`BaseDexClassLoader` 定义的类通常没有 CodeSource location）。拿不到就直接「无法启动隔离渲染」。
+
+现在多一条最可靠的兜底：顺着**模块自己的 `BaseDexClassLoader`**，把 `dexPathList` 里那个 `.apk` 翻出来。
+
+### 顺带修掉的两处
+
+- **每个 tab 少了 76dp 最小宽度**：KernelSU 的 `BottomBarMiuix` 是 `Modifier.defaultMinSize(minWidth = 76.dp)`，0.3.1 的胶水层漏了。`FloatingBottomBar` 用的是 `width(IntrinsicSize.Min)`，没有这个下限，胶囊会被内容挤到很窄，看上去就像「玻璃没出来」。
+- **首帧看门狗 2.5s → 5s**：第一次进抖音要现场解 dex、建 Recomposer、跑第一帧，2.5 秒在高负载机型上会把「正在画」误判成「画不出来」，底栏先黑一下再变回原生。
+
+### 和 KernelSU 的对齐情况
+
+| 项 | 状态 |
+| --- | --- |
+| `ksu/FloatingBottomBar.kt` | 逐字移植（只改包名、`isInDarkTheme`、API 33 以下泛光保护） |
+| `liquid/Lens.kt`、`InnerShadow.kt`、`Vibrancy.kt`、`CombinedBackdrop.kt` | 与上游 `diff` 只差 package 一行 |
+| `animation/DampedDragAnimation.kt`、`InteractiveHighlight.kt`、`modifier/DragGestureInspector.kt` | 逐字移植 |
+| miuix 版本 | `0.9.4`，与上游 `libs.versions.toml` 一致 |
+| 玻璃链路 | `vibrancy()` → `blur(4dp, 4dp)` → `lens(24dp, 24dp)`；高光 `0.75`；投影 `10dp / 0.2(暗) · 0.1(亮)`；按压缩放 `1 + 16dp / width` |
+| 尺寸 | 64dp 高、内部 56dp、每 tab 76dp、内边距 4dp |
+| 唯一差别 | KernelSU 是一条底栏；这里是「四 tab 胶囊 + 右侧独立 ＋」两块，缝 8dp，整组水平居中 |
+
+R8 仍然开着（收缩 + 不混淆），APK 体积 **1.04MB**，与 0.3.1 持平。
 
 ---
 
@@ -192,6 +235,15 @@ ANDROID_HOME=/path/to/android-sdk bash build.sh
 请妥善保管签名文件，不要把它发送给他人或上传到无关位置。
 
 ## 版本记录
+
+### 0.3.2
+
+- **修「打开抖音不生效」的三条路径**：ComposeView 拿不到宿主 lifecycle（改挂自带 Recomposer）、`DexClassLoader` 的 native 库路径无效（改解 `.so` 到缓存目录）、模块 APK 路径拿不到（新增 `BaseDexClassLoader.dexPathList` 兜底）。
+- 每个 tab 补回 `defaultMinSize(minWidth = 76.dp)`，与 KernelSU `BottomBarMiuix` 一致。
+- 两个 dock 的几何按 KernelSU 参数重算：4×76dp 胶囊 + 8dp 缝 + 64dp「＋」，整组水平居中。
+- 首帧看门狗 2.5s → 5s，避免把「正在画」误判成「画不出来」。
+- R8 保持开启，APK 体积 1.04MB。
+- `versionCode` 2320，可覆盖 0.3.1（2310）。
 
 ### 0.3.1
 

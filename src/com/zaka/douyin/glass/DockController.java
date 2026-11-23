@@ -644,6 +644,8 @@ final class DockController {
         MAIN.postDelayed(visibilityPoll, 40L);
 
         // 看门狗：玻璃**可见却迟迟没画出来**才把官方底栏还回去，绝不留一条空白。
+        // 5 秒：首次进抖音要现场解 dex、建 Recomposer、跑第一帧，2.5 秒在高负载机型上
+        // 会把「正在画的玻璃」误判成「画不出来」，表现就是底栏先黑一下再变回原生。
         MAIN.postDelayed(new Runnable() {
             @Override public void run() {
                 if (!live[0] || iso.hasDrawn()) return;
@@ -654,10 +656,10 @@ final class DockController {
                 synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                 detachOverlay(iso);
                 restoreNative(dockRef[0]);
-                Dydock.warn("底栏:玻璃未能绘制，已恢复原生 Dock");
+                Dydock.warn("底栏:玻璃 5 秒内没有画出第一帧，已恢复原生 Dock");
                 toast(act, "Dydock " + Dydock.VER + "：玻璃没画出来，已恢复原生底栏");
             }
-        }, 2500L);
+        }, 5000L);
 
         toast(act, "Dydock " + Dydock.VER + "：玻璃底栏已接管");
         Dydock.log("底栏已接管：" + initialTabs.size() + " 个图标"
@@ -708,20 +710,33 @@ final class DockController {
 
             int bandLeft = band.left - overlayLocation[0];
             int bandTop = band.top - overlayLocation[1];
-            int edge = (int) (28f * density);
+            int edge = (int) (24f * density);
+            // 以下全是 KernelSU FloatBottomBar 的原参数：
+            // 整条 64dp 高、每格最少 76dp、内部左右各 4dp（合起来 8dp）。
             int gap = (int) (8f * density);
             int pill = (int) (64f * density);
             int plusSize = pill;
-            int plusLeft = bandLeft + band.width() - edge - plusSize;
-            int left = bandLeft + edge;
-            int available = Math.max(1, plusLeft - gap - left);
-            int desired = (int) (76f * density * count + 8f * density);
-            int leftWidth = Math.min(desired, available);
-            int top = bandTop + band.height() - (int) (8f * density) - pill;
-            if (leftWidth <= 0) return;
+            int tabWidth = (int) (76f * density);
+            int innerPad = (int) (8f * density);
 
-            Rect tabsRect = new Rect(left, top, left + leftWidth, top + pill);
-            Rect plusRect = new Rect(plusLeft, top, plusLeft + plusSize, top + plusSize);
+            int tabsWidth = tabWidth * count + innerPad;
+            int total = tabsWidth + gap + plusSize;
+            int available = band.width() - edge * 2;
+            if (total > available) {
+                // 窄屏：先压胶囊，保住「＋」，但不低过每格 48dp，再窄就让它居中溢出一点。
+                tabsWidth = Math.max((int) (56f * density) * count,
+                        Math.min(tabsWidth, available - gap - plusSize));
+                total = tabsWidth + gap + plusSize;
+            }
+            if (tabsWidth <= 0) return;
+
+            // 两个 dock 作为一整组水平居中；「＋」紧贴胶囊右边，只留 8dp。
+            int groupLeft = bandLeft + (band.width() - total) / 2;
+            int top = bandTop + band.height() - (int) (8f * density) - pill;
+
+            Rect tabsRect = new Rect(groupLeft, top, groupLeft + tabsWidth, top + pill);
+            Rect plusRect = new Rect(tabsRect.right + gap, top,
+                    tabsRect.right + gap + plusSize, top + plusSize);
             int pad = (int) (40f * density);
             Rect region = new Rect(
                     tabsRect.left - pad,
