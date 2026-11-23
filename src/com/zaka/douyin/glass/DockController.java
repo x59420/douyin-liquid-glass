@@ -47,6 +47,11 @@ final class DockController {
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
     private static final WeakHashMap<Activity, DockOverlay> OVERLAYS =
             new WeakHashMap<Activity, DockOverlay>();
+    /** Keep the per-Activity poller cancellable so destroyed pages do not retain work. */
+    private static final WeakHashMap<Activity, Runnable> POLLERS =
+            new WeakHashMap<Activity, Runnable>();
+    private static final WeakHashMap<Activity, boolean[]> POLL_STATES =
+            new WeakHashMap<Activity, boolean[]>();
 
     private DockController() {
     }
@@ -74,6 +79,16 @@ final class DockController {
         synchronized (OVERLAYS) {
             overlay = OVERLAYS.remove(act);
         }
+        Runnable poller;
+        boolean[] pollState;
+        synchronized (POLLERS) {
+            poller = POLLERS.remove(act);
+        }
+        synchronized (POLL_STATES) {
+            pollState = POLL_STATES.remove(act);
+        }
+        if (pollState != null) pollState[0] = false;
+        if (poller != null) MAIN.removeCallbacks(poller);
         try {
             if (overlay != null) {
                 overlay.dispose();
@@ -196,21 +211,25 @@ final class DockController {
                 try {
                     if (act.isFinishing() || act.isDestroyed()) {
                         live[0] = false;
+                        MAIN.removeCallbacks(this);
+                        synchronized (POLLERS) { POLLERS.remove(act); }
+                        synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                         return;
                     }
-                    // A navigation transition may temporarily detach the overlay. Keep the
-                    // watchdog alive and reattach it to the same Activity decor on return.
+                    // A transition can leave the old overlay parented but detached.
+                    // Remove/re-add it when the Activity decor is live; checking only
+                    // getParent()==null misses this case and leaves the Dock gone forever.
                     if (!overlay.isAttachedToWindow() && decor.isAttachedToWindow()) {
                         ViewParent parent = overlay.getParent();
-                        if (parent instanceof ViewGroup && parent != decor) {
+                        if (parent instanceof ViewGroup) {
                             ((ViewGroup) parent).removeView(overlay);
-                            parent = null;
                         }
-                        if (parent == null) {
+                        if (overlay.getParent() == null) {
                             ((ViewGroup) decor).addView(overlay, new FrameLayout.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT));
-                            Dydock.log("底栏:玻璃层已重新挂回主窗口");
+                            backdrop.capture();
+                            Dydock.log("底栏:玻璃层已重新挂回主窗口并刷新背景");
                         }
                     }
                     View d = dockRef[0];
@@ -261,9 +280,11 @@ final class DockController {
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 320L);
+                MAIN.postDelayed(this, 400L);
             }
         };
+        synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
+        synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
         MAIN.postDelayed(visibilityPoll, 320L);
 
 
