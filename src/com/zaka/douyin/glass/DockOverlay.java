@@ -23,11 +23,9 @@ import java.util.List;
  * 官方底栏那一条只把「画」藏起来（alpha = 0，布局和点击都还在），
  * 然后按它的位置自己画两块悬浮玻璃，点击转发回官方那几个子项。
  *
- * 布局参考 Tieba 的浮动底栏：
- *  1. 左侧四项胶囊贴左侧安全边距，不再把胶囊本身放在屏幕中央；
- *  2. 「＋」独立停靠在右侧安全边距，和左胶囊保持明确间隔；
- *  3. 按可用宽度动态放大四个 tab 槽位，窄屏自动收缩，不挤压右侧按钮。
- * 玻璃位置仍逐帧跟随抖音原生 Dock，点击和长按仍转发给原生控件。
+ * Dock 视觉与交互参数以 KernelSU Manager FloatingBottomBar 为唯一参考；
+ * 抖音特有的独立「＋」按钮、原生点击转发和底栏定位按宿主结构适配。
+ * 玻璃位置逐帧跟随抖音原生 Dock。
  */
 final class DockOverlay extends View implements Choreographer.FrameCallback {
 
@@ -57,7 +55,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final Spring plusPress = new Spring(0f);
     /** 0 → 1：整组出现 */
     private final Spring appear = new Spring(0f);
-    /** Tieba's independent position/pressure/shape/velocity/drag spring channels. */
+    /** KernelSU DampedDragAnimation 的独立位置、压力、形变和速度通道。 */
     private final DropletMotion droplet = new DropletMotion();
     private final InteractiveHighlight interactiveHighlight = new InteractiveHighlight();
 
@@ -370,11 +368,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         int ink = darkTheme ? 0xFFFFFFFF : 0xFF1A1A1A;
         int luma = 128; // compatibility argument only; GlassPainter does not consume frame brightness.
 
-        // Tieba 面板按压力做等比缩放：宽度最多增加约 16dp，高度按比例变化，
-        // 不再把上下边缘额外撑开 8dp，避免点击底色显得又厚又胖。
+        // KernelSU backdrop layer：按压力将整个面板等比放大，最大增加 16dp。
         float panelPress = droplet.pressProgress();
-        // Keep the entrance animation bottom-anchored, but apply the Tieba press scale
-        // around the panel centre so all four edges expand by the same amount.
+        // 入场动画仍以底边为锚点；按压缩放围绕面板中心，四边均匀扩展。
         scaled(leftPill, k, tmp);
         float panelScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * panelPress;
         float panelCx = tmp.centerX();
@@ -522,11 +518,28 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     }
 
     private float dragOffsetPx() {
+        // KernelSU: 4dp * sign(fraction) * Compose EaseOut(fraction).
         float fraction = clampF(droplet.accumulatedDrag()
                 / Math.max(1f, leftPill.width()), -1f, 1f);
         float magnitude = Math.abs(fraction);
-        float easeOut = 1f - (1f - magnitude) * (1f - magnitude);
-        return 4f * density * Math.signum(fraction) * easeOut;
+        float eased = composeEaseOut(magnitude);
+        return 4f * density * Math.signum(fraction) * eased;
+    }
+
+    /** Compose EaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f). */
+    private static float composeEaseOut(float x) {
+        x = clampF(x, 0f, 1f);
+        float lo = 0f;
+        float hi = 1f;
+        float t = x;
+        for (int i = 0; i < 12; i++) {
+            float omt = 1f - t;
+            float bx = 3f * omt * t * t * 0.58f + t * t * t;
+            if (bx < x) lo = t; else hi = t;
+            t = (lo + hi) * 0.5f;
+        }
+        float omt = 1f - t;
+        return 3f * omt * t * t + t * t * t;
     }
 
     private float slotCenterX(float index) {
