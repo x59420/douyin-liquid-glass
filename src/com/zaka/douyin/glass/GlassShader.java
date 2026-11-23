@@ -158,24 +158,24 @@ final class GlassShader {
 
     /** Miuix-style separable Gaussian backdrop blur. Each pass samples the 13-tap reach. */
     static final String GAUSSIAN_BLUR =
-            "uniform shader content;\\n" +
-            "uniform float2 direction;\\n" +
-            "uniform float sigma;\\n" +
-            "half4 main(float2 coord) {\\n" +
-            "    float s = max(sigma, 0.1);\\n" +
-            "    float variance = s * s;\\n" +
-            "    half4 sum = content.eval(coord);\\n" +
-            "    float total = 1.0;\\n" +
-            "    for (int i = 1; i <= 13; i++) {\\n" +
-            "        float x = float(i);\\n" +
-            "        float weight = exp(-0.5 * x * x / variance);\\n" +
-            "        float2 delta = direction * x;\\n" +
-            "        sum += content.eval(coord + delta) * weight;\\n" +
-            "        sum += content.eval(coord - delta) * weight;\\n" +
-            "        total += 2.0 * weight;\\n" +
-            "    }\\n" +
-            "    return sum / total;\\n" +
-            "}\\n";
+            "uniform shader content;\n" +
+            "uniform float2 direction;\n" +
+            "uniform float sigma;\n" +
+            "half4 main(float2 coord) {\n" +
+            "    float s = max(sigma, 0.1);\n" +
+            "    float variance = s * s;\n" +
+            "    half4 sum = content.eval(coord);\n" +
+            "    float total = 1.0;\n" +
+            "    for (int i = 1; i <= 13; i++) {\n" +
+            "        float x = float(i);\n" +
+            "        float weight = exp(-0.5 * x * x / variance);\n" +
+            "        float2 delta = direction * x;\n" +
+            "        sum += content.eval(coord + delta) * weight;\n" +
+            "        sum += content.eval(coord - delta) * weight;\n" +
+            "        total += 2.0 * weight;\n" +
+            "    }\n" +
+            "    return sum / total;\n" +
+            "}\n";
 
     private GlassShader() {
     }
