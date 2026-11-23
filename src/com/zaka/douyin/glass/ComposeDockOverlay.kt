@@ -115,8 +115,10 @@ class ComposeDockOverlay private constructor(
 
     private val hostPoll = object : Runnable {
         override fun run() {
-            if (!disposed && isAttachedToWindow && visibility == VISIBLE) {
-                refreshHostState()
+            if (!disposed && isAttachedToWindow) {
+                // GONE does not detach this overlay. Keep the poller scheduled while
+                // attached so it resumes automatically when Dock becomes visible again.
+                if (visibility == VISIBLE) refreshHostState()
                 main.postDelayed(this, 500L)
             }
         }
@@ -124,15 +126,19 @@ class ComposeDockOverlay private constructor(
 
     private val videoPump = object : Runnable {
         override fun run() {
-            if (!disposed && isAttachedToWindow && visibility == VISIBLE) {
-                try {
-                    backdrop.pumpVideo()
-                } catch (t: Throwable) {
-                    Dydock.warnOnce("compose-video-pump", "Compose 背景视频刷新失败: $t")
+            if (!disposed && isAttachedToWindow) {
+                if (visibility == VISIBLE) {
+                    try {
+                        backdrop.pumpVideo()
+                    } catch (t: Throwable) {
+                        Dydock.warnOnce("compose-video-pump", "Compose 背景视频刷新失败: $t")
+                    }
                 }
-                // Keep SurfaceView PixelCopy requests close to 30 fps. PixelCopy is
-                // asynchronous and each layer has a pending guard, so slow devices
-                // naturally skip requests rather than queueing an unbounded backlog.
+                // Keep the scheduler alive while hidden; otherwise a temporary GONE
+                // transition permanently stops video sampling until the Activity
+                // detaches and reattaches the overlay.
+                // PixelCopy is asynchronous and each layer has a pending guard, so
+                // slow devices skip requests rather than queueing an unbounded backlog.
                 main.postDelayed(this, 33L)
             }
         }
