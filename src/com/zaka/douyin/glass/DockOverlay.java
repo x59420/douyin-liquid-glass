@@ -194,8 +194,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         plusTab = plus;
         count = Math.min(tabs.size(), MAX_SLOTS);
         selected = 0;
+        for (int i = 0; i < count; i++) {
+            if (isSelectedDeep(tabs.get(i), 0)) selected = i;
+        }
         droplet.setSpan(Math.max(1f, count - 1f), 1f);
-        droplet.snapTo(0f);
+        droplet.snapTo(selected);
         appear.to(1f, 260f, 34f);
         startLoop();
     }
@@ -909,6 +912,18 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private static float clampF(float v, float lo, float hi) {
         return v < lo ? lo : (v > hi ? hi : v);
+    }
+
+    private boolean isSelectedDeep(View view, int depth) {
+        if (view == null || depth > 7) return false;
+        if (view.isSelected() || view.isActivated()) return true;
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                if (isSelectedDeep(group.getChildAt(i), depth + 1)) return true;
+            }
+        }
+        return false;
     }
 
     private void clickTab(int i) {
