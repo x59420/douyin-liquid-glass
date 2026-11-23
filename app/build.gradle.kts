@@ -73,5 +73,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
     implementation("top.yukonga.miuix.kmp:miuix-blur-android:0.9.4")
-    compileOnly(files("libs/api-82.jar"))
+    compileOnly(files(rootProject.file("libs/api-82.jar")))
 }
