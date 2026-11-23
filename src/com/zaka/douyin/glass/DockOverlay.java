@@ -586,20 +586,14 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private void drawPlusGlass(Canvas canvas, RectF b, float pp, int alpha) {
         if (b.isEmpty() || alpha <= 0) return;
         float radius = Math.min(b.width(), b.height()) / 2f;
-        float pressed = clampF(pp, 0f, 1f);
         int save = canvas.save();
         try {
-            // Keep the plus as a separate dock, but sample and refract the real backdrop.
-            boolean framed = backdrop.hasFrame();
-            int luma = framed ? backdrop.luma() : 128;
-            drawPane(canvas, b, radius, framed, luma, pressed,
-                    pressed > 0.3f, alpha);
-
-            // Douyin red becomes a translucent tint so the background remains visible.
+            // The publish button is intentionally the original solid Douyin red,
+            // not part of the refractive navigation glass.
             plusGlassPaint.setStyle(Paint.Style.FILL);
             plusGlassPaint.setShader(null);
-            plusGlassPaint.setColor(0x66E91F49);
-            plusGlassPaint.setAlpha(alpha * 0x66 / 255);
+            plusGlassPaint.setColor(0xFFE91F49);
+            plusGlassPaint.setAlpha(alpha);
             canvas.drawRoundRect(b, radius, radius, plusGlassPaint);
 
             plusGlassClip.reset();
@@ -610,7 +604,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             plusGlassHighlight.setShader(null);
             plusGlassHighlight.setColor(0xFFFFFFFF);
             plusGlassHighlight.setAlpha(alpha * 0x38 / 255);
-            float glossBottom = b.top + b.height() * (0.44f - 0.04f * pressed);
+            float glossBottom = b.top + b.height() * (0.44f - 0.04f * clampF(pp, 0f, 1f));
             canvas.drawRoundRect(b.left + density, b.top + density,
                     b.right - density, glossBottom, Math.max(1f, radius - density),
                     Math.max(1f, radius - density), plusGlassHighlight);
