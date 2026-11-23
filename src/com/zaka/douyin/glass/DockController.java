@@ -224,14 +224,14 @@ final class DockController {
         // 首次识别只用于确定底部位置；后续玻璃不再追随原生 Dock。
         overlay.pinPosition();
 
-        // Capture only after the Dock band is known. Temporarily hide the native
-        // artwork while sampling so its icons/text are not baked into the glass.
-        // 原生 Dock 从接管开始就永久隐藏；玻璃层是唯一视觉导航。
+        // Capture only after the Dock band is known, then remove the native Dock
+        // from layout so it reserves no blank bottom strip. The overlay retains the
+        // captured band coordinates independently of the native View's new bounds.
+        dock.setVisibility(View.GONE);
         try {
-            dock.setAlpha(0f);
             backdrop.capture();
-        } finally {
-            dock.setAlpha(0f);
+        } catch (Throwable t) {
+            Dydock.warnOnce("native-dock-hide", "移除原生底栏占位失败: " + t);
         }
 
         final View[] dockRef = new View[]{dock};
@@ -296,7 +296,7 @@ final class DockController {
                     }
                     View d = dockRef[0];
                     long now = SystemClock.uptimeMillis();
-                    if (d == null || !d.isAttachedToWindow() || !d.isShown()) {
+                    if (d == null || !d.isAttachedToWindow()) {
                         // 原生节点不可用时才重新搜索，并限制为每 800ms 一次。
                         if (now - lastFindAt[0] >= 800L) {
                             lastFindAt[0] = now;
@@ -307,7 +307,7 @@ final class DockController {
                                     View p = Finder.pickPlus(its);
                                     List<View> lf = new ArrayList<View>(its);
                                     if (p != null) lf.remove(p);
-                                    fresh.setAlpha(0f);
+                                    fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
                                     overlay.setTabs(lf, p);
                                     overlay.attachDock(fresh);
@@ -337,8 +337,9 @@ final class DockController {
                     boolean show = !speedPlayback && !longPress && !clearScreen
                             && expandedTicks[0] < 2;
 
-                    // 原生 Dock 永远透明；玻璃层用短淡入淡出，不再直接 GONE/VISIBLE 跳变。
-                    if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
+                    // GONE removes the native Dock's reserved layout height; the Compose
+                    // overlay keeps its captured window position and the feed can extend below it.
+                    if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
                         overlay.animate().cancel();
