@@ -133,7 +133,10 @@ public final class GlassEntry implements IXposedHookLoadPackage {
             XposedHelpers.findAndHookMethod(Application.class, "onCreate", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
-                    Dydock.log("宿主 Application 已创建");
+                    Application app = (Application) param.thisObject;
+                    Dydock.attach(app);
+                    Dydock.installCrashHandler();
+                    Dydock.log("宿主 Application 已创建；诊断日志已启用");
                 }
             });
         } catch (Throwable ignored) {
