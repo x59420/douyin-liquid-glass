@@ -324,7 +324,7 @@ class ComposeDockOverlay private constructor(
         val available = (plusLeft - gap - left).coerceAtLeast(1)
         val desired = (tabs.size * 76f * densityScale + 8f * densityScale).toInt()
         val leftWidth = min(desired, available)
-        val top = bandTop + band.height() - (6f * densityScale).toInt() - pillHeight
+        val top = bandTop + band.height() - (8f * densityScale).toInt() - pillHeight
         val regionPad = (40f * densityScale).toInt()
         val region = Rect(
             left - regionPad,
