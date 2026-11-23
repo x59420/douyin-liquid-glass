@@ -52,6 +52,10 @@ import com.zaka.douyin.glass.ksu.FloatingBottomBarItem
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.ColorSchemeMode
+import top.yukonga.miuix.kmp.theme.ThemeController
+import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
+import top.yukonga.miuix.kmp.theme.ThemeColorSpec
 import top.yukonga.miuix.kmp.theme.LocalContentColor
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.min
@@ -129,7 +133,14 @@ class ComposeDockOverlay private constructor(
         addView(composeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         composeView.setContent {
-            MiuixTheme {
+            MiuixTheme(
+                controller = ThemeController(
+                    ColorSchemeMode.System,
+                    isDark = androidx.compose.foundation.isSystemInDarkTheme(),
+                    paletteStyle = ThemePaletteStyle.TonalSpot,
+                    colorSpec = ThemeColorSpec.Spec2025
+                )
+            ) {
                 ComposeDockSurface(
                     image = backdropImage,
                     layout = dockLayout,
