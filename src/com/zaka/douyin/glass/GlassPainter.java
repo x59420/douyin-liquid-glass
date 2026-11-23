@@ -66,27 +66,32 @@ final class GlassPainter {
      */
     static void draw(Canvas canvas, RectF b, float rad, Backdrop bd, View owner,
                      float press, boolean dispersion, int luma, float density) {
+        drawInternal(canvas, b, rad, bd, owner, press, dispersion, luma, density, false);
+    }
+
+    static void drawLens(Canvas canvas, RectF b, float rad, Backdrop bd, View owner,
+                         float press, int luma, float density) {
+        drawInternal(canvas, b, rad, bd, owner, press, press > 0.001f,
+                luma, density, true);
+    }
+
+    private static void drawInternal(Canvas canvas, RectF b, float rad, Backdrop bd,
+                                     View owner, float press, boolean dispersion,
+                                     int luma, float density, boolean selectedLens) {
         if (canvas == null || b == null || b.width() <= 0 || b.height() <= 0) return;
         float r = Math.max(0f, Math.min(rad, Math.min(b.width(), b.height()) / 2f));
-
+        float progress = clamp01(press);
         int save = canvas.save();
         try {
             PATH.reset();
             PATH.addRoundRect(b, r, r, Path.Direction.CW);
             canvas.clipPath(PATH);
-
-            // 1+2. 底：折射（没有着色器就退回裁切）
-            boolean ok = refraction(canvas, b, r, bd, owner, press, dispersion, density);
+            boolean ok = refraction(canvas, b, r, bd, owner, progress,
+                    dispersion, density, selectedLens);
             if (!ok) crop(canvas, b, bd, owner);
-
-            // 3. 表面膜
-            surface(canvas, b, luma, press);
-
-            // 4. 高光（45°）
-            highlight(canvas, b, r, density, luma);
-
-            // 5. 内阴影
-            inner(canvas, b, r, density);
+            surface(canvas, b, luma, progress);
+            highlight(canvas, b, r, density, luma, selectedLens ? progress : 0f);
+            inner(canvas, b, r, density, selectedLens ? progress : 0f);
         } finally {
             canvas.restoreToCount(save);
         }
@@ -143,13 +148,14 @@ final class GlassPainter {
 
     private static boolean refraction(Canvas canvas, RectF b, float r, Backdrop bd,
                                       View owner, float press, boolean dispersion,
-                                      float density) {
+                                      float density, boolean selectedLens) {
         if (!HAS_SHADER || bd == null) return false;
         Bitmap bmp = bd.bitmap();
         if (bmp == null || bmp.isRecycled()) return false;
         Rect region = bd.region();
         if (region.isEmpty()) return false;
-        return Api33Glass.draw(canvas, b, r, bmp, region, owner, press, dispersion, density);
+        return Api33Glass.draw(canvas, b, r, bmp, region, owner, press, dispersion,
+                density, selectedLens);
     }
 
     private static void crop(Canvas canvas, RectF b, Backdrop bd, View owner) {
@@ -199,17 +205,15 @@ final class GlassPainter {
 
     // ---------------------------------------------------------------- 高光
 
-    private static void highlight(Canvas canvas, RectF b, float r, float density, int luma) {
-        // 亮底上白边会糊成一片，压一点亮度、补一条极淡的暗边，轮廓才立得住
+    private static void highlight(Canvas canvas, RectF b, float r, float density,
+                                  int luma, float press) {
         boolean light = luma >= 140;
-        // 朝光侧泛白：从左上到右下的一条渐变，越靠边越亮
         AMBIENT.setShader(new LinearGradient(
                 b.left, b.top, b.right, b.bottom,
                 light ? 0x1FFFFFFF : 0x2EFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
         canvas.drawRect(b, AMBIENT);
         AMBIENT.setShader(null);
 
-        // 0.5dp 的细边，左上明显、右下几乎没有
         RIM.setStyle(Paint.Style.STROKE);
         RIM.setStrokeWidth(Math.max(1f, 0.5f * density));
         RIM.setShader(new LinearGradient(
@@ -219,14 +223,27 @@ final class GlassPainter {
         RECT.set(b);
         canvas.drawRoundRect(RECT, r, r, RIM);
         RIM.setShader(null);
+
+        // Subtle opposing specular reflection, activated by the pressed lens.
+        if (press > 0.001f) {
+            int alpha = Math.round(31f * clamp01(press));
+            AMBIENT.setShader(new LinearGradient(
+                    b.right, b.bottom, b.left, b.top,
+                    Color.argb(alpha, 255, 255, 255),
+                    Color.TRANSPARENT, Shader.TileMode.CLAMP));
+            canvas.drawRect(b, AMBIENT);
+            AMBIENT.setShader(null);
+        }
     }
 
-    private static void inner(Canvas canvas, RectF b, float r, float density) {
+    private static void inner(Canvas canvas, RectF b, float r, float density, float press) {
+        float p = clamp01(press);
         INNER.setStyle(Paint.Style.STROKE);
-        INNER.setStrokeWidth(Math.max(1f, 1f * density));
+        INNER.setStrokeWidth(Math.max(1f, (1f + 7f * p) * density));
+        int alpha = Math.round(31f + 7f * p);
         INNER.setShader(new LinearGradient(
                 b.left, b.bottom, b.right, b.top,
-                0x1F000000, 0x00000000, Shader.TileMode.CLAMP));
+                Color.argb(alpha, 0, 0, 0), 0x00000000, Shader.TileMode.CLAMP));
         RECT.set(b);
         RECT.inset(0.5f * density, 0.5f * density);
         canvas.drawRoundRect(RECT, r, r, INNER);
