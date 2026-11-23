@@ -868,9 +868,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     // 普通按下、点击和长按先交给抖音原生子项。
                     nativeDownHandled = dispatchToNative(nativeTarget, e);
                     // 按下就把透镜挪到这一格；形变由独立弹簧通道驱动。
+                    // Match KernelSU: do not expand the lens on a simple DOWN.
+                    // Press/scale begins only after the drag gesture crosses touch slop.
                     droplet.moveTo(pendingIndex, true);
-                    droplet.press();
-                    droplet.touchDown();
                     selected = pendingIndex;
                     startLoop();
                     return true;
@@ -893,6 +893,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     if (!dragging && Math.abs(dx) > touchSlop
                             && Math.abs(dx) > Math.abs(dy) * 0.75f) {
                         dragging = true;
+                        // KernelSU starts press/scale when drag recognition begins,
+                        // not on the initial finger-down (a normal tap stays compact).
+                        droplet.press();
+                        droplet.touchDown();
                         // 拖动正式接管时，给原生子项发送真实 CANCEL，
                         // 这样系统会撤销点击/长按，而不是只清除 pressed 状态。
                         dispatchNativeCancel(nativeTarget, e);
