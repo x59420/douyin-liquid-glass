@@ -7,6 +7,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.view.View
 import android.widget.FrameLayout
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,10 +34,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.AndroidUiDispatcher
@@ -220,6 +229,12 @@ class IsoOverlay private constructor(
         }
     }
 
+    /** 采样画面整片发黑时把它清掉：宁可只留玻璃本身的模糊，也不要一块黑玻璃。 */
+    fun clearBackdrop() {
+        if (disposed) return
+        backdropImage = null
+    }
+
     fun setTabs(labelArray: Array<String>, iconArray: Array<Bitmap?>, selected: Int) {
         if (disposed) return
         labels = labelArray.toList()
@@ -283,6 +298,74 @@ class IsoOverlay private constructor(
         } catch (t: Throwable) {
             log("反射设置 parentContext 失败：$t")
             false
+        }
+    }
+}
+
+/**
+ * Dock 图标：1.85dp 细线手绘，跟 0.0.5 那套完全一致（房子 / 两个人 / 气泡 / 头肩）。
+ *
+ * 上一版为了在玻璃上「立得住」换成了实心剪影 + 抖音原生图标位图，结果视觉全变了。
+ * 这里把原来那组 24x24 的路径坐标原样搬进 Compose 的 DrawScope：
+ * 坐标和线宽都没动，只是画笔从 android.graphics.Paint 换成 Stroke。
+ */
+@Composable
+private fun LineTabIcon(index: Int, color: Color) {
+    Canvas(modifier = Modifier.size(24.dp)) {
+        val k = size.minDimension / 24f
+        scale(k, k, pivot = Offset.Zero) {
+            val stroke = Stroke(width = 1.85f, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            val path = Path()
+            when (index) {
+                0 -> {
+                    path.moveTo(3.2f, 10.7f)
+                    path.lineTo(12f, 3.4f)
+                    path.lineTo(20.8f, 10.7f)
+                    path.moveTo(5.4f, 9.4f)
+                    path.lineTo(5.4f, 20.5f)
+                    path.quadraticBezierTo(5.4f, 21.2f, 6.2f, 21.2f)
+                    path.lineTo(17.8f, 21.2f)
+                    path.quadraticBezierTo(18.6f, 21.2f, 18.6f, 20.5f)
+                    path.lineTo(18.6f, 9.4f)
+                    path.moveTo(9.5f, 21f)
+                    path.lineTo(9.5f, 15.3f)
+                    path.quadraticBezierTo(9.5f, 14.6f, 10.2f, 14.6f)
+                    path.lineTo(13.8f, 14.6f)
+                    path.quadraticBezierTo(14.5f, 14.6f, 14.5f, 15.3f)
+                    path.lineTo(14.5f, 21f)
+                }
+                1 -> {
+                    drawCircle(color, 3.1f, Offset(9f, 8f), style = stroke)
+                    drawCircle(color, 2.45f, Offset(17.1f, 9.2f), style = stroke)
+                    path.moveTo(2.8f, 20.8f)
+                    path.quadraticBezierTo(3.2f, 14.2f, 9f, 14.2f)
+                    path.quadraticBezierTo(14.8f, 14.2f, 15.2f, 20.8f)
+                    path.moveTo(14.2f, 14.8f)
+                    path.quadraticBezierTo(20.6f, 13.7f, 21.2f, 20.8f)
+                }
+                2 -> {
+                    drawRoundRect(
+                        color = color,
+                        topLeft = Offset(3f, 3.8f),
+                        size = Size(18f, 13.3f),
+                        cornerRadius = CornerRadius(5f, 5f),
+                        style = stroke
+                    )
+                    path.moveTo(7.2f, 16.8f)
+                    path.lineTo(6.1f, 21f)
+                    path.lineTo(12.1f, 17.1f)
+                    drawCircle(color, 0.85f, Offset(8f, 10.4f), style = stroke)
+                    drawCircle(color, 0.85f, Offset(12f, 10.4f), style = stroke)
+                    drawCircle(color, 0.85f, Offset(16f, 10.4f), style = stroke)
+                }
+                else -> {
+                    drawCircle(color, 3.7f, Offset(12f, 8f), style = stroke)
+                    path.moveTo(3.2f, 21f)
+                    path.quadraticBezierTo(3.8f, 13.7f, 12f, 13.7f)
+                    path.quadraticBezierTo(20.2f, 13.7f, 20.8f, 21f)
+                }
+            }
+            drawPath(path, color, style = stroke)
         }
     }
 }
@@ -356,27 +439,7 @@ private fun GlassSurface(
                             // 胶囊会被内容挤到很窄，看起来像「玻璃没出来」。
                             modifier = Modifier.defaultMinSize(minWidth = 76.dp)
                         ) {
-                            val fallback = when (index) {
-                                0 -> Icons.Rounded.Home
-                                1 -> Icons.Rounded.PeopleAlt
-                                2 -> Icons.Rounded.ChatBubbleOutline
-                                else -> Icons.Rounded.PersonOutline
-                            }
-                            val icon = icons.getOrNull(index)
-                            if (icon != null) {
-                                Image(
-                                    bitmap = icon,
-                                    contentDescription = label,
-                                    modifier = Modifier.size(24.dp),
-                                    colorFilter = ColorFilter.tint(LocalContentColor.current)
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = fallback,
-                                    contentDescription = label,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                            LineTabIcon(index = index, color = LocalContentColor.current)
                             Text(
                                 text = label,
                                 fontSize = 11.sp,

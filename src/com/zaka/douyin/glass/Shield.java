@@ -53,6 +53,11 @@ final class Shield {
         String name = view.getClass().getName().toLowerCase();
         if (name.contains("dockoverlay") || name.contains("bottomnavigation")
                 || name.contains("tabview") || name.contains("navigationbar")) return false;
+        // 列表 / 翻页容器本身不是视频触摸面。消息 Tab 的聊天列表整块都满足
+        // 「够大、在页面中间」，以前手指在列表上按住超过判定线就会把 Dock 收掉。
+        if (name.contains("recyclerview") || name.contains("listview")
+                || name.contains("scrollview") || name.contains("viewpager")
+                || name.contains("pager") || name.contains("horizontalscroll")) return false;
         View content = activity.findViewById(android.R.id.content);
         if (content == null || content.getWidth() <= 0 || content.getHeight() <= 0) return false;
         Rect page = rectOf(content);
@@ -160,6 +165,7 @@ final class Shield {
         if (dock == null || content == null) return false;
         Rect page = rectOf(content);
         if (page.isEmpty()) return false;
+        Rect dockRect = rectOf(dock);
 
         // 先检查 Dock 所在内容树中排在它后面的兄弟视图。
         View cur = dock;
@@ -170,7 +176,9 @@ final class Shield {
             int index = group.indexOfChild(cur);
             if (index < 0) break;
             for (int i = index + 1; i < group.getChildCount(); i++) {
-                if (containsExpandedPanel(group.getChildAt(i), page, 0, new int[]{220})) return true;
+                if (containsExpandedPanel(group.getChildAt(i), page, dockRect, true, 0, new int[]{220})) {
+                    return true;
+                }
             }
             cur = group;
         }
@@ -187,7 +195,9 @@ final class Shield {
                     if (candidate == null) continue;
                     String className = candidate.getClass().getName();
                     if (className.contains("DockOverlay")) continue;
-                    if (containsExpandedPanel(candidate, page, 0, new int[]{220})) return true;
+                    if (containsExpandedPanel(candidate, page, dockRect, false, 0, new int[]{220})) {
+                        return true;
+                    }
                 }
             }
         }
@@ -245,7 +255,8 @@ final class Shield {
         return false;
     }
 
-    private static boolean containsExpandedPanel(View view, Rect page, int depth, int[] budget) {
+    private static boolean containsExpandedPanel(View view, Rect page, Rect dockRect,
+                                                 boolean insidePage, int depth, int[] budget) {
         if (view == null || depth > 8 || budget[0]-- <= 0
                 || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.08f
                 || !(view instanceof ViewGroup)) return false;
@@ -262,16 +273,27 @@ final class Shield {
 
         String className = view.getClass().getName();
         if (className.contains("DockOverlay")) return false;
-        if (isExpandedPanel(view, page)) return true;
+        if (isExpandedPanel(view, page, dockRect, insidePage)) return true;
 
         ViewGroup group = (ViewGroup) view;
         for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
-            if (containsExpandedPanel(group.getChildAt(i), page, depth + 1, budget)) return true;
+            if (containsExpandedPanel(group.getChildAt(i), page, dockRect, insidePage,
+                    depth + 1, budget)) return true;
         }
         return false;
     }
 
-    private static boolean isExpandedPanel(View view, Rect page) {
+    /**
+     * 一个 ViewGroup 是不是「压在 Dock 上的展开面板」。
+     *
+     * 消息 Tab 的聊天列表之前就是这么被误判成会话浮层的：它铺满整页、带输入框，
+     * 于是手指一滑列表，Dock 就被当成「被浮层盖住」收掉。
+     * 现在有两条硬约束：
+     *   1. 浮层矩形必须真的和 Dock 那一带相交 —— 停在 Dock 上方的页面内容不算；
+     *   2. 页面内容树（content 子树）里只认按类名明确写了 menu/drawer/sheet/dialog/panel
+     *      的容器；「有输入框 / 有会话文案」这类内容启发式只对独立浮层窗口生效。
+     */
+    private static boolean isExpandedPanel(View view, Rect page, Rect dockRect, boolean insidePage) {
         if (view == null || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.08f
                 || !(view instanceof ViewGroup) || view.getWidth() <= 0 || view.getHeight() <= 0) return false;
         Rect r = rectOf(view);
@@ -281,6 +303,7 @@ final class Shield {
                 || visibleBounds.height() < page.height() * 0.20f
                 || r.width() < page.width() * 0.34f
                 || r.height() < page.height() * 0.28f) return false;
+        if (dockRect != null && !dockRect.isEmpty() && !Rect.intersects(r, dockRect)) return false;
         String name = view.getClass().getName().toLowerCase();
         // Do not classify arbitrary large background containers as menus.
         // The host's normal feed/page containers also have backgrounds and children;
@@ -289,6 +312,10 @@ final class Shield {
         boolean namedPanel = name.contains("popup") || name.contains("menu")
                 || name.contains("drawer") || name.contains("sheet")
                 || name.contains("dialog") || name.contains("panel");
+        if (insidePage) {
+            // 页面自己的内容（消息列表、个人页主页）不按文案判浮层，只看类名。
+            return namedPanel && hasContent((ViewGroup) view, 0);
+        }
         boolean profilePage = name.contains("userprofile") || name.contains("userdetail")
                 || name.contains("personalpage") || name.contains("profiledetail")
                 || name.contains("othershomepage");
@@ -299,11 +326,6 @@ final class Shield {
         return hasContent((ViewGroup) view, 0);
     }
 
-    /**
-     * 评论抽屉和聊天浮层不一定叫 menu/panel，之前因此漏判。
-     * 只把贴近页面底部、横向展开且带有消息输入区/评论文案的面板视为会话浮层；
-     * 顶部搜索框、普通信息流中的评论按钮不会触发。
-     */
     private static boolean isConversationPanel(View view, Rect bounds, Rect page, String className) {
         if (bounds.width() < page.width() * 0.55f
                 || bounds.height() < page.height() * 0.16f

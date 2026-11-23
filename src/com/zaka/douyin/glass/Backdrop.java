@@ -67,6 +67,7 @@ public final class Backdrop {
     private long frameStamp;
     private int lastLoggedLayerCount = -1;
     private int meanAlpha;
+    private int meanLuma = 255;
     private String note = "未采集";
     private String lastDiagnostic = "";
     private long lastDiagnosticAt;
@@ -126,7 +127,25 @@ public final class Backdrop {
         return bitmap() != null;
     }
 
-    int luma() { return 128; }
+    int luma() { return meanLuma; }
+
+    /**
+     * 这一帧采出来是不是整片发黑。
+     *
+     * 有视频层帧时不判黑（暗场视频属于画面内容）；
+     * 没有视频帧、采样又几乎全黑，说明底下画的是抖音那层底栏背景色，
+     * 这时候把背景图丢掉，玻璃只保留自己的模糊，不会变成一块黑玻璃。
+     */
+    boolean looksBlack() {
+        return meanLuma < 14 && !hasFrameLayer();
+    }
+
+    private boolean hasFrameLayer() {
+        for (Layer l : layers) {
+            if (l.valid && l.frame != null && !l.frame.isRecycled()) return true;
+        }
+        return false;
+    }
 
     long frameStamp() {
         return frameStamp;
@@ -215,9 +234,15 @@ public final class Backdrop {
         // 4. UI 层里视频所在的那块挖空，否则视频会被容器自己的深色底盖住 —— 就是黑块
         try {
             Canvas uc = new Canvas(ui);
-            for (Layer l : layers) {
-                if (l.dst.isEmpty()) continue;
-                uc.drawRect(l.dst.left, l.dst.top, l.dst.right, l.dst.bottom, clear);
+            if (covered) {
+                // 视频已经把这一条铺满：整块 UI 层都不要了。
+                // 底栏那一带的渐变遮罩、容器底色全在这一层里，留着就是「玻璃一片黑」。
+                uc.drawColor(0, PorterDuff.Mode.CLEAR);
+            } else {
+                for (Layer l : layers) {
+                    if (l.dst.isEmpty()) continue;
+                    uc.drawRect(l.dst.left, l.dst.top, l.dst.right, l.dst.bottom, clear);
+                }
             }
         } catch (Throwable t) {
             Dydock.warnOnce("ui-erase", "挖空视频区失败: " + t);
@@ -307,14 +332,22 @@ public final class Backdrop {
         int stepX = Math.max(1, w / 20);
         int stepY = Math.max(1, h / 12);
         long alphaSum = 0L;
+        long lumaSum = 0L;
         int count = 0;
         for (int y = 0; y < h; y += stepY) {
             for (int x = 0; x < w; x += stepX) {
-                alphaSum += (out.getPixel(x, y) >>> 24) & 0xFF;
+                int pixel = out.getPixel(x, y);
+                alphaSum += (pixel >>> 24) & 0xFF;
+                lumaSum += ((pixel >> 16 & 0xFF) * 299
+                        + (pixel >> 8 & 0xFF) * 587
+                        + (pixel & 0xFF) * 114) / 1000;
                 count++;
             }
         }
-        if (count > 0) meanAlpha = (int) (alphaSum / count);
+        if (count > 0) {
+            meanAlpha = (int) (alphaSum / count);
+            meanLuma = (int) (lumaSum / count);
+        }
     }
 
     // ------------------------------------------------------------------ 视频层

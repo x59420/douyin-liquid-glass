@@ -61,8 +61,16 @@ final class DockController {
     /** 手指按住视频的起点，用来判断「长按倍速」——抖音自己不一定走 performLongClick。 */
     private static final WeakHashMap<Activity, long[]> PRESS =
             new WeakHashMap<Activity, long[]>();
-    /** 抖音长按大约 400ms 进入倍速，这里取 420ms 作为判定线。 */
-    private static final long PRESS_SPEED_DELAY_MS = 420L;
+    /** 记录这条按住状态是由哪个 View 起的头，别的 View 收到的同一串事件不参与判定。 */
+    private static final WeakHashMap<Activity, View> PRESS_TARGET =
+            new WeakHashMap<Activity, View>();
+    /**
+     * 长按倍速的判定线。
+     *
+     * 抖音自己进倍速比这更早，原来的 420ms 加上 40ms 轮询，手感上就是「按住半天
+     * Dock 才消失」。这里压到 240ms，再配合 16ms 的轮询，基本是按住就跟着收。
+     */
+    private static final long PRESS_SPEED_DELAY_MS = 240L;
     /**
      * 清屏是双指各自往外拉的手势，抖音不一定会留下可读的文字标记，
      * 所以这里自己认手势：双指按下记初始间距，拉开到 1.45 倍就进清屏态；
@@ -106,7 +114,7 @@ final class DockController {
         if (act == null) return;
         int action = event.getActionMasked();
         int pointers = event.getPointerCount();
-        if (action == android.view.MotionEvent.ACTION_POINTER_DOWN && pointers >= 2) {
+        if (action == android.view.MotionEvent.ACTION_POINTER_DOWN && pointers == 2) {
             synchronized (SPREAD) {
                 SPREAD.put(act, new long[]{android.os.SystemClock.uptimeMillis(),
                         (long) spanOf(event)});
@@ -123,8 +131,9 @@ final class DockController {
                     exitGestureClearMode(act, "双指内收");
                     return;
                 }
-                // 往外拉：两指间距明显变大（缩放一点不算）
-                if (now > spread[1] * 1.45f + 48f * density) {
+                // 往外拉：两指间距明显变大。原来要求 1.45 倍 + 48dp，实测真机上
+                // 手指拉开的速度和幅度都比这个小，基本触发不到；这里放宽到 1.18 倍 + 36dp。
+                if (now > spread[1] * 1.18f + 36f * density) {
                     synchronized (SPREAD) { SPREAD.remove(act); }
                     boolean wasClear;
                     synchronized (CLEAR_MODE) {
@@ -187,19 +196,26 @@ final class DockController {
                 PRESS.put(act, new long[]{android.os.SystemClock.uptimeMillis(),
                         (long) event.getRawX(), (long) event.getRawY()});
             }
+            synchronized (PRESS_TARGET) { PRESS_TARGET.put(act, view); }
         } else if (action == android.view.MotionEvent.ACTION_MOVE) {
             long[] start;
             synchronized (PRESS) { start = PRESS.get(act); }
             if (start == null) return;
+            // 同一串触摸会流过分发链上的每个 View，只认最开始那个按住目标。
+            View pressTarget;
+            synchronized (PRESS_TARGET) { pressTarget = PRESS_TARGET.get(act); }
+            if (pressTarget != null && pressTarget != view) return;
             float slop = 18f * act.getResources().getDisplayMetrics().density;
             float dx = event.getRawX() - start[1];
             float dy = event.getRawY() - start[2];
             if (dx * dx + dy * dy > slop * slop) {
                 synchronized (PRESS) { PRESS.remove(act); }
+                synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
             }
         } else if (action == android.view.MotionEvent.ACTION_UP
                 || action == android.view.MotionEvent.ACTION_CANCEL) {
             synchronized (PRESS) { PRESS.remove(act); }
+            synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
             onHostTouchEnd(view, action);
         }
     }
@@ -314,8 +330,16 @@ final class DockController {
         }
         long[] start;
         synchronized (PRESS) { start = PRESS.get(act); }
-        return start != null
-                && android.os.SystemClock.uptimeMillis() - start[0] >= PRESS_SPEED_DELAY_MS;
+        if (start == null) return false;
+        long held = android.os.SystemClock.uptimeMillis() - start[0];
+        // 兜底：UP 万一没回到我们这里，按住状态最多只认 4 秒，
+        // 否则一次滑动就能让 Dock 一直藏着。
+        if (held > 4000L) {
+            synchronized (PRESS) { PRESS.remove(act); }
+            synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
+            return false;
+        }
+        return held >= PRESS_SPEED_DELAY_MS;
     }
 
     static View dockOf(Activity act) {
@@ -335,6 +359,7 @@ final class DockController {
         if (act == null) return;
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         synchronized (PRESS) { PRESS.remove(act); }
+        synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
         synchronized (SPREAD) { SPREAD.remove(act); }
         synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
         synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
@@ -434,6 +459,12 @@ final class DockController {
         final List<View> initialTabs = new ArrayList<View>(items);
         if (plus != null) initialTabs.remove(plus);
 
+        // 原生底栏那一带的深色底/渐变是「玻璃一片黑」的来源：我们的采样是隔着它采的。
+        // 把它拿掉之后，视频画面才能真正透到 Dock 后面来。
+        stripDockBackground(dock);
+        // 系统导航条那片区域：透明底、关掉对比度强制、内容延伸到底部。
+        applyImmersiveNavigation(act);
+
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
         // Miuix 自己在 GPU 上做 4dp 模糊，这里只决定采样分辨率。
@@ -522,6 +553,11 @@ final class DockController {
         final long[] lastTabRefreshAt = new long[]{0L};
         final boolean[] clearScreenState = new boolean[]{false};
         final boolean[] speedPlaybackState = new boolean[]{false};
+        final int[] chromeTicks = new int[]{0};
+        final boolean[] expandedState = new boolean[]{false};
+        final long[] lastExpandedAt = new long[]{0L};
+        final int[] lastBandSig = new int[]{0};
+        final long[] lastGeomAt = new long[]{0L};
 
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
@@ -581,6 +617,7 @@ final class DockController {
                                     synchronized (DOCKS) {
                                         DOCKS.put(act, fresh);
                                     }
+                                    stripDockBackground(fresh);
                                     refreshTabs(iso, lf, p);
                                     applyGeometry(iso, backdrop, fresh, lf.size());
                                     d = fresh;
@@ -598,7 +635,7 @@ final class DockController {
                     boolean longPress = isHostLongPressActive(act);
                     // 每 40ms 走一遍视图树太贵，这两项改成定量节流；长按本身由触摸状态给，
                     // 所以隐藏仍然是实时的。
-                    if (now - lastClearScanAt[0] >= 150L) {
+                    if (now - lastClearScanAt[0] >= 80L) {
                         speedPlaybackState[0] = Shield.hasSpeedPlaybackOverlay(decor);
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
                         lastClearScanAt[0] = now;
@@ -606,12 +643,36 @@ final class DockController {
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
                             || updateGestureClearMode(act, d, clearScreenState[0]);
-                    boolean expanded = d != null
-                            && Shield.hasExpandedOverlay(d, content, decor);
+                    // 宿主自己把界面整条收起来（清屏、全屏、切页转场）：Dock 跟着一起收。
+                    // 抖动 3 帧（约 48ms）才生效，布局瞬间变化不会让玻璃闪一下。
+                    boolean chromeHidden = d != null && isHostChromeHidden(d);
+                    chromeTicks[0] = chromeHidden ? Math.min(4, chromeTicks[0] + 1) : 0;
+                    // 浮层扫描要遍历几百个节点，跟着 16ms 轮询跑会拖帧；60ms 一次足够。
+                    if (now - lastExpandedAt[0] >= 60L) {
+                        lastExpandedAt[0] = now;
+                        expandedState[0] = d != null
+                                && Shield.hasExpandedOverlay(d, content, decor);
+                    }
+                    boolean expanded = expandedState[0];
                     expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
                     // 每个隐藏理由各算各的：一个理由结束，不能把 Dock 露出来。
                     boolean show = !speedPlayback && !longPress && !clearScreen
-                            && expandedTicks[0] < 2;
+                            && chromeTicks[0] < 3 && expandedTicks[0] < 2;
+
+                    // 底栏位置变了（沉浸式导航栏生效、切 tab、布局重排）就重新对齐一次，
+                    // 否则玻璃会停在上一版的坐标上。
+                    if (d != null && now - lastGeomAt[0] >= 240L) {
+                        lastGeomAt[0] = now;
+                        int signature = bandSignature(d);
+                        if (signature != lastBandSig[0]) {
+                            lastBandSig[0] = signature;
+                            applyGeometry(iso, backdrop, d, tabTargets[0].size());
+                            try {
+                                backdrop.capture();
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    }
 
                     if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
                     if (show != overlayTargetVisible[0]) {
@@ -621,7 +682,7 @@ final class DockController {
                             if (iso.view.getVisibility() != View.VISIBLE) {
                                 iso.view.setVisibility(View.VISIBLE);
                             }
-                            iso.view.animate().alpha(1f).setDuration(28L).start();
+                            iso.view.animate().alpha(1f).setDuration(18L).start();
                         } else {
                             iso.view.animate().alpha(0f).setDuration(24L)
                                     .withEndAction(new Runnable() {
@@ -636,12 +697,12 @@ final class DockController {
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 40L);
+                MAIN.postDelayed(this, 16L);
             }
         };
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
-        MAIN.postDelayed(visibilityPoll, 40L);
+        MAIN.postDelayed(visibilityPoll, 16L);
 
         // 看门狗：玻璃**可见却迟迟没画出来**才把官方底栏还回去，绝不留一条空白。
         // 5 秒：首次进抖音要现场解 dex、建 Recomposer、跑第一帧，2.5 秒在高负载机型上
@@ -756,7 +817,12 @@ final class DockController {
     /** 交给玻璃层的背景一律是新副本：采样缓冲随时会回收，直接共用就是原生崩溃。 */
     private static void pushBackdrop(IsoDock iso, Backdrop backdrop, long[] lastStamp) {
         Bitmap sampled = backdrop.bitmap();
-        if (sampled == null || sampled.isRecycled()) return;
+        if (sampled == null || sampled.isRecycled() || backdrop.looksBlack()) {
+            // 采不到画面，或者采出来整片是底栏那层黑底：把旧图清掉，
+            // 玻璃只保留自己的模糊，不会变成一块黑玻璃。
+            iso.clearBackdrop();
+            return;
+        }
         long stamp = backdrop.frameStamp();
         if (stamp != 0L && stamp == lastStamp[0]) return;
         lastStamp[0] = stamp;
@@ -767,6 +833,76 @@ final class DockController {
             Dydock.warnOnce("iso-backdrop-copy", "背景位图复制失败: " + t);
         }
         if (copy != null) iso.setBackdrop(copy);
+    }
+
+    /**
+     * 把原生底栏那一带的不透明背景去掉。
+     *
+     * 抖音的底栏容器通常自己铺一层深色底 + 顶部渐变，模块只把底栏 View 设成 GONE
+     * 是拿不掉这层的 —— 于是玻璃隔着它采样，看上去就是一块黑色。
+     * 只处理「够宽、且不高于屏幕 40%」的那几层，避免误伤整页容器。
+     */
+    private static void stripDockBackground(View dock) {
+        if (dock == null) return;
+        View root = dock.getRootView();
+        int screenW = root == null ? 0 : root.getWidth();
+        int screenH = root == null ? 0 : root.getHeight();
+        if (screenW <= 0 || screenH <= 0) return;
+        View v = dock;
+        for (int i = 0; i < 4 && v != null; i++) {
+            try {
+                if (v.getBackground() != null
+                        && v.getWidth() >= screenW * 0.7f
+                        && v.getHeight() <= screenH * 0.4f) {
+                    v.setBackground(null);
+                }
+            } catch (Throwable ignored) {
+            }
+            ViewParent parent = v.getParent();
+            v = parent instanceof View ? (View) parent : null;
+            if (v != null && v.getId() == android.R.id.content) break;
+        }
+        Dydock.log("底栏:已去掉原生底栏区域的背景色");
+    }
+
+    /**
+     * 系统导航栏那片区域（红米 / HyperOS 的手势条那一带）。
+     *
+     * 抖音自己没有做沉浸式，原生布局会把内容停在导航栏上方，导航栏那条就露出一层
+     * 背景色。这里按用户要的那套来：
+     *   - isNavigationBarContrastEnforced = false，关掉系统的对比度强制灰底；
+     *   - navigationBarColor 透明，指示条直接浮在画面上；
+     *   - LAYOUT_HIDE_NAVIGATION，内容延伸到底部 edge-to-edge。
+     * 只动窗口的装饰层，不碰抖音自己的布局代码。
+     */
+    private static void applyImmersiveNavigation(Activity act) {
+        try {
+            android.view.Window window = act.getWindow();
+            if (window == null) return;
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                window.setNavigationBarContrastEnforced(false);
+            }
+            try {
+                window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+            } catch (Throwable ignored) {
+            }
+            View decor = window.getDecorView();
+            if (decor != null) {
+                decor.setSystemUiVisibility(decor.getSystemUiVisibility()
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowInsetsController controller = window.getInsetsController();
+                if (controller != null) {
+                    controller.setSystemBarsBehavior(
+                            android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                }
+            }
+            Dydock.log("系统导航栏:已切到透明 + edge-to-edge");
+        } catch (Throwable t) {
+            Dydock.warnOnce("immersive-nav", "设置沉浸式导航栏失败: " + t);
+        }
     }
 
     /** 把官方导航项的文字 / 图标 / 选中态同步给玻璃层。 */
@@ -887,6 +1023,16 @@ final class DockController {
                 }
             }
         });
+    }
+
+    /** 底栏位置指纹：位置/尺寸任何一个变了就重新对齐玻璃。 */
+    private static int bandSignature(View v) {
+        int[] l = new int[2];
+        v.getLocationInWindow(l);
+        int h = l[0] * 31 + l[1];
+        h = h * 31 + v.getWidth();
+        h = h * 31 + v.getHeight();
+        return h;
     }
 
     private static Rect rectInWindow(View v) {

@@ -59,6 +59,7 @@ final class IsoDock {
 
     private final Method setGeometryMethod;
     private final Method setBackdropMethod;
+    private final Method clearBackdropMethod;
     private final Method setTabsMethod;
     private final Method isBrokenMethod;
     private final Method hasDrawnMethod;
@@ -70,6 +71,7 @@ final class IsoDock {
         this.view = view;
         this.setGeometryMethod = iso.getMethod("setGeometry", Rect.class, Rect.class, Rect.class);
         this.setBackdropMethod = iso.getMethod("setBackdrop", Bitmap.class);
+        this.clearBackdropMethod = iso.getMethod("clearBackdrop");
         this.setTabsMethod = iso.getMethod("setTabs", String[].class, Bitmap[].class, int.class);
         this.isBrokenMethod = iso.getMethod("isBroken");
         this.hasDrawnMethod = iso.getMethod("hasDrawn");
@@ -239,6 +241,11 @@ final class IsoDock {
 
     void setBackdrop(Bitmap bitmap) {
         invoke(setBackdropMethod, "setBackdrop", bitmap);
+    }
+
+    /** 采样整片发黑时清掉背景图，别让玻璃变成一块黑玻璃。 */
+    void clearBackdrop() {
+        invoke(clearBackdropMethod, "clearBackdrop");
     }
 
     void setTabs(String[] labels, Bitmap[] icons, int selected) {
