@@ -11,16 +11,15 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:allowBackup="false">
 
+        <!--
+            设置界面：只由抖音进程里的「我的」菜单入口打开（显式组件启动）。
+            不再挂 MAIN/LAUNCHER，桌面上没有图标，也没有别的入口。
+        -->
         <activity
             android:name=".DockSettingsActivity"
             android:exported="true"
             android:label="dydock 设置"
-            android:theme="@android:style/Theme.DeviceDefault.Light">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:theme="@android:style/Theme.DeviceDefault.Light" />
 
         <meta-data android:name="xposedmodule" android:value="true" />
         <meta-data android:name="xposeddescription"

@@ -10,7 +10,6 @@ import android.widget.FrameLayout
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -45,7 +44,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.ContentScale
@@ -438,12 +436,7 @@ private fun GlassSurface(
             Box(
                 modifier = Modifier
                     .offset(with(density) { tabsRect.left.toDp() }, with(density) { tabsRect.top.toDp() })
-                    .width(with(density) { tabsRect.width().toDp() })
-                    // 长按 Dock 打开设置：设置入口最稳的一条路，不依赖抖音自己的设置页。
-                    // 只挂在胶囊这一块，不占整屏，宿主其余地方的触摸完全不受影响。
-                    .pointerInput(Unit) {
-                        detectTapGestures(onLongPress = { onLongPress() })
-                    },
+                    .width(with(density) { tabsRect.width().toDp() }),
                 contentAlignment = Alignment.TopCenter
             ) {
                 FloatingBottomBar(

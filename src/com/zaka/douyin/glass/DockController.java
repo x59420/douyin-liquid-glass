@@ -714,13 +714,9 @@ final class DockController {
                         }
                     }
                 },
+                // 长按不再作为设置入口：设置只从抖音「我的」菜单里那一项进。
                 new Runnable() {
                     @Override public void run() {
-                        try {
-                            DockSettingsUi.openSettings(act);
-                        } catch (Throwable t) {
-                            Dydock.warnOnce("iso-longpress-settings", "长按打开设置失败: " + t);
-                        }
                     }
                 });
 

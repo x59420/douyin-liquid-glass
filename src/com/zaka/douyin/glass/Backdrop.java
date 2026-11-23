@@ -58,6 +58,10 @@ public final class Backdrop {
         boolean pending;
         boolean valid;
         long stamp;
+        /** 连续抓到几帧「整片黑」。有些机型/播放器上 PixelCopy 抓 SurfaceView 就是黑的。 */
+        int blackHits;
+        /** 这一层还能不能用来做背景：抓到黑帧到一定次数就放弃它。 */
+        boolean usable = true;
     }
 
     private View content;
@@ -165,6 +169,26 @@ public final class Backdrop {
         return out;
     }
 
+    /** 快速估一张图黑不黑（抽 8x8 个点，别用 getPixels 整张读）。 */
+    private static int quickLuma(Bitmap b) {
+        if (b == null || b.isRecycled()) return 0;
+        int w = b.getWidth();
+        int h = b.getHeight();
+        if (w <= 0 || h <= 0) return 0;
+        long sum = 0;
+        int count = 0;
+        int stepX = Math.max(1, w / 8);
+        int stepY = Math.max(1, h / 8);
+        for (int y = 0; y < h; y += stepY) {
+            for (int x = 0; x < w; x += stepX) {
+                int p = b.getPixel(x, y);
+                sum += ((p >> 16 & 0xFF) * 299 + (p >> 8 & 0xFF) * 587 + (p & 0xFF) * 114) / 1000;
+                count++;
+            }
+        }
+        return count == 0 ? 0 : (int) (sum / count);
+    }
+
     /** 有没有正在播放的视频层（SurfaceView / TextureView 都算）。 */
     private boolean hasLiveVideoLayer() {
         for (Layer l : layers) {
@@ -177,7 +201,7 @@ public final class Backdrop {
 
     private boolean hasVideo() {
         for (Layer l : layers) {
-            if (l.valid) return true;
+            if (l.usable && l.valid) return true;
         }
         return false;
     }
@@ -196,12 +220,18 @@ public final class Backdrop {
      * 才说明底下根本没画出东西，这时候把背景图丢掉，玻璃只保留自己的模糊。
      */
     boolean looksBlack() {
-        return meanLuma < 14 && !hasFrameLayer();
+        if (meanLuma >= 12) return false;
+        // 整片黑：只有在「有视频层但采不到」的时候才认定是采样失败，玻璃改用半透明回退。
+        // 纯粹的暗色页面照旧用真实画面，不会被误判。
+        for (Layer l : layers) {
+            if (!l.usable) return true;
+        }
+        return false;
     }
 
     private boolean hasFrameLayer() {
         for (Layer l : layers) {
-            if (l.valid && l.frame != null && !l.frame.isRecycled()) return true;
+            if (l.usable && l.valid && l.frame != null && !l.frame.isRecycled()) return true;
         }
         return false;
     }
@@ -329,7 +359,7 @@ public final class Backdrop {
         try {
             Canvas uc = new Canvas(ui);
             for (Layer l : layers) {
-                if (l.dst.isEmpty()) continue;
+                if (l.dst.isEmpty() || !l.usable) continue;
                 uc.drawRect(l.dst.left, l.dst.top, l.dst.right, l.dst.bottom, clear);
             }
         } catch (Throwable t) {
@@ -350,7 +380,8 @@ public final class Backdrop {
         long total = (long) sw * sh;
         long sum = 0;
         for (Layer l : layers) {
-            if (!l.valid || l.dst.isEmpty() || l.frame == null || l.frame.isRecycled()) return false;
+            if (!l.usable || !l.valid || l.dst.isEmpty()
+                    || l.frame == null || l.frame.isRecycled()) return false;
             if (now - l.stamp > LAYER_MAX_AGE_MS) return false;
             sum += (long) l.dst.width() * l.dst.height();
         }
@@ -374,7 +405,7 @@ public final class Backdrop {
             Canvas vc = new Canvas(vid);
             vc.drawColor(0, PorterDuff.Mode.CLEAR);
             for (Layer l : layers) {
-                if (!l.valid || l.frame == null || l.frame.isRecycled()) continue;
+                if (!l.usable || !l.valid || l.frame == null || l.frame.isRecycled()) continue;
                 if (l.dst.isEmpty()) continue;
                 // 过期的视频帧直接丢：换页之后残留的那一帧就是「别的界面」的来源。
                 if (now - l.stamp > LAYER_MAX_AGE_MS) {
@@ -595,6 +626,7 @@ public final class Backdrop {
                 crop.drawBitmap(l.textureFull, src, new Rect(0, 0, w, h), paint);
                 l.valid = true;
                 l.stamp = SystemClock.uptimeMillis();
+                noteFrameLuma(l);
                 onVideoFrame();
                 return;
             }
@@ -640,6 +672,7 @@ public final class Backdrop {
                     if (result == PixelCopy.SUCCESS) {
                         l.valid = true;
                         l.stamp = SystemClock.uptimeMillis();
+                        noteFrameLuma(l);
                         onVideoFrame();
                     } else {
                         l.valid = false;
@@ -657,6 +690,24 @@ public final class Backdrop {
             }
             l.valid = false;
             Dydock.warnOnce("pixelcopy-err", "抓视频画面异常: " + t);
+        }
+    }
+
+    /**
+     * 记一次「这一帧是不是黑的」。
+     *
+     * 连续三帧整片黑就判定这一层采不到（PixelCopy 抓 SurfaceView 在部分机型/播放器上
+     * 就是全黑，或者拿的是受保护图层），之后不再用它，也不再把它那块从 UI 层挖掉 ——
+     * 否则玻璃底下永远是一块黑。
+     */
+    private static void noteFrameLuma(Layer l) {
+        if (l == null || l.frame == null) return;
+        if (quickLuma(l.frame) < 12) {
+            l.blackHits++;
+            if (l.blackHits >= 3) l.usable = false;
+        } else {
+            l.blackHits = 0;
+            l.usable = true;
         }
     }
 
