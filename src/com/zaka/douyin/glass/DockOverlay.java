@@ -589,20 +589,17 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float pressed = clampF(pp, 0f, 1f);
         int save = canvas.save();
         try {
-            plusGlassShadow.setStyle(Paint.Style.FILL);
-            plusGlassShadow.setColor(0x33000000);
-            plusGlassShadow.setAlpha(alpha * 0x33 / 255);
-            plusGlassShadow.setShadowLayer((5f + 2f * pressed) * density,
-                    0f, 2f * density, 0x66000000);
-            canvas.drawRoundRect(b.left, b.top + density, b.right, b.bottom + density,
-                    radius, radius, plusGlassShadow);
-            plusGlassShadow.clearShadowLayer();
+            // Keep the plus as a separate dock, but sample and refract the real backdrop.
+            boolean framed = backdrop.hasFrame();
+            int luma = framed ? backdrop.luma() : 128;
+            drawPane(canvas, b, radius, framed, luma, pressed,
+                    pressed > 0.3f, alpha);
 
-            // 不再使用透明灰色磨砂底：按钮主体是饱和红色，表面叠加玻璃高光。
+            // Douyin red becomes a translucent tint so the background remains visible.
             plusGlassPaint.setStyle(Paint.Style.FILL);
             plusGlassPaint.setShader(null);
-            plusGlassPaint.setColor(0xFFE91F49);
-            plusGlassPaint.setAlpha(alpha);
+            plusGlassPaint.setColor(0x66E91F49);
+            plusGlassPaint.setAlpha(alpha * 0x66 / 255);
             canvas.drawRoundRect(b, radius, radius, plusGlassPaint);
 
             plusGlassClip.reset();
