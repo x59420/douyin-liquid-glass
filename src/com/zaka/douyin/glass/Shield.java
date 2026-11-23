@@ -212,6 +212,11 @@ final class Shield {
         if (r.right < target.right - tol) return false;
         if (r.bottom < target.bottom - tol) return false;
 
+        String className = s.getClass().getName().toLowerCase();
+        boolean profileContainer = className.contains("userprofile")
+                || className.contains("userdetail") || className.contains("personalpage")
+                || className.contains("profiledetail") || className.contains("othershomepage");
+        if (profileContainer || hasProfileSignature(s)) return true;
         if (s.getBackground() != null) return true;
         if (!(s instanceof ViewGroup)) return false;
         return bigVisibleChildren((ViewGroup) s) >= 2;
@@ -461,7 +466,10 @@ final class Shield {
         if (view == null || page.height() <= 0) return false;
         if (bounds.height() > page.height() * 0.78f) return false;
         if (bounds.width() < page.width() * 0.55f) return false;
-        if (className.contains("comment")) return true;
+        if (className.contains("comment")) {
+            return bounds.bottom >= page.bottom - page.height() * 0.45f
+                    && bounds.height() >= page.height() * 0.12f;
+        }
         return hasConversationMarker(view, 0);
     }
 
@@ -473,7 +481,31 @@ final class Shield {
      */
     static boolean commentSheetOpen(View root) {
         if (root == null) return false;
-        return findCommentMarker(root, 0, new int[]{900});
+        return findCommentMarker(root, 0, new int[]{1200})
+                || findCommentPanel(root, 0, new int[]{900});
+    }
+
+    /** 评论面板重建时文案可能暂时消失；用底部面板容器作为第二识别线索。 */
+    private static boolean findCommentPanel(View view, int depth, int[] budget) {
+        if (view == null || depth > 24 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
+        String name = view.getClass().getName().toLowerCase();
+        if (name.contains("comment") && view.getWidth() > 0 && view.getHeight() > 0) {
+            View root = view.getRootView();
+            Rect page = rectOf(root);
+            Rect bounds = rectOf(view);
+            if (page.height() > 0 && bounds.width() >= page.width() * 0.55f
+                    && bounds.height() >= page.height() * 0.12f
+                    && bounds.height() <= page.height() * 0.80f
+                    && bounds.bottom >= page.bottom - page.height() * 0.45f) return true;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                if (findCommentPanel(group.getChildAt(i), depth + 1, budget)) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean findCommentMarker(View view, int depth, int[] budget) {
