@@ -367,12 +367,13 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean light = luma >= 140;
         int ink = light ? 0xFF1A1A1A : 0xFFFFFFFF;
 
-        // 点击时四边使用完全相同的外扩量；不再做垂直偏移，避免上下边距不一致。
-        scaled(leftPill, k, tmp);
-        float edgeGrow = 8f * density * p;
-        tmp.inset(-edgeGrow, -edgeGrow);
-        drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, p * 0.55f,
-                dragging && p > 0.3f, alpha);
+        // Tieba 面板按压力做等比缩放：宽度最多增加约 16dp，高度按比例变化，
+        // 不再把上下边缘额外撑开 8dp，避免点击底色显得又厚又胖。
+        float panelPress = droplet.pressProgress();
+        float panelScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * panelPress;
+        scaled(leftPill, k * panelScale, tmp);
+        drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, panelPress,
+                dragging && panelPress > 0.3f, alpha);
 
         // 右侧「＋」独立，不跟随左侧导航透镜的长按放大。
         scaled(plusPill, k * (1f - 0.04f * pp), rect);
@@ -420,20 +421,16 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float x = pos.value;
         float dropletPress = droplet.pressProgress();
 
-        // Tieba 的选中液滴以 56dp 为基础尺寸；长按按 74/56 的比例膨胀，
-        // 因此会自然越过 64dp 左胶囊的上下边缘，而不是被胶囊裁成一块。
-        // Tieba 的液滴不是一个圆球：它沿用 Dock 的横向胶囊轮廓，
-        // 宽度取单个 tab 槽位，基础高度 56dp；放大/速度形变仍由独立弹簧控制。
-        float baseH = Math.max(1f, leftPill.height());
-        // 保持横向胶囊比例，避免槽宽接近高度时看起来像圆形。
-        float baseW = Math.max(slotW, baseH * 1.15f);
-        float sx = clampF(droplet.scaleX() * droplet.dragStretch(slotW), 0.85f, 1.75f);
-        float sy = clampF(droplet.scaleY(), 0.85f, 1.60f);
-        // 只允许整体轻微放大，横纵共用同一比例，不再被拖动速度拉成宽条。
-        float uniformScale = clampF(Math.max(sx, sy), 1f, PRESSED_SCALE);
+        // 与 Tieba 一致：单个 tab 槽宽、56dp 基础高度、78/56 长按放大。
+        // 横纵共用一个缩放值，保留胶囊宽高比例，不把透镜拉成宽条或圆球。
+        float baseH = Math.min(56f * density, Math.max(1f, leftPill.height()));
+        float baseW = Math.max(1f, slotW);
+        float sx = clampF(droplet.scaleX(), 1f, DropletMotion.HELD_SCALE);
+        float sy = clampF(droplet.scaleY(), 1f, DropletMotion.HELD_SCALE);
+        float uniformScale = clampF(Math.max(sx, sy), 1f, DropletMotion.HELD_SCALE);
         float w = baseW * uniformScale;
         float h = baseH * uniformScale;
-        float corner = Math.min(baseH * 0.5f * uniformScale, h * 0.5f);
+        float corner = Math.min(w, h) * 0.5f;
 
         float dragLag = clampF(droplet.accumulatedDrag() * 0.12f,
                 -slotW * 0.18f, slotW * 0.18f);
@@ -1030,8 +1027,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         }
     }
 
-    @Override
-    protected void onDetachedFromWindow() {
+    /** Permanently dispose resources when the owning Activity is destroyed. */
+    void dispose() {
         timer.removeCallbacksAndMessages(null);
         following = false;
         followScheduled = false;
@@ -1040,6 +1037,19 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         choreographer.removeFrameCallback(this);
         choreographer.removeFrameCallback(follow);
         backdrop.release();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        // Detach can be temporary during page transitions. Keep the backdrop source;
+        // DockController reattaches this same overlay when the Activity returns.
+        timer.removeCallbacksAndMessages(null);
+        following = false;
+        followScheduled = false;
+        looping = false;
+        Choreographer choreographer = Choreographer.getInstance();
+        choreographer.removeFrameCallback(this);
+        choreographer.removeFrameCallback(follow);
         super.onDetachedFromWindow();
     }
 }
