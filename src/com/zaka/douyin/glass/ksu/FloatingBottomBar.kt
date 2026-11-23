@@ -71,6 +71,7 @@ import com.zaka.douyin.glass.ksu.liquid.vibrancy
 import com.zaka.douyin.glass.ksu.animation.DampedDragAnimation
 import com.zaka.douyin.glass.ksu.animation.InteractiveHighlight
 import androidx.compose.foundation.isSystemInDarkTheme
+import android.os.Build
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
@@ -269,10 +270,8 @@ fun FloatingBottomBar(
             },
             onDragStopped = {
                 val targetIndex = targetValue.roundToInt().coerceIn(0, tabsCount - 1)
-                if (currentIndex != targetIndex) {
-                    currentIndex = targetIndex
-                    onSelectedUpdated(targetIndex)
-                }
+                if (currentIndex != targetIndex) currentIndex = targetIndex
+                onSelectedUpdated(targetIndex)
                 updateValue(targetIndex.toFloat())
                 animationScope.launch {
                     offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f))
@@ -313,7 +312,7 @@ fun FloatingBottomBar(
     }
 
     val interactiveHighlight = remember(animationScope, tabWidthPx, dampedDragAnimation) {
-        InteractiveHighlight(
+        if (Build.VERSION.SDK_INT >= 33) InteractiveHighlight(
             animationScope = animationScope,
             position = { size, _ ->
                 Offset(
@@ -322,7 +321,7 @@ fun FloatingBottomBar(
                     size.height / 2f
                 )
             }
-        )
+        ) else null
     }
 
     val baseHighlight = rememberGravityRotatedHighlight(iosIndicatorSpecular, extraDegrees = -45f)
@@ -381,7 +380,7 @@ fun FloatingBottomBar(
                 )
                 .then(
                     if (isBlurEnabled) {
-                        interactiveHighlight.modifier.then(interactiveHighlight.gestureModifier)
+                        (interactiveHighlight?.modifier ?: Modifier).then(interactiveHighlight?.gestureModifier ?: Modifier)
                     } else Modifier
                 )
                 .then(dampedDragAnimation.modifier)
@@ -420,7 +419,7 @@ fun FloatingBottomBar(
                             },
                             onDrawSurface = { drawRect(containerColor) },
                         )
-                        .then(interactiveHighlight.modifier)
+                        .then(interactiveHighlight?.modifier ?: Modifier)
                         .height(56.dp)
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
