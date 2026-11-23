@@ -1,0 +1,570 @@
+package com.zaka.douyin.glass
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
+import android.graphics.drawable.Drawable
+import android.os.Handler
+import android.os.Looper
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.PeopleAlt
+import androidx.compose.material.icons.rounded.PersonOutline
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.ComposeView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.zaka.douyin.glass.ksu.FloatingBottomBar
+import com.zaka.douyin.glass.ksu.FloatingBottomBarItem
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.ColorSchemeMode
+import top.yukonga.miuix.kmp.theme.ThemeController
+import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
+import top.yukonga.miuix.kmp.theme.ThemeColorSpec
+import top.yukonga.miuix.kmp.theme.LocalContentColor
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.min
+
+/**
+ * Compose replacement for the old Java Canvas DockOverlay.
+ *
+ * The host View tree and LSPosed hooks remain Java. This view owns only the Dock
+ * presentation and delegates navigation clicks back to Douyin's original tab Views.
+ * The backdrop bitmap is still captured from the host because a Compose overlay cannot
+ * sample sibling Android Views directly; Miuix then runs the same KSU blur/lens pipeline
+ * over that sampled image.
+ */
+class ComposeDockOverlay private constructor(
+    context: Context,
+    private val backdrop: Backdrop,
+    private val densityScale: Float
+) : FrameLayout(context) {
+
+    private val overlayOwner = OverlayLifecycleOwner()
+    private val composeView = SafeComposeView(context)
+
+    internal data class TabSnapshot(
+        val label: String,
+        val icon: ImageBitmap?,
+        val selected: Boolean
+    )
+
+    internal data class DockLayout(
+        val band: Rect = Rect(),
+        val region: Rect = Rect(),
+        val left: Int = 0,
+        val top: Int = 0,
+        val leftWidth: Int = 0,
+        val plusLeft: Int = 0,
+        val plusTop: Int = 0,
+        val plusSize: Int = 0
+    )
+
+    private val main = Handler(Looper.getMainLooper())
+    private val tabs = ArrayList<View>()
+    private var plusTab: View? = null
+    private var dockLayout by mutableStateOf(DockLayout())
+    private var backdropImage by mutableStateOf<ImageBitmap?>(null)
+    private var tabSnapshots by mutableStateOf<List<TabSnapshot>>(emptyList())
+    private var selectedIndex by mutableIntStateOf(0)
+    private var drawn = AtomicBoolean(false)
+    private var disposed = false
+
+    private val hostPoll = object : Runnable {
+        override fun run() {
+            if (!disposed && isAttachedToWindow) {
+                // GONE does not detach this overlay. Keep the poller scheduled while
+                // attached so it resumes automatically when Dock becomes visible again.
+                if (visibility == VISIBLE) refreshHostState()
+                main.postDelayed(this, 500L)
+            }
+        }
+    }
+
+    private val videoPump = object : Runnable {
+        override fun run() {
+            if (!disposed && isAttachedToWindow) {
+                if (visibility == VISIBLE) {
+                    try {
+                        backdrop.pumpVideo()
+                    } catch (t: Throwable) {
+                        Dydock.warnOnce("compose-video-pump", "Compose 背景视频刷新失败: $t")
+                    }
+                }
+                // Keep the scheduler alive while hidden; otherwise a temporary GONE
+                // transition permanently stops video sampling until the Activity
+                // detaches and reattaches the overlay.
+                // PixelCopy is asynchronous and each layer has a pending guard, so
+                // slow devices skip requests rather than queueing an unbounded backlog.
+                main.postDelayed(this, 66L)
+            }
+        }
+    }
+
+    init {
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        setWillNotDraw(false)
+        // Xposed overlays are attached to Douyin's DecorView, which may not expose
+        // ComponentActivity's owners. Supply explicit owners so ComposeView can create
+        // its composition safely even in a plain Activity hierarchy.
+        composeView.onBroken = { where, t ->
+            Dydock.error("玻璃框架 $where 失败", t)
+            // 框架真挂了就别再让它继续画：收起玻璃，等控制器把官方底栏还回来。
+            try {
+                visibility = GONE
+                dispose()
+            } catch (_: Throwable) {
+            }
+        }
+        composeView.setViewTreeLifecycleOwner(overlayOwner)
+        composeView.setViewTreeSavedStateRegistryOwner(overlayOwner)
+        overlayOwner.resume()
+        composeView.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        addView(composeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
+        composeView.setContent {
+            // 只创建一次：ThemeController 自带状态/协程，放在 composable 体里
+            // 会随着每次重组重新 new（背景 30fps 刷新时就是每秒几十个），
+            // 几十秒就能把宿主内存拖爆 —— 这是打开抖音闪退的主要来源之一。
+            // 只在系统深浅色切换时才重建，不再跟着每一帧重组重建。
+            val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
+            val controller = remember(systemDark) {
+                ThemeController(
+                    ColorSchemeMode.System,
+                    isDark = systemDark,
+                    paletteStyle = ThemePaletteStyle.TonalSpot,
+                    colorSpec = ThemeColorSpec.Spec2025
+                )
+            }
+            MiuixTheme(controller = controller) {
+                ComposeDockSurface(
+                    image = backdropImage,
+                    layout = dockLayout,
+                    tabs = tabSnapshots,
+                    selectedIndex = selectedIndex,
+                    hasPlus = true,
+                    onTabClick = ::activateTab,
+                    onPlusClick = { plusTab?.performClick() },
+                    onDrawn = { drawn.set(true) }
+                )
+            }
+        }
+    }
+
+    companion object {
+        @JvmStatic
+        fun create(context: Context, backdrop: Backdrop, density: Float): ComposeDockOverlay =
+            ComposeDockOverlay(context, backdrop, density)
+    }
+
+    fun setTabs(items: List<View>, plus: View?) {
+        tabs.clear()
+        tabs.addAll(items)
+        plusTab = plus
+        refreshHostState()
+        updateLayout()
+    }
+
+    fun attachDock(dock: View?) {
+        // Keep only the native View reference for host click forwarding.
+    }
+
+    fun setBand(rect: Rect?) {
+        if (rect == null || rect.isEmpty) return
+        dockLayout = dockLayout.copy(band = Rect(rect))
+        updateLayout()
+    }
+
+    fun pinPosition() {
+        // The Dock is positioned from the first recognized host band and then stays fixed.
+    }
+
+    fun hasDrawn(): Boolean = drawn.get()
+
+    /** Compose/Miuix 在宿主里彻底画不出来时返回 true，控制器据此恢复官方底栏。 */
+    fun isBroken(): Boolean = composeView.broken
+
+    fun dispose() {
+        disposed = true
+        overlayOwner.destroy()
+        main.removeCallbacks(videoPump)
+        main.removeCallbacks(hostPoll)
+        // Release PixelCopy/TextureView frames and bitmap buffers when the Activity is destroyed.
+        backdrop.setOnFrame(null)
+        backdrop.release()
+        tabs.clear()
+        plusTab = null
+    }
+
+    /** Called by the Java controller after a host capture or video-layer update. */
+    fun refreshBackdrop() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            post { refreshBackdrop() }
+            return
+        }
+        val bitmap = try { backdrop.bitmap() } catch (_: Throwable) { null }
+        backdropImage = bitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
+        updateLayout()
+        invalidate()
+    }
+
+    private fun refreshHostState() {
+        val snapshots = tabs.mapIndexed { index, view ->
+            val label = findText(view).ifBlank {
+                when (index) {
+                    0 -> "首页"
+                    1 -> "朋友"
+                    2 -> "消息"
+                    else -> "我"
+                }
+            }
+            val drawable = findDrawable(view)
+            val icon = drawable?.let { drawableToImage(it) }
+            TabSnapshot(label, icon, isSelectedDeep(view))
+        }
+        tabSnapshots = snapshots
+        val selected = snapshots.indexOfFirst { it.selected }
+        if (selected >= 0) selectedIndex = selected.coerceIn(0, maxOf(0, snapshots.size - 1))
+    }
+
+    private fun drawableToImage(drawable: Drawable): ImageBitmap? = try {
+        val w = drawable.intrinsicWidth.coerceIn(1, 96)
+        val h = drawable.intrinsicHeight.coerceIn(1, 96)
+        // 不借用 androidx.core 的 toBitmap：模块和宿主各带一份 androidx，
+        // 走宿主那份老版本会直接抛 NoSuchMethodError，这里自己画。
+        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val old = drawable.bounds
+        drawable.setBounds(0, 0, w, h)
+        drawable.draw(canvas)
+        drawable.bounds = old
+        bitmap.asImageBitmap()
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun findText(view: View): String {
+        if (view is TextView && view.text != null && view.text.isNotBlank()) {
+            return view.text.toString()
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val text = findText(view.getChildAt(i))
+                if (text.isNotBlank()) return text
+            }
+        }
+        return ""
+    }
+
+    private fun findDrawable(view: View): Drawable? {
+        if (view is ImageView && view.drawable != null) return view.drawable
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                val found = findDrawable(view.getChildAt(i))
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
+    private fun isSelectedDeep(view: View): Boolean {
+        if (view.isSelected) return true
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                if (isSelectedDeep(view.getChildAt(i))) return true
+            }
+        }
+        return false
+    }
+
+    private fun activateTab(index: Int) {
+        val target = tabs.getOrNull(index) ?: return
+        selectedIndex = index
+        try {
+            target.performClick()
+            refreshHostState()
+        } catch (t: Throwable) {
+            Dydock.warnOnce("compose-tab-click", "转发原生导航点击失败: $t")
+        }
+    }
+
+    private fun updateLayout() {
+        if (width <= 0 || height <= 0 || dockLayout.band.isEmpty) return
+        val location = IntArray(2)
+        getLocationInWindow(location)
+        val band = dockLayout.band
+        val bandLeft = band.left - location[0]
+        val bandTop = band.top - location[1]
+        val bandWidth = band.width()
+        // KernelSU uses 28dp horizontal inset. Keep the independent 64dp Douyin
+        // publish button and use a compact gap so the four-tab capsule stays centered.
+        val edge = (28f * densityScale).toInt()
+        val gap = (8f * densityScale).toInt()
+        val pillHeight = (64f * densityScale).toInt()
+        val plusSize = pillHeight
+        val plusLeft = bandLeft + bandWidth - edge - plusSize
+        val left = bandLeft + edge
+        val available = (plusLeft - gap - left).coerceAtLeast(1)
+        val desired = (tabs.size * 76f * densityScale + 8f * densityScale).toInt()
+        val leftWidth = min(desired, available)
+        val top = bandTop + band.height() - (8f * densityScale).toInt() - pillHeight
+        val regionPad = (40f * densityScale).toInt()
+        val region = Rect(
+            left - regionPad,
+            top - regionPad,
+            plusLeft + plusSize + regionPad,
+            top + pillHeight + regionPad
+        )
+        val regionInWindow = Rect(region).apply { offset(location[0], location[1]) }
+        backdrop.setRegion(regionInWindow)
+        dockLayout = DockLayout(
+            band = Rect(band),
+            region = region,
+            left = left.coerceAtLeast(0),
+            top = top.coerceAtLeast(0),
+            leftWidth = leftWidth,
+            plusLeft = plusLeft.coerceAtLeast(0),
+            plusTop = top.coerceAtLeast(0),
+            plusSize = plusSize
+        )
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        updateLayout()
+        post { try { backdrop.capture(); refreshBackdrop() } catch (_: Throwable) { } }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        main.removeCallbacks(videoPump)
+        main.post(videoPump)
+        main.post(hostPoll)
+        refreshBackdrop()
+    }
+
+    override fun onDetachedFromWindow() {
+        main.removeCallbacks(videoPump)
+        main.removeCallbacks(hostPoll)
+        super.onDetachedFromWindow()
+    }
+}
+
+@Composable
+private fun ComposeDockSurface(
+    image: ImageBitmap?,
+    layout: ComposeDockOverlay.DockLayout,
+    tabs: List<ComposeDockOverlay.TabSnapshot>,
+    selectedIndex: Int,
+    hasPlus: Boolean,
+    onTabClick: (Int) -> Unit,
+    onPlusClick: () -> Unit,
+    onDrawn: () -> Unit
+) {
+    val backdrop = rememberLayerBackdrop()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val isBlurEnabled = android.os.Build.VERSION.SDK_INT >= 33
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { onDrawn() }
+    ) {
+        if (image != null && !layout.region.isEmpty) {
+            val regionLeft = with(density) { layout.region.left.toDp() }
+            val regionTop = with(density) { layout.region.top.toDp() }
+            val regionWidth = with(density) { layout.region.width().toDp() }
+            val regionHeight = with(density) { layout.region.height().toDp() }
+            Image(
+                bitmap = image,
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier
+                    .offset(regionLeft, regionTop)
+                    .size(regionWidth, regionHeight)
+                    .layerBackdrop(backdrop)
+            )
+        }
+
+        if (tabs.isNotEmpty() && layout.leftWidth > 0) {
+            val left = with(density) { layout.left.toDp() }
+            val top = with(density) { layout.top.toDp() }
+            val width = with(density) { layout.leftWidth.toDp() }
+            FloatingBottomBar(
+                modifier = Modifier.offset(left, top),
+                selectedIndex = selectedIndex.coerceIn(0, tabs.lastIndex),
+                onSelected = onTabClick,
+                backdrop = backdrop,
+                tabsCount = tabs.size,
+                barWidth = width,
+                isBlurEnabled = isBlurEnabled
+            ) { activate ->
+                tabs.forEachIndexed { index, tab ->
+                    FloatingBottomBarItem(
+                        selected = index == selectedIndex,
+                        onClick = { activate(index) }
+                    ) {
+                        val fallback = when (index) {
+                            0 -> Icons.Rounded.Home
+                            1 -> Icons.Rounded.PeopleAlt
+                            2 -> Icons.Rounded.ChatBubbleOutline
+                            else -> Icons.Rounded.PersonOutline
+                        }
+                        if (tab.icon != null) {
+                            Image(
+                                bitmap = tab.icon,
+                                contentDescription = tab.label,
+                                modifier = Modifier.size(24.dp),
+                                colorFilter = ColorFilter.tint(LocalContentColor.current)
+                            )
+                        } else {
+                            Icon(
+                                imageVector = fallback,
+                                contentDescription = tab.label,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Text(
+                            text = tab.label,
+                            fontSize = 11.sp,
+                            lineHeight = 14.sp,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Visible
+                        )
+                    }
+                }
+            }
+        }
+
+        if (hasPlus && layout.plusSize > 0) {
+            val x = with(density) { layout.plusLeft.toDp() }
+            val y = with(density) { layout.plusTop.toDp() }
+            val size = with(density) { layout.plusSize.toDp() }
+            Box(
+                modifier = Modifier
+                    .offset(x, y)
+                    .size(size)
+                    .clip(CircleShape)
+                    .background(Color(0xFFFE2C55))
+                    .clickable(onClick = onPlusClick),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
+            }
+        }
+    }
+}
+
+
+/** Minimal lifecycle + saved-state owners for a ComposeView hosted by an Xposed overlay. */
+private class OverlayLifecycleOwner : SavedStateRegistryOwner {
+    private val registry = LifecycleRegistry(this)
+    private val savedStateController = SavedStateRegistryController.create(this)
+
+    override val lifecycle: Lifecycle
+        get() = registry
+
+    override val savedStateRegistry: SavedStateRegistry
+        get() = savedStateController.savedStateRegistry
+
+    init {
+        savedStateController.performAttach()
+        savedStateController.performRestore(null)
+    }
+
+    fun resume() {
+        if (registry.currentState == Lifecycle.State.INITIALIZED) {
+            registry.currentState = Lifecycle.State.CREATED
+        }
+        registry.currentState = Lifecycle.State.RESUMED
+    }
+
+    fun destroy() {
+        registry.currentState = Lifecycle.State.DESTROYED
+    }
+}
+
+
+/**
+ * ComposeView 的护栏版。
+ *
+ * 玻璃贴在宿主 DecorView 上，测量/布局/绘制全都跑在抖音主线程。
+ * 只要有一条异常逃出去，宿主进程当场就挂（用户看到的就是「打开抖音闪退」）。
+ * 这里把三条链路全兜住：出错就锁死绘制，交给控制器恢复官方底栏。
+ */
+private class SafeComposeView(context: Context) : ComposeView(context) {
+
+    @Volatile
+    var broken = false
+        private set
+
+    var onBroken: ((String, Throwable) -> Unit)? = null
+
+    private fun guard(where: String, block: () -> Unit) {
+        if (broken) return
+        try {
+            block()
+        } catch (t: Throwable) {
+            broken = true
+            onBroken?.invoke(where, t)
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        guard("measure") { super.onMeasure(widthMeasureSpec, heightMeasureSpec) }
+        if (broken) setMeasuredDimension(0, 0)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        guard("layout") { super.onLayout(changed, left, top, right, bottom) }
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        guard("draw") { super.dispatchDraw(canvas) }
+    }
+}

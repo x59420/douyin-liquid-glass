@@ -48,8 +48,8 @@ final class DockController {
     private static final WeakHashMap<Activity, View> LONG_PRESS_TARGETS =
             new WeakHashMap<Activity, View>();
     /** 我们盖上去的那层玻璃，Activity 走的时候要拆掉、把官方底栏还回去 */
-    private static final WeakHashMap<Activity, DockOverlay> OVERLAYS =
-            new WeakHashMap<Activity, DockOverlay>();
+    private static final WeakHashMap<Activity, ComposeDockOverlay> OVERLAYS =
+            new WeakHashMap<Activity, ComposeDockOverlay>();
     /** Keep the per-Activity poller cancellable so destroyed pages do not retain work. */
     private static final WeakHashMap<Activity, Runnable> POLLERS =
             new WeakHashMap<Activity, Runnable>();
@@ -108,7 +108,7 @@ final class DockController {
         if (act == null) return;
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         View dock;
-        DockOverlay overlay;
+        ComposeDockOverlay overlay;
         synchronized (DOCKS) {
             dock = DOCKS.remove(act);
         }
@@ -207,12 +207,12 @@ final class DockController {
         // Match KernelSU FloatingBottomBar's 4dp backdrop blur.
         backdrop.setBlurDp(4f, density);
 
-        final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
+        final ComposeDockOverlay overlay = ComposeDockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
         // Refresh the sampled background as feed content and video frames change.
         backdrop.setOnFrame(new Runnable() {
             @Override public void run() {
-                if (overlay.isAttachedToWindow()) overlay.invalidate();
+                if (overlay.isAttachedToWindow()) overlay.refreshBackdrop();
             }
         });
 
@@ -256,7 +256,7 @@ final class DockController {
                 try {
                     if (overlay.isAttachedToWindow() && overlay.getVisibility() == View.VISIBLE) {
                         backdrop.capture();
-                        overlay.invalidate();
+                        overlay.refreshBackdrop();
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("backdrop-refresh", "背景刷新失败: " + t);
@@ -270,6 +270,26 @@ final class DockController {
             @Override public void run() {
                 if (!live[0]) return;
                 try {
+                    // 玻璃框架在宿主里彻底画不出来（Compose/Miuix 抛过错）：
+                    // 立刻停掉所有轮询，把官方底栏还回去，别留一条空白、也别再画。
+                    if (overlay.isBroken()) {
+                        live[0] = false;
+                        MAIN.removeCallbacks(this);
+                        MAIN.removeCallbacks(backdropRefresh);
+                        synchronized (POLLERS) { POLLERS.remove(act); }
+                        synchronized (POLL_STATES) { POLL_STATES.remove(act); }
+                        View d0 = dockRef[0];
+                        try {
+                            if (d0 != null) {
+                                d0.setVisibility(View.VISIBLE);
+                                d0.setAlpha(1f);
+                            }
+                            overlay.setVisibility(View.GONE);
+                        } catch (Throwable ignored) {
+                        }
+                        Dydock.warn("底栏:玻璃绘制框架出错，已恢复官方 Dock");
+                        return;
+                    }
                     if (act.isFinishing() || act.isDestroyed()) {
                         live[0] = false;
                         MAIN.removeCallbacks(this);
@@ -281,8 +301,7 @@ final class DockController {
                     // A transition can leave the old overlay parented but detached.
                     // Remove/re-add it when the Activity decor is live; checking only
                     // getParent()==null misses this case and leaves the Dock gone forever.
-                    if (!overlay.isAttachedToWindow() && decor.isAttachedToWindow()) {
-                        ViewParent parent = overlay.getParent();
+                    if (!overlay.isAttachedToWindow() && decor.isAttachedToWindow()) {                        ViewParent parent = overlay.getParent();
                         if (parent instanceof ViewGroup) {
                             ((ViewGroup) parent).removeView(overlay);
                         }

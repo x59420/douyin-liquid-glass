@@ -2,7 +2,7 @@
 
 一个面向抖音 Android 客户端的 LSPosed 模块：**把四个主页面底部导航栏替换成悬浮液态玻璃 Dock**，尽量保留抖音原有的布局和点击逻辑。
 
-> 当前源码版本：**0.2.0**
+> 当前源码版本：**0.2.1**
 >
 > APK 下载：**[GitHub Releases](https://github.com/x59420/douyin-liquid-glass/releases)**
 >
@@ -10,21 +10,14 @@
 
 ---
 
-## 关于 0.2.0：为什么会闪退，这一版改了什么
+## 关于 0.2.1：打开抖音闪退的原因
 
-0.1.x 把底栏改成用 Compose + Miuix 那套界面框架来画，并且把整套框架依赖（Compose、Miuix、androidx 的 activity / lifecycle / savedstate，以及一个原生库）一起打进了模块。
+0.1.21 打开抖音会闪退，是下面两件事叠在一起：
 
-问题在于 **LSPosed 模块是跑在宿主进程里的**：
+1. **主题控制器被反复重建。** 玻璃的主题控制器写在 composable 体里，每次重组都会 new 一个新的。而玻璃背景是靠采样宿主画面刷新的（约 30fps），等于**每秒新建几十个控制器**，每个还带着自己的状态和协程 —— 内存和线程一路涨，几十秒后宿主就被拖死。这一版改成 `remember` 缓存，只在系统深浅色切换时才重建；背景刷新频率也从 30fps 降到 15fps，玻璃观感不变，重组压力减半。
+2. **Compose 没有护栏。** 玻璃是贴在抖音主窗口上的，测量/布局/绘制全跑在抖音主线程。之前只要 Compose 或 Miuix 在绘制里抛一个异常（着色器编不过、宿主自带的 androidx 版本对不上等），异常就直接冒到宿主，整个抖音进程当场挂掉。这一版给 `ComposeView` 套了三层护栏：测量、布局、绘制逐一兜住，出错就把玻璃收起、把官方底栏还回去，**绝不让异常跑到宿主主线程**。
 
-- 这些框架类抖音自己也有别的版本，同进程里两套实现对不上，很容易在方法/字段解析时直接抛错；
-- Compose 是在抖音主线程上做合成的，只要合成/绘制里抛一个没被接住的异常，整条主线程就崩了 —— 表现就是**一打开抖音就闪退**；
-- 顺带还有一个副作用：模块 APK 从原来的 ~180KB 涨到 11.8MB，dex 足足 45MB，启动时要加载这么多东西，对低内存机型也不友好。
-
-0.2.0 把 Compose / Miuix 整套移除，底栏改回**自包含的原生 View 绘制**（`DockOverlay` + `GlassPainter`）：
-
-- 不再依赖任何第三方界面框架，模块只带自己的代码；
-- `onDraw` 整条绘制链都兜住异常，着色器编不过、材质画不出来时自动降级成磨砂，**绝不把异常抛回宿主**；
-- 诊断日志文件初始化移到后台线程，宿主启动时不再做任何 IO。
+另外还把一处 `androidx.core` 的调用换成了自己实现的绘制（模块和宿主各带一份 androidx，走宿主那份老版本会直接抛 `NoSuchMethodError`）。
 
 ## 功能一览
 
@@ -98,26 +91,27 @@
 
 ## 构建
 
-纯 Java 模块，不需要 Compose、不需要 Gradle，也不需要 Android Studio。
+项目使用自定义 Shell 脚本构建，不使用 Gradle，也不要求 Android Studio。
 
-### 本地离线构建（推荐）
+### 本地环境
 
-```bash
-DYDOCK_KEYSTORE_PASSWORD=<签名口令> bash build-local.sh
-```
+- JDK 17
+- Android SDK
+- Android SDK Platform（例如 android-35）
+- Android SDK Build Tools（例如 35.0.0）
+- 可用的网络连接（首次构建需要下载 Xposed API jar）
 
-产物：`out/dydock-<版本>.apk`（与 CI 使用同一份 `keystore/dydock.jks` 签名）。
-
-需要：JDK 17、Android SDK（`android.jar` 与 `d8` / `zipalign` / `apksigner`）、首次构建时联网下载 Xposed API jar。
-可以用 `ANDROID_SDK_ROOT` / `DYDOCK_PLATFORM` / `DYDOCK_BUILD_TOOLS` 覆盖默认路径。
-
-### Gradle 构建（CI 使用）
+### 构建命令
 
 ```bash
-DYDOCK_KEYSTORE_PASSWORD=<签名口令> bash build.sh
+ANDROID_HOME=~/android-sdk bash build.sh
 ```
 
-`build.sh` 会用 Gradle 执行 `assembleRelease`，产物同样是 `out/dydock-<版本>.apk`。
+成功后 APK 位于：
+
+```
+out/dydock-0.1.2.apk
+```
 
 ### GitHub Actions
 
@@ -130,20 +124,22 @@ DYDOCK_KEYSTORE_PASSWORD=<签名口令> bash build.sh
 3. 上传 APK 构建产物
 4. 创建 GitHub Release，并把 APK 附加到发行版
 
-也可以在仓库的 **Actions** 页面手动运行工作流。
+也可以在仓库的 **Actions** 页面手动运行工作流。构建产物 Artifact 是临时下载项；正式下载建议使用 **Releases** 页面。
 
 ### 签名注意事项
 
 仓库中的 `keystore/dydock.jks` 用于给 APK 签名。**后续构建必须继续使用同一份 keystore**，不要随意删除或重新生成，否则新 APK 可能无法覆盖安装在设备上的旧版本。
 
+请妥善保管签名文件，不要把它发送给他人或上传到无关位置。
+
 ## 版本记录
 
-### 0.2.0
+### 0.2.1
 
-- **修复打开抖音闪退**：移除 Compose / Miuix 界面框架及其 androidx 依赖，底栏改回自包含的原生 View 绘制，不再与宿主自带的框架类冲突。
-- 模块体积从 11.8MB 回落到约 180KB，dex 从 45MB 回落到 100KB 量级，启动开销大幅降低。
-- `onDraw` 全链路兜底：绘制/着色器异常一律降级为磨砂玻璃，不把异常抛回宿主主线程，避免宿主进程被带走。
-- 诊断日志（`Download/Dydock/dydock-diagnostic.log`）的初始化改到后台线程，宿主启动阶段不再做 IO。
+- **修复打开抖音闪退**：主题控制器改为 `remember` 缓存，不再随每一帧重组重建（原来每秒会新建几十个，把宿主内存拖爆）。
+- `ComposeView` 增加测量/布局/绘制三级护栏，Compose 或 Miuix 出错时自动收起玻璃并恢复官方底栏，异常不会冒到宿主主线程。
+- 玻璃背景刷新从 30fps 降到 15fps，降低重组与合成开销。
+- 图标取样不再走 `androidx.core` 的 `toBitmap`，改为自己绘制，避开模块与宿主 androidx 版本不一致导致的 `NoSuchMethodError`。
 
 ### 0.1.14
 
