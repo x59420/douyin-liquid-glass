@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.zaka.douyin.glass"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.zaka.douyin.glass"
