@@ -24,8 +24,8 @@ import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.PeopleAlt
 import androidx.compose.material.icons.rounded.PersonOutline
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -37,13 +37,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -129,13 +127,21 @@ class ComposeDockOverlay private constructor(
     private val main = Handler(Looper.getMainLooper())
     private val tabs = ArrayList<View>()
     private var plusTab: View? = null
-    private var hostDock: View? = null
     private var dockLayout by mutableStateOf(DockLayout())
     private var backdropImage by mutableStateOf<ImageBitmap?>(null)
     private var tabSnapshots by mutableStateOf<List<TabSnapshot>>(emptyList())
     private var selectedIndex by mutableIntStateOf(0)
     private var drawn = AtomicBoolean(false)
     private var disposed = false
+
+    private val hostPoll = object : Runnable {
+        override fun run() {
+            if (!disposed && isAttachedToWindow && visibility == VISIBLE) {
+                refreshHostState()
+                main.postDelayed(this, 500L)
+            }
+        }
+    }
 
     private val videoPump = object : Runnable {
         override fun run() {
@@ -188,7 +194,7 @@ class ComposeDockOverlay private constructor(
     }
 
     fun attachDock(dock: View?) {
-        hostDock = dock
+        // Keep only the native View reference for host click forwarding.
     }
 
     fun setBand(rect: Rect?) {
@@ -206,8 +212,8 @@ class ComposeDockOverlay private constructor(
     fun dispose() {
         disposed = true
         main.removeCallbacks(videoPump)
+        main.removeCallbacks(hostPoll)
         lifecycleOwner.destroy()
-        hostDock = null
         tabs.clear()
         plusTab = null
     }
@@ -338,6 +344,7 @@ class ComposeDockOverlay private constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         updateLayout()
+        post { try { backdrop.capture(); refreshBackdrop() } catch (_: Throwable) { } }
     }
 
     override fun onAttachedToWindow() {
@@ -345,11 +352,13 @@ class ComposeDockOverlay private constructor(
         lifecycleOwner.start()
         main.removeCallbacks(videoPump)
         main.post(videoPump)
+        main.post(hostPoll)
         refreshBackdrop()
     }
 
     override fun onDetachedFromWindow() {
         main.removeCallbacks(videoPump)
+        main.removeCallbacks(hostPoll)
         lifecycleOwner.stop()
         super.onDetachedFromWindow()
     }
