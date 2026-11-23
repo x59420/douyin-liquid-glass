@@ -59,6 +59,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final Spring appear = new Spring(0f);
     /** Tieba's independent position/pressure/shape/velocity/drag spring channels. */
     private final DropletMotion droplet = new DropletMotion();
+    private final InteractiveHighlight interactiveHighlight = new InteractiveHighlight();
 
     private int selected;
     private boolean downInLeft;
@@ -385,6 +386,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         tmp.offset(panelOffset, 0f);
         drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, panelPress,
                 dragging && panelPress > 0.3f, alpha);
+        interactiveHighlight.draw(canvas, tmp, slotCenterX(droplet.x()) + panelOffset,
+                leftPill.centerY());
 
         // 右侧「＋」独立，不跟随左侧导航透镜的长按放大。
         scaled(plusPill, k * (1f - 0.04f * pp), rect);
@@ -865,6 +868,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     downX = x;
                     downY = y;
                     lastDragX = x;
+                    interactiveHighlight.press(x, y);
                     dragging = false;
                     pendingIndex = slotAt(x);
                     dragOriginSelected = selected;
@@ -890,6 +894,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             }
             case MotionEvent.ACTION_MOVE: {
                 if (downInLeft) {
+                    interactiveHighlight.move(x, y);
                     float dx = x - downX;
                     float dy = y - downY;
                     if (!dragging && Math.abs(dx) > touchSlop
@@ -942,6 +947,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                     if (cancelled && wasDragging) target = dragOriginSelected;
 
                     downInLeft = false;
+                    interactiveHighlight.release();
                     dragging = false;
                     nativeTarget = null;
                     nativeDownHandled = false;
@@ -1100,10 +1106,11 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         boolean a = plusPress.step(dt);
         boolean b = appear.step(dt);
         boolean c = droplet.advance(dt / 1000f);
+        boolean d = interactiveHighlight.advance(dt / 1000f);
 
         invalidate();
 
-        if (a || b || c) {
+        if (a || b || c || d) {
             Choreographer.getInstance().postFrameCallback(this);
         } else {
             looping = false;
