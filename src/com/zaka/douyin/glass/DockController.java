@@ -296,6 +296,26 @@ final class DockController {
         return false;
     }
 
+    /**
+     * 宿主是不是把底栏所在的容器整个隐藏了。
+     *
+     * 这一条和 isHostChromeHidden 的区别：**只看可见性 / 透明度，不看位置**。
+     * 抖音在消息页、我的页上下滚动时是给底栏做位移动画（甚至平移到屏幕外），
+     * 那是「滚动隐藏」，跟着它走 Dock 就一路闪；而进入会话页、覆盖页时，
+     * 它是真的把整条底栏容器设成不可见，这时候 Dock 必须跟着收，
+     * 否则就会浮在会话页上（从聊天框看完视频返回时最明显）。
+     */
+    private static boolean isHostChromeInvisible(View dock) {
+        if (dock == null) return false;
+        ViewParent parent = dock.getParent();
+        for (int i = 0; i < 4 && parent instanceof View; i++) {
+            View v = (View) parent;
+            if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) return true;
+            parent = v.getParent();
+        }
+        return false;
+    }
+
     /** 清屏状态推进：确认过一次隐藏之后，看到宿主 UI 回来就算退出。 */
     private static boolean updateGestureClearMode(Activity act, View dock, boolean markerClear) {
         long[] enteredAt;
@@ -621,6 +641,8 @@ final class DockController {
          * 当前不在四个主 tab 页面上。
          */
         final int[] dockMissingTicks = new int[]{0};
+        /** 宿主把底栏容器真正隐藏了：持续约 400ms 才认，滚动动画那一小段不算。 */
+        final int[] hostHiddenTicks = new int[]{0};
 
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
@@ -751,11 +773,15 @@ final class DockController {
                     // 要连续十几帧（约 190ms）都找不到才认，转场那一瞬间的游离不算。
                     boolean dockAttached = d != null && d.isAttachedToWindow();
                     dockMissingTicks[0] = dockAttached
-                            ? 0 : Math.min(40, dockMissingTicks[0] + 1);
+                            ? 0 : Math.min(60, dockMissingTicks[0] + 1);
+                    boolean hostHidden = d != null && isHostChromeInvisible(d);
+                    hostHiddenTicks[0] = hostHidden
+                            ? Math.min(60, hostHiddenTicks[0] + 1) : 0;
                     boolean hidden = speedPlayback || longPress || clearScreen
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
-                            || dockMissingTicks[0] >= 12;
+                            || dockMissingTicks[0] >= 12
+                            || hostHiddenTicks[0] >= 25;
                     if (hidden) {
                         revealTicks[0] = 0;
                     } else if (revealTicks[0] < SHOW_CONFIRM_FRAMES) {
