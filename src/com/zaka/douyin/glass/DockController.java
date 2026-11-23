@@ -162,6 +162,8 @@ final class DockController {
         ((ViewGroup) decor).addView(overlay, lp);
         overlay.attachDock(dock);
         overlay.setBand(rectInWindow(dock));
+        // 首次识别只用于确定底部位置；后续玻璃不再追随原生 Dock。
+        overlay.pinPosition();
 
         // Capture only after the Dock band is known. Temporarily hide the native
         // artwork while sampling so its icons/text are not baked into the glass.
@@ -175,14 +177,6 @@ final class DockController {
 
         final View[] dockRef = new View[]{dock};
         final boolean[] live = new boolean[]{true};
-        final boolean[] hidden = new boolean[]{false};
-        final long[] graceFrom = new long[]{SystemClock.uptimeMillis()};
-        /** 菜单/展开面板需连续命中，避免单帧层级抖动导致误收 Dock。 */
-        final int[] coveredTicks = new int[]{0};
-        final int[] expandedTicks = new int[]{0};
-        // PopupWindow/系统弹层可能位于独立窗口；连续丢失焦点后才收起，避免切页瞬间闪烁。
-        final int[] focusLostTicks = new int[]{0};
-
         synchronized (DOCKS) {
             DOCKS.put(act, dock);
         }
@@ -190,134 +184,71 @@ final class DockController {
             OVERLAYS.put(act, overlay);
         }
 
-        content.getViewTreeObserver().addOnGlobalLayoutListener(
-                new ViewTreeObserver.OnGlobalLayoutListener() {
-                    @Override
-                    public void onGlobalLayout() {
-                        if (!live[0]) return;
-                        try {
-                            // 玻璃层已经被拆掉：立即停手并把官方底栏还原。
-                            // 老版本这里不判，Activity 一换 alpha 还是 0 —— 就是「残影」。
-                            if (!overlay.isAttachedToWindow()) {
-                                live[0] = false;
-                                // 覆盖层生命周期结束也不恢复原生 Dock。
-                                return;
-                            }
-                            View d = dockRef[0];
-                            if (d == null || !d.isAttachedToWindow()) {
-                                // 宿主把底栏整个换掉了：重新认一次，别让点击转发到死视图上
-                                ViewGroup fresh = Finder.findDock(content);
-                                if (fresh == null) {
-                                    overlay.setVisibility(View.GONE);
-                                    return;
-                                }
-                                List<View> its = Finder.tabItems(fresh);
-                                if (its.size() < 4) {
-                                    overlay.setVisibility(View.GONE);
-                                    return;
-                                }
-                                View p = Finder.pickPlus(its);
-                                List<View> lf = new ArrayList<View>(its);
-                                if (p != null) lf.remove(p);
-                                fresh.setAlpha(0f);
-                                hidden[0] = true;
-                                dockRef[0] = fresh;
-                                overlay.setTabs(lf, p);
-                                overlay.attachDock(fresh);
-                                overlay.setBand(rectInWindow(fresh));
-                                synchronized (DOCKS) {
-                                    DOCKS.put(act, fresh);
-                                }
-                                d = fresh;
-                            }
-                            // 这里只跟随原生 Dock 的位置；显隐状态统一由 180ms 轮询器管理，
-                            // 避免布局回调和轮询器使用不同条件，互相把玻璃/原生底栏切来切去。
-                            overlay.setBand(rectInWindow(d));
-                        } catch (Throwable t) {
-                            Dydock.warnOnce("layout", "跟随底栏位置失败: " + t);
-                        }
-                    }
-                });
-
-        // PopupWindow / 菜单浮层可能不触发 content 的 GlobalLayout；
-        // 单独轮询窗口焦点、遮挡和同层弹出面板，避免菜单/个人页留下 Dock。
+        // 固定位置的玻璃 Dock 只检测菜单/个人页状态，不再用原生 Dock 的可见性控制显隐。
+        // 节点被抖音临时隐藏时保留玻璃；只有确实换节点时才低频重新绑定点击目标。
+        final int[] expandedTicks = new int[]{0};
+        final int[] focusLostTicks = new int[]{0};
+        final long[] lastFindAt = new long[]{0L};
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
                 if (!live[0]) return;
                 try {
                     if (!overlay.isAttachedToWindow()) {
-                        // 不恢复原生 Dock；只停止已脱离窗口的轮询。
                         live[0] = false;
                         return;
                     }
                     View d = dockRef[0];
-                    // 抖音在菜单/个人主页切换时可能把原生导航节点临时设为 GONE，
-                    // 也可能直接换掉节点。不能只盯着旧 View，否则返回后玻璃永远等不到恢复。
+                    long now = SystemClock.uptimeMillis();
                     if (d == null || !d.isAttachedToWindow() || !d.isShown()) {
-                        ViewGroup fresh = Finder.findDock(content);
-                        if (fresh != null && fresh != d) {
-                            List<View> its = Finder.tabItems(fresh);
-                            if (its.size() >= 4) {
-                                View p = Finder.pickPlus(its);
-                                List<View> lf = new ArrayList<View>(its);
-                                if (p != null) lf.remove(p);
-                                fresh.setAlpha(0f);
-                                dockRef[0] = fresh;
-                                overlay.setTabs(lf, p);
-                                overlay.attachDock(fresh);
-                                overlay.setBand(rectInWindow(fresh));
-                                synchronized (DOCKS) {
-                                    DOCKS.put(act, fresh);
+                        // 原生节点不可用时才重新搜索，并限制为每 800ms 一次。
+                        if (now - lastFindAt[0] >= 800L) {
+                            lastFindAt[0] = now;
+                            ViewGroup fresh = Finder.findDock(content);
+                            if (fresh != null && fresh != d) {
+                                List<View> its = Finder.tabItems(fresh);
+                                if (its.size() >= 4) {
+                                    View p = Finder.pickPlus(its);
+                                    List<View> lf = new ArrayList<View>(its);
+                                    if (p != null) lf.remove(p);
+                                    fresh.setAlpha(0f);
+                                    dockRef[0] = fresh;
+                                    overlay.setTabs(lf, p);
+                                    overlay.attachDock(fresh);
+                                    overlay.pinPosition();
+                                    synchronized (DOCKS) {
+                                        DOCKS.put(act, fresh);
+                                    }
+                                    d = fresh;
+                                    Dydock.log("底栏:已更新原生点击目标，玻璃位置保持固定");
                                 }
-                                d = fresh;
-                                Dydock.log("底栏:返回后重新接管导航节点");
                             }
                         }
                     }
-                    if (d == null || !d.isAttachedToWindow() || !d.isShown()) {
-                        overlay.setVisibility(View.GONE);
-                        hidden[0] = true;
-                        MAIN.postDelayed(this, 180L);
-                        return;
-                    }
-                    boolean covered = Shield.covered(d, content);
-                    coveredTicks[0] = covered ? Math.min(3, coveredTicks[0] + 1) : 0;
-                    boolean expanded = d != null && Shield.hasExpandedOverlay(d, content, decor);
+
+                    boolean expanded = d != null
+                            && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
                     boolean focusLost = !decor.hasWindowFocus();
                     focusLostTicks[0] = focusLost
                             ? Math.min(3, focusLostTicks[0] + 1) : 0;
-                    boolean show = d.isShown()
-                            && coveredTicks[0] < 2 && expandedTicks[0] < 2
-                            && focusLostTicks[0] < 2;
+                    boolean show = expandedTicks[0] < 2 && focusLostTicks[0] < 2;
 
-                    // 每轮都对齐两层状态，而不只在 overlay 可见性变化时处理。
-                    // 这样关闭菜单/返回页面后，原生底栏不会因 hidden 标记不同步而留在前台。
+                    // 原生 Dock 永远透明；它是否处于 GONE 不影响玻璃层的位置和显示。
+                    if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
                     if (show) {
                         if (overlay.getVisibility() != View.VISIBLE) {
                             overlay.setVisibility(View.VISIBLE);
                         }
-                        overlay.setBand(rectInWindow(d));
-                        overlay.invalidate();
-                        // 无论玻璃当前是否显示，原生 Dock 都保持透明。
-                        if (d.getAlpha() != 0f) d.setAlpha(0f);
-                        hidden[0] = true;
-                    } else {
-                        if (overlay.getVisibility() != View.GONE) {
-                            overlay.setVisibility(View.GONE);
-                        }
-                        // 菜单/个人页期间两种 Dock 都隐藏；绝不露出原生底栏。
-                        if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
-                        hidden[0] = true;
-                        graceFrom[0] = SystemClock.uptimeMillis();
+                    } else if (overlay.getVisibility() != View.GONE) {
+                        overlay.setVisibility(View.GONE);
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 180L);
+                MAIN.postDelayed(this, 320L);
             }
         };
-        MAIN.postDelayed(visibilityPoll, 180L);
+        MAIN.postDelayed(visibilityPoll, 320L);
 
 
         //
@@ -325,10 +256,8 @@ final class DockController {
         // 那些容器切页之后还是同一个对象，背景没了再没人还回来，
         // 用户看到的就是「打开别的界面还有黑块」「好多残影」。
         // 这一版一个背景都不碰，玻璃自己就是半透明的，不需要底下挖洞。
-        // 不在安装阶段抢先隐藏原生 Dock；等玻璃真正绘制后再接管。
+        // 原生 Dock 从接管开始就保持透明。
         dock.setAlpha(0f);
-        hidden[0] = true;
-        graceFrom[0] = SystemClock.uptimeMillis();
 
         // 看门狗：玻璃**可见却迟迟没画出来**才把官方底栏还回去，绝不留一条空白。
         // 只守最初这两秒半；画出来过一次之后就永久放手，不再干预。
@@ -344,7 +273,6 @@ final class DockController {
                     }
                 } catch (Throwable ignored) {
                 }
-                hidden[0] = true;
                 Dydock.warn("底栏:玻璃未能绘制；按设置保持原生 Dock 隐藏");
             }
         }, 2500L);
