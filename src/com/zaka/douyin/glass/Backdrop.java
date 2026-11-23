@@ -2,7 +2,6 @@ package com.zaka.douyin.glass;
 
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.Rect;
@@ -65,8 +64,7 @@ final class Backdrop {
     private long lastScan;
     private long frameStamp;
     private int lastLoggedLayerCount = -1;
-    private int luma = 128;
-    private int blurRadius = 6;
+private int blurRadius = 6;
     private int meanAlpha;
     private String note = "未采集";
     private String lastDiagnostic = "";
@@ -144,9 +142,7 @@ final class Backdrop {
         return bitmap() != null;
     }
 
-    int luma() {
-        return luma;
-    }
+    int luma() { return 128; }
 
     long frameStamp() {
         return frameStamp;
@@ -155,7 +151,7 @@ final class Backdrop {
     String desc() {
         return note + " · " + region.width() + "x" + region.height()
                 + " · 视频层 " + layers.size()
-                + " · 亮度 " + luma + " · alpha " + meanAlpha;
+                + " · alpha " + meanAlpha;
     }
 
     void setOnFrame(Runnable r) {
@@ -336,23 +332,15 @@ final class Backdrop {
         int h = out.getHeight();
         int stepX = Math.max(1, w / 20);
         int stepY = Math.max(1, h / 12);
-        long sum = 0;
-        long asum = 0;
-        int n = 0;
+        long alphaSum = 0L;
+        int count = 0;
         for (int y = 0; y < h; y += stepY) {
             for (int x = 0; x < w; x += stepX) {
-                int c = out.getPixel(x, y);
-                int a = Color.alpha(c);
-                asum += a;
-                sum += (int) (Color.red(c) * 0.299f + Color.green(c) * 0.587f
-                        + Color.blue(c) * 0.114f) * a / 255;
-                n++;
+                alphaSum += (out.getPixel(x, y) >>> 24) & 0xFF;
+                count++;
             }
         }
-        if (n > 0) {
-            meanAlpha = (int) (asum / n);
-            luma = Math.max(0, Math.min(255, (int) (sum / n)));
-        }
+        if (count > 0) meanAlpha = (int) (alphaSum / count);
     }
 
     // ------------------------------------------------------------------ 视频层
