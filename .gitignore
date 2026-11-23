@@ -6,3 +6,5 @@ out/
 libs/api-82.jar
 *.idsig
 .DS_Store
+local.properties
+output/

@@ -58,6 +58,40 @@ public final class Backdrop {
     private Bitmap vid;
     private Bitmap out;
 
+    /** 宿主窗口：抓「屏幕上真实画面」的那一路。 */
+    private android.view.Window window;
+    /** 窗口帧（已缩到采样分辨率），和视频层一起决定玻璃后面是什么。 */
+    private Bitmap winFrame;
+    private long winStamp;
+    /** 1:1 抓取缓冲，抓完再缩到采样分辨率。 */
+    private Bitmap winBuffer;
+    private boolean winPending;
+    private long lastWinRequestAt;
+    private int winFailures;
+    /** 抓窗口帧之前 / 之后动一下玻璃层（几乎透明一帧，避免把自己的样子抓进去）。 */
+    private Runnable maskBefore;
+    private Runnable maskAfter;
+    /** 宿主这一页重绘了多少次：没重绘就说明画面没变，不用再拍。 */
+    private final java.util.concurrent.atomic.AtomicInteger drawCount =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private int lastPumpedDrawCount;
+    private android.view.ViewTreeObserver registeredVto;
+    private final android.view.ViewTreeObserver.OnPreDrawListener preDrawListener =
+            new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    drawCount.incrementAndGet();
+                    return true;
+                }
+            };
+
+    /** 窗口帧多久算过期：过期后不再当底图用，免得画面停在一秒前。 */
+    private static final long WINDOW_FRAME_TTL_MS = 1600L;
+    /** 两次窗口抓取的最小间隔。 */
+    private static final long WINDOW_FRAME_MIN_GAP_MS = 650L;
+    /** 视频帧多久算「新鲜」，新鲜时不抓窗口帧。 */
+    private static final long VIDEO_FRESH_MS = 420L;
+
     private final List<Layer> layers = new ArrayList<Layer>();
     private long lastScan;
     /** 同一时刻只允许一个 PixelCopy 在飞：30fps 叠多层视频层会堆几十个请求，
@@ -87,10 +121,28 @@ public final class Backdrop {
 
     void setContent(View v) {
         if (v == content) return;
+        detachPreDraw();
         content = v;
         releaseLayers();
         releaseBitmaps();
+        attachPreDraw();
         note = "换采集根";
+    }
+
+    void setWindow(android.view.Window w) {
+        window = w;
+    }
+
+    /**
+     * 抓窗口帧前后要做的动作。
+     *
+     * 玻璃层就画在这个窗口上，直接抓会把自己的样子也拍进去（越糊越糊，还会自激）。
+     * 抓之前把玻璃压到几乎透明，窗口像素里它只剩 2%，采样结果基本就是真实画面；
+     * 抓完再抬回去。代价是一帧的变淡，几乎看不出来。
+     */
+    void setCaptureMask(Runnable before, Runnable after) {
+        maskBefore = before;
+        maskAfter = after;
     }
 
     View content() {
@@ -111,7 +163,7 @@ public final class Backdrop {
 
     Bitmap bitmap() {
         if (out == null || out.isRecycled()) return null;
-        if (meanAlpha < 8 && !hasVideo()) return null;
+        if (meanAlpha < 8 && !hasVideo() && !hasWindowFrame()) return null;
         return out;
     }
 
@@ -120,6 +172,12 @@ public final class Backdrop {
             if (l.valid) return true;
         }
         return false;
+    }
+
+    /** 手上有没有一帧还能用的窗口画面。 */
+    private boolean hasWindowFrame() {
+        return winFrame != null && !winFrame.isRecycled()
+                && SystemClock.uptimeMillis() - winStamp <= WINDOW_FRAME_TTL_MS;
     }
 
     /** 有没有一帧可用的画面（没有就别指望玻璃透出东西来） */
@@ -132,12 +190,12 @@ public final class Backdrop {
     /**
      * 这一帧采出来是不是整片发黑。
      *
-     * 有视频层帧时不判黑（暗场视频属于画面内容）；
-     * 没有视频帧、采样又几乎全黑，说明底下画的是抖音那层底栏背景色，
+     * 有视频层帧、或者拿到过窗口画面时不判黑（暗场视频、暗色页面都属于画面内容）；
+     * 只有在两路都没有、采样又几乎全黑时，才说明底下画的是抖音那层底栏背景色，
      * 这时候把背景图丢掉，玻璃只保留自己的模糊，不会变成一块黑玻璃。
      */
     boolean looksBlack() {
-        return meanLuma < 14 && !hasFrameLayer();
+        return meanLuma < 14 && !hasFrameLayer() && !hasWindowFrame();
     }
 
     private boolean hasFrameLayer() {
@@ -251,6 +309,9 @@ public final class Backdrop {
         compose();
         note = "ok";
         logCaptureState(now);
+        // 手里还没有可用的窗口画面时先补一帧：这是「不管屏幕上是什么画面」
+        // 都能映射到位的那一路，视频层抓不到时全靠它。
+        if (!hasWindowFrame()) requestWindowFrame();
         return true;
     }
 
@@ -302,8 +363,16 @@ public final class Backdrop {
 
             Canvas oc = new Canvas(out);
             oc.drawColor(0, PorterDuff.Mode.CLEAR);
-            oc.drawBitmap(vid, 0f, 0f, paint);
-            oc.drawBitmap(ui, 0f, 0f, paint);
+            if (hasWindowFrame()) {
+                // 窗口真实画面打底：视频、图片、直播、网页、聊天页……屏幕上是什么就是什么。
+                oc.drawBitmap(winFrame, null, new Rect(0, 0, out.getWidth(), out.getHeight()), paint);
+                // 视频层再叠一次：窗口帧间隔较大，视频要跟上 30fps 的节奏才不糊成一片。
+                oc.drawBitmap(vid, 0f, 0f, paint);
+            } else {
+                // 窗口帧拿不到（部分机型/受保护画面）才退回「软件画 UI 树 + 视频层」。
+                oc.drawBitmap(vid, 0f, 0f, paint);
+                oc.drawBitmap(ui, 0f, 0f, paint);
+            }
         } catch (Throwable t) {
             Dydock.error("合成背景", t);
             return;
@@ -322,6 +391,157 @@ public final class Backdrop {
             } catch (Throwable t) {
                 Dydock.error("玻璃刷新", t);
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ 窗口帧
+
+    /**
+     * 外部每隔几百毫秒调一次，需要的时候补一帧窗口画面。
+     *
+     * 抓窗口的时候玻璃要压到几乎透明一帧（否则会把自己拍进去），所以这里只在
+     * 「没有实时视频层可用」的时候抓：刷视频时视频层本来就 30fps 跟着，玻璃不动也不闪；
+     * 图片、直播封面、网页、聊天页这些静态或低频画面才走窗口帧，这一段本来也不需要 30fps。
+     */
+    void pumpWindow() {
+        if (window == null || region.isEmpty() || winPending) return;
+        if (out != null && !out.isRecycled()
+                && videoCoversAll(out.getWidth(), out.getHeight()) && videoFresh()) return;
+        attachPreDraw();
+        int drawn = drawCount.get();
+        if (hasWindowFrame()) {
+            // 宿主一次都没重绘：屏幕上还是那一帧，再拍一次只会让玻璃白闪一下。
+            if (drawn == lastPumpedDrawCount) return;
+            if (SystemClock.uptimeMillis() - winStamp < 400L) return;
+        }
+        if (requestWindowFrame()) lastPumpedDrawCount = drawn;
+    }
+
+    /**
+     * 盯住宿主页面的重绘。
+     *
+     * 视频走 SurfaceView，不动 View 树，所以刷视频时这里几乎不增长（正好，视频有自己那一路）；
+     * 滚动列表、切页、图片加载会重绘，这时候才需要补一帧窗口画面。
+     */
+    private void attachPreDraw() {
+        View c = content;
+        if (c == null) return;
+        try {
+            android.view.ViewTreeObserver vto = c.getViewTreeObserver();
+            if (vto == registeredVto && vto.isAlive()) return;
+            detachPreDraw();
+            vto.addOnPreDrawListener(preDrawListener);
+            registeredVto = vto;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private void detachPreDraw() {
+        try {
+            if (registeredVto != null && registeredVto.isAlive()) {
+                registeredVto.removeOnPreDrawListener(preDrawListener);
+            }
+        } catch (Throwable ignored) {
+        }
+        registeredVto = null;
+    }
+
+    private boolean videoFresh() {
+        long now = SystemClock.uptimeMillis();
+        for (Layer l : layers) {
+            if (l.valid && now - l.stamp <= VIDEO_FRESH_MS) return true;
+        }
+        return false;
+    }
+
+    private boolean requestWindowFrame() {
+        final android.view.Window w = window;
+        if (w == null || region.isEmpty() || winPending) return false;
+        long now = SystemClock.uptimeMillis();
+        if (now - lastWinRequestAt < WINDOW_FRAME_MIN_GAP_MS) return false;
+
+        final int rw = region.width();
+        final int rh = region.height();
+        if (rw <= 0 || rh <= 0) return false;
+        try {
+            if (winBuffer == null || winBuffer.isRecycled()
+                    || winBuffer.getWidth() != rw || winBuffer.getHeight() != rh) {
+                winBuffer = recycle(winBuffer);
+                winBuffer = Bitmap.createBitmap(rw, rh, Bitmap.Config.ARGB_8888);
+            }
+        } catch (Throwable t) {
+            note = "窗口缓冲建不出来";
+            return false;
+        }
+
+        lastWinRequestAt = now;
+        winPending = true;
+        runMask(maskBefore);
+        try {
+            PixelCopy.request(w, region, winBuffer,
+                    new PixelCopy.OnPixelCopyFinishedListener() {
+                        @Override
+                        public void onPixelCopyFinished(int result) {
+                            winPending = false;
+                            runMask(maskAfter);
+                            if (result != PixelCopy.SUCCESS) {
+                                if (winFailures++ < 3) {
+                                    Dydock.warnOnce("window-pixelcopy",
+                                            "抓窗口画面失败 code=" + result + "，暂时用 UI 层采样");
+                                }
+                                return;
+                            }
+                            winFailures = 0;
+                            storeWindowFrame();
+                        }
+                    }, main);
+            return true;
+        } catch (Throwable t) {
+            winPending = false;
+            runMask(maskAfter);
+            if (winFailures++ < 3) {
+                Dydock.warnOnce("window-pixelcopy-err", "抓窗口画面异常: " + t);
+            }
+            return false;
+        }
+    }
+
+    private void storeWindowFrame() {
+        if (winBuffer == null || winBuffer.isRecycled()) return;
+        if (ui == null || ui.isRecycled()) return;
+        int w = ui.getWidth();
+        int h = ui.getHeight();
+        if (w <= 0 || h <= 0) return;
+        try {
+            if (winFrame == null || winFrame.isRecycled()
+                    || winFrame.getWidth() != w || winFrame.getHeight() != h) {
+                winFrame = recycle(winFrame);
+                winFrame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+            }
+            Canvas c = new Canvas(winFrame);
+            c.drawColor(0, PorterDuff.Mode.CLEAR);
+            c.drawBitmap(winBuffer, null, new Rect(0, 0, w, h), paint);
+            winStamp = SystemClock.uptimeMillis();
+        } catch (Throwable t) {
+            Dydock.warnOnce("window-frame-store", "保存窗口画面失败: " + t);
+            return;
+        }
+        compose();
+        Runnable cb = onFrame;
+        if (cb != null) {
+            try {
+                cb.run();
+            } catch (Throwable t) {
+                Dydock.error("玻璃刷新", t);
+            }
+        }
+    }
+
+    private void runMask(Runnable r) {
+        if (r == null) return;
+        try {
+            r.run();
+        } catch (Throwable ignored) {
         }
     }
 
@@ -577,8 +797,16 @@ public final class Backdrop {
 
     void release() {
         main.removeCallbacksAndMessages(null);
+        detachPreDraw();
         releaseLayers();
         releaseBitmaps();
+        winFrame = recycle(winFrame);
+        winBuffer = recycle(winBuffer);
+        winPending = false;
+        winStamp = 0L;
+        window = null;
+        maskBefore = null;
+        maskAfter = null;
         content = null;
     }
 }

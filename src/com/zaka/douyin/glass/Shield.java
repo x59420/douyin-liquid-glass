@@ -158,6 +158,108 @@ final class Shield {
     }
 
     /**
+     * 当前页是不是被另一个整屏页面盖住了（会话页、聊天框里点开的视频、详情页、我的页展开类页面）。
+     *
+     * 与 covered() 的区别：这里判的是「把 Dock 这一条整个盖住」的整屏容器，
+     * 不要求它自带背景色 —— 抖音不少覆盖页是透明容器 + 内部各自铺底。
+     * 但保留两条硬约束，缺一就会被信息流容器误伤（0.0.2 底栏整条消失的老坑）：
+     *   1. 它必须排在 Dock 之后（真的压在上面，而不是垫在下面/排在前面）；
+     *   2. 它必须是铺满整页、并且有实际内容的整屏页面。
+     * 信息流容器虽然也铺满，但它排在底栏前面，第 1 条直接否掉。
+     *
+     * @param dockRect Dock 那一带的窗口坐标（Dock 已被设成 GONE，用缓存的矩形更稳）
+     */
+    static boolean pageCoversDock(View dock, Rect dockRect, View content) {
+        if (dock == null || content == null) return false;
+        Rect page = rectOf(content);
+        if (page.isEmpty() || page.width() <= 0 || page.height() <= 0) return false;
+        Rect target = dockRect != null && !dockRect.isEmpty() ? dockRect : rectOf(dock);
+        if (target.isEmpty()) return false;
+        float tol = 8f * content.getResources().getDisplayMetrics().density;
+
+        // 顺着 Dock 自己的父链往上走，只检查每一层里「排在 Dock 后面」的兄弟。
+        // 排在前面的是内容区（信息流就在那里），它盖不住底栏，也不该被当成覆盖页。
+        View cur = dock;
+        for (int guard = 0; guard < 14 && cur != null && cur != content; guard++) {
+            ViewParent p = cur.getParent();
+            if (!(p instanceof ViewGroup)) break;
+            ViewGroup g = (ViewGroup) p;
+            int idx = g.indexOfChild(cur);
+            if (idx < 0) break;
+            for (int j = idx + 1; j < g.getChildCount(); j++) {
+                if (coversDockFully(g.getChildAt(j), target, page, tol)) return true;
+            }
+            cur = g;
+        }
+        return false;
+    }
+
+    private static boolean coversDockFully(View s, Rect target, Rect page, float tol) {
+        if (s == null || s.getVisibility() != View.VISIBLE || s.getAlpha() < 0.06f) return false;
+        if (!s.isShown()) return false;
+        if (s.getWidth() <= 0 || s.getHeight() <= 0) return false;
+        if (s instanceof android.view.SurfaceView
+                || s instanceof android.view.TextureView) return false;
+        String cn = s.getClass().getName();
+        if (cn.startsWith("com.zaka.douyin.glass")) return false;
+
+        Rect r = rectOf(s);
+        if (r.width() < page.width() * 0.90f) return false;
+        if (r.height() < page.height() * 0.82f) return false;
+        // 必须把 Dock 那一块整个盖住：只盖住一半的（信息流、半屏弹层）不算。
+        if (r.left > target.left + tol) return false;
+        if (r.top > target.top + tol) return false;
+        if (r.right < target.right - tol) return false;
+        if (r.bottom < target.bottom - tol) return false;
+
+        if (s.getBackground() != null) return true;
+        if (!(s instanceof ViewGroup)) return false;
+        return bigVisibleChildren((ViewGroup) s) >= 2;
+    }
+
+    /** 透明容器里至少要有两个够大的可见子控件，才算「真的是一页内容」。 */
+    private static int bigVisibleChildren(ViewGroup g) {
+        int n = 0;
+        int min = (int) (24f * g.getResources().getDisplayMetrics().density);
+        for (int i = 0; i < g.getChildCount() && n < 3; i++) {
+            View c = g.getChildAt(i);
+            if (c != null && c.getVisibility() == View.VISIBLE && c.getAlpha() > 0.1f
+                    && c.getWidth() > min && c.getHeight() > min) n++;
+        }
+        return n;
+    }
+
+    /**
+     * 页面里有没有正在显示的、够大的视频层。
+     *
+     * 长按倍速只在这些页面上有意义；消息列表、我的页这类页面没有视频层，
+     * 手指按住列表超过判定线时不该把 Dock 收掉 —— 那是「上下滚动会显隐 Dock」的来源之一。
+     */
+    static boolean hasVideoSurface(View root) {
+        if (root == null) return false;
+        int w = root.getWidth();
+        int h = root.getHeight();
+        if (w <= 0 || h <= 0) return false;
+        long minArea = (long) w * h * 32L / 100L;
+        return findVideoSurface(root, 0, new int[]{900}, minArea);
+    }
+
+    private static boolean findVideoSurface(View v, int depth, int[] budget, long minArea) {
+        if (v == null || depth > 32 || budget[0]-- <= 0) return false;
+        if (v.getVisibility() != View.VISIBLE || !v.isShown() || v.getAlpha() < 0.1f) return false;
+        if (v instanceof android.view.SurfaceView || v instanceof android.view.TextureView) {
+            return (long) v.getWidth() * v.getHeight() >= minArea;
+        }
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount() && budget[0] > 0; i++) {
+                if (findVideoSurface(g.getChildAt(i), depth + 1, budget, minArea)) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 菜单、侧栏和个人页展开面板：不一定完全盖住底栏，但 Dock 也不应浮在菜单上。
      * 只检查 Dock 所在祖先链上、绘制顺序排在 Dock 后面的兄弟浮层。
      */
@@ -194,7 +296,8 @@ final class Shield {
                     View candidate = root.getChildAt(i);
                     if (candidate == null) continue;
                     String className = candidate.getClass().getName();
-                    if (className.contains("DockOverlay")) continue;
+                    // 我们自己的玻璃层也挂在 DecorView 上，别把它当成宿主浮层。
+                    if (className.startsWith("com.zaka.douyin.glass")) continue;
                     if (containsExpandedPanel(candidate, page, dockRect, false, 0, new int[]{220})) {
                         return true;
                     }
@@ -248,7 +351,7 @@ final class Shield {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
                 View child = group.getChildAt(i);
-                if (child != null && child.getClass().getName().contains("DockOverlay")) continue;
+                if (child != null && child.getClass().getName().startsWith("com.zaka.douyin.glass")) continue;
                 if (hasSpeedMarker(child, depth + 1, budget)) return true;
             }
         }
@@ -272,7 +375,7 @@ final class Shield {
                 || bounds.height() < page.height() * 0.28f) return false;
 
         String className = view.getClass().getName();
-        if (className.contains("DockOverlay")) return false;
+        if (className.startsWith("com.zaka.douyin.glass")) return false;
         if (isExpandedPanel(view, page, dockRect, insidePage)) return true;
 
         ViewGroup group = (ViewGroup) view;
@@ -314,7 +417,15 @@ final class Shield {
                 || name.contains("dialog") || name.contains("panel");
         if (insidePage) {
             // 页面自己的内容（消息列表、个人页主页）不按文案判浮层，只看类名。
-            return namedPanel && hasContent((ViewGroup) view, 0);
+            if (namedPanel && hasContent((ViewGroup) view, 0)) return true;
+            // 抖音「我的」页右上角那个菜单、以及各种侧滑面板，常常就是一个普通 FrameLayout，
+            // 类名里没有 drawer/menu/sheet 这些字样。这里按几何兜住：
+            // 既然它排在 Dock 之后（调用方已经筛过）、又和 Dock 那一带相交、
+            // 还占走了半屏以上，那它一定是盖在 Dock 上的浮层。
+            // 真正的页面内容容器排在 Dock 前面，走不到这里。
+            boolean tall = r.height() >= page.height() * 0.45f;
+            boolean wide = r.width() >= page.width() * 0.28f;
+            return tall && wide && hasContent((ViewGroup) view, 0);
         }
         boolean profilePage = name.contains("userprofile") || name.contains("userdetail")
                 || name.contains("personalpage") || name.contains("profiledetail")

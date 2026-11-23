@@ -38,6 +38,17 @@ final class DockController {
 
     private static final int MAX_ATTEMPTS = 40;
     private static final long RETRY_MS = 300L;
+    /**
+     * 显示前的确认帧数。
+     *
+     * 隐藏跟着「是否被盖住 / 是否在倍速」这些明确状态走，成立就立刻收；
+     * 显示反过来用同一套判据，但要连续这么多帧都干净才露出来 ——
+     * 滚动结束、浮层收起、页面转场收尾的那一两帧会短暂「看起来没被盖住」，
+     * 直接跟着它就会闪。16ms 一帧，6 帧约 100ms，感觉不到延迟。
+     */
+    private static final int SHOW_CONFIRM_FRAMES = 6;
+    /** 「整屏页面盖住 Dock」需要连续命中的帧数（60ms 采一次，两帧约 120ms）。 */
+    private static final int COVER_CONFIRM_TICKS = 2;
 
     private static final WeakHashMap<Activity, Boolean> DONE =
             new WeakHashMap<Activity, Boolean>();
@@ -95,6 +106,10 @@ final class DockController {
     static void onHostLongPress(View view) {
         Activity act = Shield.activityOf(view);
         if (act == null || !Shield.isVideoLongPressTarget(view, act)) return;
+        // 只视频页才认长按倍速。消息列表 / 我的页按住不放不是倍速，
+        // 以前这里一把抓，手指停在列表上超过判定线 Dock 就消失，回来又冒出来。
+        View content = act.findViewById(android.R.id.content);
+        if (content == null || !Shield.hasVideoSurface(content)) return;
         synchronized (LONG_PRESS_TARGETS) {
             LONG_PRESS_TARGETS.put(act, view);
         }
@@ -324,13 +339,15 @@ final class DockController {
         if (removed) Dydock.log("宿主视频长按结束，检查其他隐藏状态");
     }
 
-    private static boolean isHostLongPressActive(Activity act) {
+    private static boolean isHostLongPressActive(Activity act, boolean pageHasVideo) {
         synchronized (LONG_PRESS_TARGETS) {
-            if (LONG_PRESS_TARGETS.containsKey(act)) return true;
+            if (LONG_PRESS_TARGETS.containsKey(act)) return pageHasVideo;
         }
         long[] start;
         synchronized (PRESS) { start = PRESS.get(act); }
         if (start == null) return false;
+        // 当前页面没有视频层（消息列表、我的页、设置页）：按住不放不是倍速，不参与隐藏。
+        if (!pageHasVideo) return false;
         long held = android.os.SystemClock.uptimeMillis() - start[0];
         // 兜底：UP 万一没回到我们这里，按住状态最多只认 4 秒，
         // 否则一次滑动就能让 Dock 一直藏着。
@@ -553,11 +570,38 @@ final class DockController {
         final long[] lastTabRefreshAt = new long[]{0L};
         final boolean[] clearScreenState = new boolean[]{false};
         final boolean[] speedPlaybackState = new boolean[]{false};
-        final int[] chromeTicks = new int[]{0};
         final boolean[] expandedState = new boolean[]{false};
         final long[] lastExpandedAt = new long[]{0L};
         final int[] lastBandSig = new int[]{0};
         final long[] lastGeomAt = new long[]{0L};
+        /** 当前这一页有没有视频层：长按倍速只在这类页面上成立，遍历成本高，240ms 采一次。 */
+        final boolean[] pageHasVideo = new boolean[]{false};
+        final long[] lastVideoScanAt = new long[]{0L};
+        /** 「整屏页面盖住 Dock」的判定结果与连续命中帧数。 */
+        final boolean[] coveredState = new boolean[]{false};
+        final int[] coveredTicks = new int[]{0};
+        final long[] lastCoveredAt = new long[]{0L};
+        /** Dock 这一条的窗口坐标，applyGeometry 时存下来（原生 Dock 已被设成 GONE）。 */
+        final Rect[] bandRect = new Rect[]{null};
+        /**
+         * 显示的确认帧数：隐藏立即生效，显示要连续 6 帧（约 100ms）都干净才露出来。
+         * 滚动、转场、浮层收起这些过程里会有一两帧的空档，不去抖就会一闪一闪。
+         */
+        final int[] revealTicks = new int[]{SHOW_CONFIRM_FRAMES};
+        final long[] lastFailLogAt = new long[]{0L};
+        final int[] lastAccountedBandW = new int[]{-1};
+        final int[] lastAccountedBandH = new int[]{-1};
+        /** 窗口帧补采的节流。 */
+        final long[] lastWinPumpAt = new long[]{0L};
+        /**
+         * 原生底栏连续几帧不在窗口里。
+         *
+         * 会话页、聊天框里点开的视频页这些覆盖页，抖音会把主界面的底栏整个摘掉；
+         * 这时候如果我们只看「有没有东西盖住底栏」，答案是「没有」，Dock 就会
+         * 浮到会话页上（从聊天框看完视频返回时最常见）。底栏都不在了，本身就说明
+         * 当前不在四个主 tab 页面上。
+         */
+        final int[] dockMissingTicks = new int[]{0};
 
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
@@ -600,8 +644,9 @@ final class DockController {
                     View d = dockRef[0];
                     long now = SystemClock.uptimeMillis();
                     if (d == null || !d.isAttachedToWindow()) {
-                        // 原生节点不可用时才重新搜索，并限制为每 800ms 一次。
-                        if (now - lastFindAt[0] >= 800L) {
+                        // 原生节点不可用时才重新搜索：底栏刚被重建时要在 150ms 内接上，
+                        // 否则「接不上 → 判成不在主页面 → 收起」会变成一次闪烁。
+                        if (now - lastFindAt[0] >= 150L) {
                             lastFindAt[0] = now;
                             ViewGroup fresh = Finder.findDock(content);
                             if (fresh != null && fresh != d) {
@@ -620,6 +665,9 @@ final class DockController {
                                     stripDockBackground(fresh);
                                     refreshTabs(iso, lf, p);
                                     applyGeometry(iso, backdrop, fresh, lf.size());
+                                    bandRect[0] = rectInWindow(fresh);
+                                    lastAccountedBandW[0] = fresh.getWidth();
+                                    lastAccountedBandH[0] = fresh.getHeight();
                                     d = fresh;
                                     Dydock.log("底栏:已更新原生点击目标，玻璃位置保持固定");
                                 }
@@ -632,9 +680,13 @@ final class DockController {
                         refreshTabs(iso, tabTargets[0], plusTarget[0]);
                     }
 
-                    boolean longPress = isHostLongPressActive(act);
-                    // 每 40ms 走一遍视图树太贵，这两项改成定量节流；长按本身由触摸状态给，
-                    // 所以隐藏仍然是实时的。
+                    // 走一遍视图树不便宜，这几项都定量节流；长按本身由触摸状态给，
+                    // 所以「按住就收」仍然是实时的。
+                    if (now - lastVideoScanAt[0] >= 240L) {
+                        lastVideoScanAt[0] = now;
+                        pageHasVideo[0] = Shield.hasVideoSurface(content);
+                    }
+                    boolean longPress = isHostLongPressActive(act, pageHasVideo[0]);
                     if (now - lastClearScanAt[0] >= 80L) {
                         speedPlaybackState[0] = Shield.hasSpeedPlaybackOverlay(decor);
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
@@ -643,35 +695,76 @@ final class DockController {
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
                             || updateGestureClearMode(act, d, clearScreenState[0]);
-                    // 宿主自己把界面整条收起来（清屏、全屏、切页转场）：Dock 跟着一起收。
-                    // 抖动 3 帧（约 48ms）才生效，布局瞬间变化不会让玻璃闪一下。
-                    boolean chromeHidden = d != null && isHostChromeHidden(d);
-                    chromeTicks[0] = chromeHidden ? Math.min(4, chromeTicks[0] + 1) : 0;
+
                     // 浮层扫描要遍历几百个节点，跟着 16ms 轮询跑会拖帧；60ms 一次足够。
                     if (now - lastExpandedAt[0] >= 60L) {
                         lastExpandedAt[0] = now;
                         expandedState[0] = d != null
                                 && Shield.hasExpandedOverlay(d, content, decor);
+                        // 整屏覆盖页（会话页、聊天框里点开的视频、详情页）：它必须真的把
+                        // Dock 这一条整个盖住才算，只盖住上面一部分的信息流不参与。
+                        coveredState[0] = d != null
+                                && Shield.pageCoversDock(d, bandRect[0], content);
                     }
-                    boolean expanded = expandedState[0];
-                    expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
-                    // 每个隐藏理由各算各的：一个理由结束，不能把 Dock 露出来。
-                    boolean show = !speedPlayback && !longPress && !clearScreen
-                            && chromeTicks[0] < 3 && expandedTicks[0] < 2;
+                    expandedTicks[0] = expandedState[0]
+                            ? Math.min(4, expandedTicks[0] + 1) : 0;
+                    coveredTicks[0] = coveredState[0]
+                            ? Math.min(4, coveredTicks[0] + 1) : 0;
 
-                    // 底栏位置变了（沉浸式导航栏生效、切 tab、布局重排）就重新对齐一次，
-                    // 否则玻璃会停在上一版的坐标上。
+                    // 一个隐藏理由成立就收，不等其它理由结束；反过来，所有理由都结束之后
+                    // 还要再连续干净几帧才露出来 —— 隐藏和显示用的是同一组判据，只是方向相反。
+                    //
+                    // 这里刻意不再把「宿主自己把底栏藏起来」当隐藏理由：抖音在消息列表、
+                    // 我的页上下滚动时会让原生底栏跟着位移/隐藏，跟着它走就是一路闪。
+                    //
+                    // 原生底栏整个脱离窗口 = 当前不是主 tab 页（会话页、覆盖页、转场中）。
+                    // 要连续十几帧（约 190ms）都找不到才认，转场那一瞬间的游离不算。
+                    boolean dockAttached = d != null && d.isAttachedToWindow();
+                    dockMissingTicks[0] = dockAttached
+                            ? 0 : Math.min(40, dockMissingTicks[0] + 1);
+                    boolean hidden = speedPlayback || longPress || clearScreen
+                            || coveredTicks[0] >= COVER_CONFIRM_TICKS
+                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
+                            || dockMissingTicks[0] >= 12;
+                    if (hidden) {
+                        revealTicks[0] = 0;
+                    } else if (revealTicks[0] < SHOW_CONFIRM_FRAMES) {
+                        revealTicks[0]++;
+                    }
+                    boolean show = !hidden && revealTicks[0] >= SHOW_CONFIRM_FRAMES;
+
+                    // 位置只在「尺寸真的变了」的时候重算（旋转、导航模式变化、底栏重建）。
+                    // 不跟位置走：抖音底栏滚动时会上下位移，跟着它算玻璃就会一路漂。
                     if (d != null && now - lastGeomAt[0] >= 240L) {
                         lastGeomAt[0] = now;
-                        int signature = bandSignature(d);
-                        if (signature != lastBandSig[0]) {
-                            lastBandSig[0] = signature;
+                        int w = d.getWidth();
+                        int h = d.getHeight();
+                        boolean sizeChanged = w != lastAccountedBandW[0]
+                                || h != lastAccountedBandH[0];
+                        if (sizeChanged || bandRect[0] == null) {
+                            lastAccountedBandW[0] = w;
+                            lastAccountedBandH[0] = h;
+                            lastBandSig[0] = bandSignature(d);
+                            bandRect[0] = rectInWindow(d);
                             applyGeometry(iso, backdrop, d, tabTargets[0].size());
                             try {
                                 backdrop.capture();
                             } catch (Throwable ignored) {
                             }
                         }
+                    }
+                    // 从隐藏回到显示：页面切回来了，按当前底栏重新贴一次位置，避免用的是旧坐标。
+                    if (show && !overlayTargetVisible[0] && d != null) {
+                        bandRect[0] = rectInWindow(d);
+                        applyGeometry(iso, backdrop, d, tabTargets[0].size());
+                        try {
+                            backdrop.capture();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (show && now - lastWinPumpAt[0] >= 700L) {
+                        lastWinPumpAt[0] = now;
+                        backdrop.pumpWindow();
                     }
 
                     if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
@@ -700,6 +793,32 @@ final class DockController {
                 MAIN.postDelayed(this, 16L);
             }
         };
+        // 背景采样接上宿主窗口：屏幕上是什么画面就映射什么画面（视频/图片/直播/网页都算）。
+        // 抓取前把玻璃压到几乎透明一帧，避免把自己的样子拍进去；
+        // 抓完按当前显隐状态还原，不会把已经收起来的玻璃又露出来。
+        backdrop.setWindow(act.getWindow());
+        backdrop.setCaptureMask(
+                new Runnable() {
+                    @Override public void run() {
+                        try {
+                            if (iso.view.getVisibility() == View.VISIBLE) {
+                                iso.view.setAlpha(0.02f);
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                },
+                new Runnable() {
+                    @Override public void run() {
+                        try {
+                            if (iso.view.getVisibility() == View.VISIBLE) {
+                                iso.view.setAlpha(overlayTargetVisible[0] ? 1f : 0f);
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                });
+
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
         MAIN.postDelayed(visibilityPoll, 16L);
@@ -868,12 +987,13 @@ final class DockController {
     /**
      * 系统导航栏那片区域（红米 / HyperOS 的手势条那一带）。
      *
-     * 抖音自己没有做沉浸式，原生布局会把内容停在导航栏上方，导航栏那条就露出一层
-     * 背景色。这里按用户要的那套来：
-     *   - isNavigationBarContrastEnforced = false，关掉系统的对比度强制灰底；
-     *   - navigationBarColor 透明，指示条直接浮在画面上；
-     *   - LAYOUT_HIDE_NAVIGATION，内容延伸到底部 edge-to-edge。
-     * 只动窗口的装饰层，不碰抖音自己的布局代码。
+     * 只做两件事：导航栏背景透明、关掉系统的对比度强制灰底。
+     *
+     * 这里**绝不能**再打开 LAYOUT_HIDE_NAVIGATION —— 0.3.3 就是为了消掉导航栏那条灰底
+     * 打开了它，结果应用内容整体被顶进手势区，抖音自己的底栏跟着往下移，
+     * 我们算出来的玻璃位置也一起下移，看上去就是「Dock 跑到手势条上去了」。
+     * 位置要贴在原生底栏所在的这一条上，所以布局范围保持和宿主一致。
+     * 另外 GlassEntry.makeNavigationAreaTransparent 里也是这么处理的，两处必须同一个口径。
      */
     private static void applyImmersiveNavigation(Activity act) {
         try {
@@ -884,24 +1004,22 @@ final class DockController {
             }
             try {
                 window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    window.setNavigationBarDividerColor(android.graphics.Color.TRANSPARENT);
+                }
             } catch (Throwable ignored) {
             }
             View decor = window.getDecorView();
             if (decor != null) {
-                decor.setSystemUiVisibility(decor.getSystemUiVisibility()
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+                int flags = decor.getSystemUiVisibility();
+                flags |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+                // 主动清掉：0.3.3 打开过，残留会让底栏坐标一直偏低。
+                flags &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+                decor.setSystemUiVisibility(flags);
             }
-            if (android.os.Build.VERSION.SDK_INT >= 30) {
-                android.view.WindowInsetsController controller = window.getInsetsController();
-                if (controller != null) {
-                    controller.setSystemBarsBehavior(
-                            android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-                }
-            }
-            Dydock.log("系统导航栏:已切到透明 + edge-to-edge");
+            Dydock.log("系统导航栏:背景透明，布局范围保持与宿主一致（Dock 贴原生底栏位置）");
         } catch (Throwable t) {
-            Dydock.warnOnce("immersive-nav", "设置沉浸式导航栏失败: " + t);
+            Dydock.warnOnce("immersive-nav", "设置导航栏透明度失败: " + t);
         }
     }
 
@@ -915,7 +1033,10 @@ final class DockController {
             int selected = -1;
             for (int i = 0; i < count; i++) {
                 View item = tabs.get(i);
-                String label = findText(item, 0);
+                // 只认「首页 / 朋友 / 消息 / 我」这几个导航文案。
+                // 抖音的消息 tab 里还挂着一个角标（未读数）节点，它在树里排在文字前面，
+                // 以前取「第一个非空文本」就会把「3」当成标签，玻璃上就只剩个数字。
+                String label = Finder.navigationLabel(item, 0);
                 labels[i] = label.length() == 0 ? defaultLabel(i) : label;
                 icons[i] = drawableToBitmap(findDrawable(item, 0));
                 if (selected < 0 && isSelectedDeep(item, 0)) selected = i;
@@ -1255,7 +1376,8 @@ final class DockController {
             return out;
         }
 
-        private static String navigationLabel(View v, int depth) {
+        /** 只返回导航文案（首页/朋友/好友/消息/我/个人主页），角标数字、其它文案一律返回空。 */
+        static String navigationLabel(View v, int depth) {
             if (v == null || depth > 7) return "";
             String label = normalizeLabel(v.getContentDescription());
             if (isNavigationLabel(label)) return label;
