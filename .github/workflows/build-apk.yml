@@ -37,6 +37,8 @@ jobs:
           sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
 
       - name: Build signed APK
+        env:
+          DYDOCK_KEYSTORE_PASSWORD: ${{ secrets.DYDOCK_KEYSTORE_PASSWORD }}
         run: bash build.sh
 
       - name: Upload APK artifact
