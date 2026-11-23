@@ -302,9 +302,9 @@ final class DockController {
                                 overlay.setVisibility(View.VISIBLE);
                             }
                             // 从当前透明度继续，避免反向切换时闪一下。
-                            overlay.animate().alpha(1f).setDuration(45L).start();
+                            overlay.animate().alpha(1f).setDuration(28L).start();
                         } else {
-                            overlay.animate().alpha(0f).setDuration(40L)
+                            overlay.animate().alpha(0f).setDuration(24L)
                                     .withEndAction(new Runnable() {
                                         @Override public void run() {
                                             if (!overlayTargetVisible[0]) {
@@ -317,12 +317,12 @@ final class DockController {
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 50L);
+                MAIN.postDelayed(this, 40L);
             }
         };
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
-        MAIN.postDelayed(visibilityPoll, 80L);
+        MAIN.postDelayed(visibilityPoll, 40L);
 
 
         //
