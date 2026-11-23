@@ -120,7 +120,9 @@ final class Api33Glass {
             shader.setFloatUniform("refractionHeight", Math.max(0.001f, refractionHeight));
             // KernelSU's Lens.kt negates the refraction amount before setting the uniform.
             shader.setFloatUniform("refractionAmount", -Math.max(0.001f, refractionAmount));
-            shader.setFloatUniform("depthEffect", selectedLens ? progress : 0f);
+            // KernelSU Lens(..., depthEffect = true) enables depth-normal influence
+            // throughout the selected lens; pressure already gates refraction distance.
+            shader.setFloatUniform("depthEffect", selectedLens ? 1f : 0f);
             if (dispersion && selectedLens) {
                 shader.setFloatUniform("chromaticAberration", 0.5f);
             }
