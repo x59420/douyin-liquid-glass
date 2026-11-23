@@ -60,6 +60,19 @@ final class DockController {
             new WeakHashMap<Activity, long[]>();
     /** 抖音长按大约 400ms 进入倍速，这里取 420ms 作为判定线。 */
     private static final long PRESS_SPEED_DELAY_MS = 420L;
+    /**
+     * 清屏是双指各自往外拉的手势，抖音不一定会留下可读的文字标记，
+     * 所以这里自己认手势：双指按下记初始间距，拉开到 1.45 倍就进清屏态；
+     * 之后单指点一下屏幕（抖音的退出方式）就恢复。
+     */
+    private static final WeakHashMap<Activity, long[]> SPREAD =
+            new WeakHashMap<Activity, long[]>();
+    /** 清屏态：0=未进入，其它=进入时间（毫秒）。 */
+    private static final WeakHashMap<Activity, long[]> CLEAR_MODE =
+            new WeakHashMap<Activity, long[]>();
+    /** 进入清屏后是否真的观察到宿主 UI 被隐藏过；没观察到就说明这只是个缩放手势。 */
+    private static final WeakHashMap<Activity, boolean[]> CLEAR_CONFIRMED =
+            new WeakHashMap<Activity, boolean[]>();
 
     private DockController() {
     }
@@ -86,6 +99,41 @@ final class DockController {
         Activity act = Shield.activityOf(view);
         if (act == null) return;
         int action = event.getActionMasked();
+        int pointers = event.getPointerCount();
+        if (action == android.view.MotionEvent.ACTION_POINTER_DOWN && pointers >= 2) {
+            synchronized (SPREAD) {
+                SPREAD.put(act, new long[]{android.os.SystemClock.uptimeMillis(),
+                        (long) spanOf(event)});
+            }
+        } else if (action == android.view.MotionEvent.ACTION_MOVE && pointers >= 2) {
+            long[] spread;
+            synchronized (SPREAD) { spread = SPREAD.get(act); }
+            if (spread != null) {
+                float density = act.getResources().getDisplayMetrics().density;
+                float now = spanOf(event);
+                // 往外拉：两指间距明显变大（缩放一点不算）
+                if (now > spread[1] * 1.45f + 48f * density) {
+                    synchronized (SPREAD) { SPREAD.remove(act); }
+                    boolean wasClear;
+                    synchronized (CLEAR_MODE) {
+                        wasClear = CLEAR_MODE.remove(act) != null;
+                        if (!wasClear) {
+                            CLEAR_MODE.put(act, new long[]{android.os.SystemClock.uptimeMillis()});
+                        }
+                    }
+                    synchronized (CLEAR_CONFIRMED) {
+                        if (wasClear) CLEAR_CONFIRMED.remove(act);
+                        else CLEAR_CONFIRMED.put(act, new boolean[]{false});
+                    }
+                    Dydock.log(wasClear
+                            ? "再次双指外扩，退出清屏态"
+                            : "识别到双指外扩，按清屏处理，收起 Dock");
+                }
+            }
+        } else if (action == android.view.MotionEvent.ACTION_POINTER_UP
+                || action == android.view.MotionEvent.ACTION_CANCEL) {
+            synchronized (SPREAD) { SPREAD.remove(act); }
+        }
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             if (!Shield.isVideoLongPressTarget(view, act)) return;
             synchronized (PRESS) {
@@ -107,6 +155,83 @@ final class DockController {
             synchronized (PRESS) { PRESS.remove(act); }
             onHostTouchEnd(view, action);
         }
+    }
+
+    /** 多指手势时第 0、1 根手指的间距。 */
+    private static float spanOf(android.view.MotionEvent event) {
+        float dx = event.getX(0) - event.getX(1);
+        float dy = event.getY(0) - event.getY(1);
+        return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
+    /** 双指外扩判定出来的清屏态。 */
+    private static boolean isGestureClearMode(Activity act) {
+        synchronized (CLEAR_MODE) { return CLEAR_MODE.containsKey(act); }
+    }
+
+    /**
+     * 宿主自己有没有把界面藏起来。
+     *
+     * 清屏时抖音会把底栏所在的容器一起隐藏；模块只把原生 Dock 自己设成 GONE，
+     * 所以往上找几层祖先仍然是「宿主真实状态」——它们一旦不可见，就是进了清屏。
+     * 退出清屏时这些祖先会重新可见，这就是恢复 Dock 的唯一信号。
+     */
+    private static boolean isHostChromeHidden(View dock) {
+        if (dock == null) return false;
+        int windowHeight = dock.getRootView().getHeight();
+        android.view.ViewParent parent = dock.getParent();
+        for (int i = 0; i < 4 && parent instanceof View; i++) {
+            View v = (View) parent;
+            if (v.getVisibility() != View.VISIBLE || !v.isShown() || v.getAlpha() < 0.05f) {
+                return true;
+            }
+            // 有的版本不是隐藏而是把整条底栏平移到屏幕外。
+            int[] loc = new int[2];
+            v.getLocationInWindow(loc);
+            if (windowHeight > 0
+                    && (loc[1] >= windowHeight - 1 || loc[1] + v.getHeight() <= 1)) {
+                return true;
+            }
+            parent = v.getParent();
+        }
+        return false;
+    }
+
+    /** 清屏状态推进：确认过一次隐藏之后，看到宿主 UI 回来就算退出。 */
+    private static boolean updateGestureClearMode(Activity act, View dock, boolean markerClear) {
+        long[] enteredAt;
+        synchronized (CLEAR_MODE) { enteredAt = CLEAR_MODE.get(act); }
+        if (enteredAt == null) return false;
+
+        boolean hidden = markerClear || isHostChromeHidden(dock);
+        boolean[] confirmed;
+        synchronized (CLEAR_CONFIRMED) { confirmed = CLEAR_CONFIRMED.get(act); }
+        if (confirmed == null) {
+            confirmed = new boolean[]{false};
+            synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.put(act, confirmed); }
+        }
+
+        synchronized (confirmed) {
+            if (hidden) {
+                confirmed[0] = true;
+                return true;
+            }
+            if (!confirmed[0]) {
+                // 手势做完 1.5 秒内宿主 UI 一直没被隐藏 —— 那不是清屏手势（可能只是缩放）。
+                if (android.os.SystemClock.uptimeMillis() - enteredAt[0] > 1500L) {
+                    synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
+                    synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
+                    Dydock.log("双指手势没有触发清屏，恢复 Dock");
+                    return false;
+                }
+                return true;
+            }
+        }
+        // 确认过隐藏、现在宿主 UI 又出来了 = 退出清屏。
+        synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
+        synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
+        Dydock.log("宿主 UI 恢复显示，退出清屏态");
+        return false;
     }
 
     /** Release only the same view's long-press state after its UP/CANCEL is dispatched. */
@@ -152,6 +277,9 @@ final class DockController {
         if (act == null) return;
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         synchronized (PRESS) { PRESS.remove(act); }
+        synchronized (SPREAD) { SPREAD.remove(act); }
+        synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
+        synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
         View dock;
         ComposeDockOverlay overlay;
         synchronized (DOCKS) {
@@ -396,7 +524,8 @@ final class DockController {
                         lastClearScanAt[0] = now;
                     }
                     boolean speedPlayback = speedPlaybackState[0];
-                    boolean clearScreen = clearScreenState[0];
+                    boolean clearScreen = clearScreenState[0]
+                            || updateGestureClearMode(act, d, clearScreenState[0]);
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
