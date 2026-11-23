@@ -356,8 +356,16 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         // Tieba 面板按压力做等比缩放：宽度最多增加约 16dp，高度按比例变化，
         // 不再把上下边缘额外撑开 8dp，避免点击底色显得又厚又胖。
         float panelPress = droplet.pressProgress();
+        // Keep the entrance animation bottom-anchored, but apply the Tieba press scale
+        // around the panel centre so all four edges expand by the same amount.
+        scaled(leftPill, k, tmp);
         float panelScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * panelPress;
-        scaled(leftPill, k * panelScale, tmp);
+        float panelCx = tmp.centerX();
+        float panelCy = tmp.centerY();
+        float panelHalfW = tmp.width() * panelScale * 0.5f;
+        float panelHalfH = tmp.height() * panelScale * 0.5f;
+        tmp.set(panelCx - panelHalfW, panelCy - panelHalfH,
+                panelCx + panelHalfW, panelCy + panelHalfH);
         tmp.offset(panelOffset, 0f);
         drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, panelPress,
                 dragging && panelPress > 0.3f, alpha);
