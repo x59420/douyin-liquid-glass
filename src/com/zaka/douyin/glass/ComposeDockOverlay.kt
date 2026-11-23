@@ -213,10 +213,6 @@ class ComposeDockOverlay private constructor(
         updateLayout()
     }
 
-    fun attachDock(dock: View?) {
-        // Keep only the native View reference for host click forwarding.
-    }
-
     fun setBand(rect: Rect?) {
         if (rect == null || rect.isEmpty) return
         dockLayout = dockLayout.copy(band = Rect(rect))

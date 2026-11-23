@@ -2,14 +2,12 @@ package com.zaka.douyin.glass;
 
 import android.app.Activity;
 import android.graphics.Rect;
-import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
-import android.view.ViewTreeObserver;
 import android.widget.EditText;
 import android.widget.Checkable;
 import android.widget.FrameLayout;
@@ -207,8 +205,8 @@ final class DockController {
 
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
-        // Match KernelSU FloatingBottomBar's 4dp backdrop blur.
-        backdrop.setBlurDp(4f, density);
+        // Miuix 自己在 GPU 上做 4dp 模糊，这里只决定采样分辨率。
+        backdrop.setSampleScale();
 
         final ComposeDockOverlay overlay = ComposeDockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
@@ -222,7 +220,6 @@ final class DockController {
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         ((ViewGroup) decor).addView(overlay, lp);
-        overlay.attachDock(dock);
         overlay.setBand(rectInWindow(dock));
         // 首次识别只用于确定底部位置；后续玻璃不再追随原生 Dock。
         overlay.pinPosition();
@@ -333,7 +330,6 @@ final class DockController {
                                     fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
                                     overlay.setTabs(lf, p);
-                                    overlay.attachDock(fresh);
                                     overlay.pinPosition();
                                     synchronized (DOCKS) {
                                         DOCKS.put(act, fresh);

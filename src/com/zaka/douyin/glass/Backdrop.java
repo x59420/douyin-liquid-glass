@@ -20,8 +20,8 @@ import java.util.List;
 /**
  * 玻璃底下那块真实画面。
  *
- * 只采**底栏那一条**（区域由 DockOverlay 给），不是整屏：
- *  - 便宜。1080 x 240 的条，降到 1/4 就是 270 x 60，模糊/折射都毫无压力。
+ * 只采**底栏那一条**（区域由 DockController 给），不是整屏：
+ *  - 便宜。只采 1080 x 240 左右的一条，交给 Miuix 在 GPU 上做模糊，CPU 不做任何模糊。
  *  - 不会把自己画进去。采集根是 Activity 的 android.R.id.content，
  *    而 dock 挂在 DecorView 上，跟 content 是兄弟节点 —— 天然没有回授，
  *    不需要「采集时把玻璃藏起来」那种会闪一下的招。
@@ -33,10 +33,8 @@ import java.util.List;
  */
 public final class Backdrop {
 
-    /** API 33+ uses Miuix's adaptive quarter-octave recording scale; older APIs keep 1/4. */
+    /** 采样位图相对屏幕的缩放。33+ 交给 Miuix 在 GPU 上模糊，1:1 采样保证清晰度。 */
     private float downscaleFactor = 4f;
-    /** Miuix blur radius -> Gaussian sigma in physical pixels (4dp * density * 0.45). */
-    private float blurSigmaPx = 1.8f;
     /** 视频层重新扫描的间隔 */
     private static final long RESCAN_MS = 1500L;
 
@@ -68,7 +66,6 @@ public final class Backdrop {
     private long lastRequestAt;
     private long frameStamp;
     private int lastLoggedLayerCount = -1;
-private int blurRadius = 6;
     private int meanAlpha;
     private String note = "未采集";
     private String lastDiagnostic = "";
@@ -78,30 +75,13 @@ private int blurRadius = 6;
         clear.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
     }
 
-    void setBlurDp(float dp, float density) {
-        // Miuix: sigma = radius * 0.45; choose a stable 1/4-octave level around sigma / 2.5.
-        blurSigmaPx = Math.max(0.1f, dp * density * 0.45f);
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            float raw = Math.max(1f, Math.min(16f, blurSigmaPx / 2.5f));
-            int bucket = Math.max(0, Math.min(16,
-                    Math.round((float) (Math.log(raw) / Math.log(2.0)) * 4f)));
-            downscaleFactor = (float) Math.pow(2.0, bucket / 4.0);
-        } else {
-            downscaleFactor = 4f;
-        }
-        blurRadius = Math.max(1, Math.round(dp * density / downscaleFactor));
+    /** 模糊全部由 Miuix 的 GPU 着色器完成，这里只需要决定采样分辨率。 */
+    void setSampleScale() {
+        downscaleFactor = android.os.Build.VERSION.SDK_INT >= 33 ? 1f : 4f;
     }
 
     float downscaleFactor() {
         return downscaleFactor;
-    }
-
-    float blurSigmaInTexels() {
-        return Math.max(0.1f, blurSigmaPx / downscaleFactor);
-    }
-
-    float blurSigmaPx() {
-        return blurSigmaPx;
     }
 
     void setContent(View v) {
@@ -302,16 +282,6 @@ private int blurRadius = 6;
         } catch (Throwable t) {
             Dydock.error("合成背景", t);
             return;
-        }
-
-        try {
-            // API 33+ follows Miuix's GPU Gaussian shader chain in Api33Glass.
-            // Keep the CPU box blur only as a compatibility path for older Android versions.
-            if (android.os.Build.VERSION.SDK_INT < 33) {
-                BoxBlur.blur(out, blurRadius);
-            }
-        } catch (Throwable t) {
-            Dydock.error("模糊背景", t);
         }
 
         measure();
