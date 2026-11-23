@@ -203,7 +203,6 @@ final class DockController {
         // 固定位置的玻璃 Dock 只检测菜单/个人页状态，不再用原生 Dock 的可见性控制显隐。
         // 节点被抖音临时隐藏时保留玻璃；只有确实换节点时才低频重新绑定点击目标。
         final int[] expandedTicks = new int[]{0};
-        final int[] focusLostTicks = new int[]{0};
         final long[] lastFindAt = new long[]{0L};
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
@@ -263,10 +262,9 @@ final class DockController {
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
-                    boolean focusLost = !decor.hasWindowFocus();
-                    focusLostTicks[0] = focusLost
-                            ? Math.min(3, focusLostTicks[0] + 1) : 0;
-                    boolean show = expandedTicks[0] < 2 && focusLostTicks[0] < 2;
+                    // Window focus is not a reliable menu/profile signal during transitions.
+                    // Only a positively identified expanded panel may hide the glass dock.
+                    boolean show = expandedTicks[0] < 2;
 
                     // 原生 Dock 永远透明；它是否处于 GONE 不影响玻璃层的位置和显示。
                     if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
