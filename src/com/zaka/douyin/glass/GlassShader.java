@@ -117,14 +117,14 @@ final class GlassShader {
 
     /** Tieba press glow: smoothstep radial spot centered on the selected tab. */
     static final String GLOW =
-            "layout(color) uniform half4 color;\\n" +
-            "uniform float radius;\\n" +
-            "uniform float2 position;\\n" +
-            "half4 main(float2 coord) {\\n" +
-            "    float dist = distance(coord, position);\\n" +
-            "    float intensity = smoothstep(radius, radius * 0.5, dist);\\n" +
-            "    return color * intensity;\\n" +
-            "}\\n";
+            "layout(color) uniform half4 color;\n" +
+            "uniform float radius;\n" +
+            "uniform float2 position;\n" +
+            "half4 main(float2 coord) {\n" +
+            "    float dist = distance(coord, position);\n" +
+            "    float intensity = smoothstep(radius, radius * 0.5, dist);\n" +
+            "    return color * intensity;\n" +
+            "}\n";
 
     /** 45° 法线高光（Add 混合） */
     static final String HIGHLIGHT =
