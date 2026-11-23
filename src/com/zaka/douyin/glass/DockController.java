@@ -42,7 +42,7 @@ final class DockController {
      * 显隐过渡：所有页面、所有理由（倍速 / 清屏 / 覆盖页 / 浮层 / 宿主隐藏）共用这一套，
      * 不再有的地方硬切、有的地方慢半拍。显示 150ms、隐藏 110ms，先快后缓，手感轻。
      */
-    private static final long SHOW_MS = 150L;
+    private static final long SHOW_MS = 110L;
     private static final long HIDE_MS = 110L;
     private static final android.view.animation.Interpolator TRANSITION =
             new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f);
@@ -817,6 +817,8 @@ final class DockController {
         /** 评论区是不是开着；开着的时候不参与「结构类」隐藏（抖音原生在评论区里不收底栏）。 */
         final boolean[] commentOpen = new boolean[]{false};
         final long[] lastCommentScanAt = new long[]{0L};
+        /** 评论节点在发送后可能被宿主短暂重建，保留最近一次确认，避免结构判据抢先收 Dock。 */
+        final long[] lastCommentSeenAt = new long[]{0L};
         /** 这条隐藏理由第一次成立的时刻，用来做误报兜底。 */
         final long[] hostHiddenSince = new long[]{0L};
         /** 这条理由被认定成误报之后，本 Activity 内不再参与判断（否则底栏再也回不来）。 */
@@ -968,7 +970,12 @@ final class DockController {
                     // 评论区开着：抖音原生不收底栏，这里也不收（否则评论一开一合 Dock 会闪）。
                     if (now - lastCommentScanAt[0] >= 200L) {
                         lastCommentScanAt[0] = now;
-                        commentOpen[0] = Shield.commentSheetOpen(content);
+                        if (Shield.commentSheetOpen(content)) {
+                            commentOpen[0] = true;
+                            lastCommentSeenAt[0] = now;
+                        } else if (now - lastCommentSeenAt[0] > 1200L) {
+                            commentOpen[0] = false;
+                        }
                     }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
