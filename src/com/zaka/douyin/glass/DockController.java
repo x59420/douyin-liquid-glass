@@ -168,7 +168,8 @@ final class DockController {
 
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
-        backdrop.setBlurDp(9f, density);
+        // Match KernelSU FloatingBottomBar's 4dp backdrop blur.
+        backdrop.setBlurDp(4f, density);
 
         final DockOverlay overlay = DockOverlay.create(act, backdrop, density);
         overlay.setTabs(left, plus);
