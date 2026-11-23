@@ -203,6 +203,7 @@ final class DockController {
         // 固定位置的玻璃 Dock 只检测菜单/个人页状态，不再用原生 Dock 的可见性控制显隐。
         // 节点被抖音临时隐藏时保留玻璃；只有确实换节点时才低频重新绑定点击目标。
         final int[] expandedTicks = new int[]{0};
+        final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
@@ -261,29 +262,42 @@ final class DockController {
 
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
-                    expandedTicks[0] = expanded ? Math.min(3, expandedTicks[0] + 1) : 0;
+                    expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
+                    // Two 120ms samples reject one-frame layout noise without the old 800ms lag.
                     // Window focus is not a reliable menu/profile signal during transitions.
-                    // Only a positively identified expanded panel may hide the glass dock.
                     boolean show = expandedTicks[0] < 2;
 
-                    // 原生 Dock 永远透明；它是否处于 GONE 不影响玻璃层的位置和显示。
+                    // 原生 Dock 永远透明；玻璃层用短淡入淡出，不再直接 GONE/VISIBLE 跳变。
                     if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
-                    if (show) {
-                        if (overlay.getVisibility() != View.VISIBLE) {
-                            overlay.setVisibility(View.VISIBLE);
+                    if (show != overlayTargetVisible[0]) {
+                        overlayTargetVisible[0] = show;
+                        overlay.animate().cancel();
+                        if (show) {
+                            if (overlay.getVisibility() != View.VISIBLE) {
+                                overlay.setVisibility(View.VISIBLE);
+                            }
+                            // 从当前透明度继续，避免反向切换时闪一下。
+                            overlay.animate().alpha(1f).setDuration(140L).start();
+                        } else {
+                            overlay.animate().alpha(0f).setDuration(120L)
+                                    .withEndAction(new Runnable() {
+                                        @Override public void run() {
+                                            if (!overlayTargetVisible[0]) {
+                                                overlay.setVisibility(View.GONE);
+                                            }
+                                        }
+                                    }).start();
                         }
-                    } else if (overlay.getVisibility() != View.GONE) {
-                        overlay.setVisibility(View.GONE);
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 400L);
+                MAIN.postDelayed(this, 120L);
             }
         };
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
-        MAIN.postDelayed(visibilityPoll, 320L);
+        MAIN.postDelayed(visibilityPoll, 120L);
 
 
         //
