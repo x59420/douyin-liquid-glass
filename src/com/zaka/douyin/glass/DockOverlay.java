@@ -878,8 +878,10 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                             ? tabs.get(pendingIndex) : null;
                     // 普通按下、点击和长按先交给抖音原生子项。
                     nativeDownHandled = dispatchToNative(nativeTarget, e);
-                    // KernelSU keeps the indicator still on DOWN; taps animate through activateTab,
-                    // while a drag starts only after horizontal touch slop is crossed.
+                    // KernelSU inspectDragGestures starts on the initial DOWN:
+                    // updateValue(indexAt(down.position)) first, then press().
+                    droplet.moveTo(pendingIndex, true);
+                    droplet.press();
                     startLoop();
                     return true;
                 }
@@ -904,7 +906,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
                         dragging = true;
                         // KernelSU's onDragStarted updates the tab value, then starts press/scale.
                         droplet.moveTo(clampF(pendingIndex + dx / Math.max(1f, slotW), 0f, count - 1f), true);
-                        droplet.press();
                         droplet.touchDown();
                         // 拖动正式接管时，给原生子项发送真实 CANCEL，
                         // 这样系统会撤销点击/长按，而不是只清除 pressed 状态。
