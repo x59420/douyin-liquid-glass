@@ -12,6 +12,11 @@ import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.RecordingCanvas;
+import android.graphics.RenderEffect;
+import android.graphics.RenderNode;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.Shader;
 import android.view.View;
 
@@ -36,7 +41,10 @@ final class GlassPainter {
 
     static final Paint FILL = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private static final Paint RIM = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private static final Paint INNER = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final Paint SHADOW_FILL = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static final Paint SHADOW_CLEAR = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static RenderNode outerShadowNode;
+    private static RenderNode innerShadowNode;
     private static final Paint AMBIENT = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private static final Path PATH = new Path();
@@ -297,18 +305,81 @@ final class GlassPainter {
         inner(canvas, b, r, density, 0f);
     }
 
+    /** KernelSU InnerShadow: blurred black outline with a translated CLEAR cutout. */
     private static void inner(Canvas canvas, RectF b, float r, float density, float press) {
         float p = clamp01(press);
-        INNER.setStyle(Paint.Style.STROKE);
-        INNER.setStrokeWidth(Math.max(1f, (1f + 7f * p) * density));
-        int alpha = Math.round(31f + 7f * p);
-        INNER.setShader(new LinearGradient(
-                b.left, b.bottom, b.right, b.top,
-                Color.argb(alpha, 0, 0, 0), 0x00000000, Shader.TileMode.CLAMP));
-        RECT.set(b);
-        RECT.inset(0.5f * density, 0.5f * density);
-        canvas.drawRoundRect(RECT, r, r, INNER);
-        INNER.setShader(null);
+        if (p <= 0.001f || android.os.Build.VERSION.SDK_INT < 31
+                || !canvas.isHardwareAccelerated()) return;
+        float blur = 8f * density * p;
+        if (blur <= 0.1f) return;
+        try {
+            int w = Math.max(1, (int) Math.ceil(b.width()));
+            int h = Math.max(1, (int) Math.ceil(b.height()));
+            if (innerShadowNode == null) innerShadowNode = new RenderNode("KernelSUInnerShadow");
+            innerShadowNode.setPosition(0, 0, w, h);
+            innerShadowNode.setAlpha(p);
+            RecordingCanvas recording = innerShadowNode.beginRecording(w, h);
+            RectF shape = new RectF(0f, 0f, b.width(), b.height());
+            SHADOW_FILL.setStyle(Paint.Style.FILL);
+            SHADOW_FILL.setShader(null);
+            SHADOW_FILL.setXfermode(null);
+            SHADOW_FILL.setColor(0x26000000);
+            SHADOW_CLEAR.setStyle(Paint.Style.FILL);
+            SHADOW_CLEAR.setShader(null);
+            SHADOW_CLEAR.setColor(android.graphics.Color.WHITE);
+            SHADOW_CLEAR.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+            recording.drawRoundRect(shape, r, r, SHADOW_FILL);
+            recording.save();
+            recording.translate(0f, blur);
+            recording.drawRoundRect(shape, r, r, SHADOW_CLEAR);
+            recording.restore();
+            innerShadowNode.endRecording();
+            innerShadowNode.setRenderEffect(RenderEffect.createBlurEffect(
+                    blur, blur, Shader.TileMode.DECAL));
+            int save = canvas.save();
+            PATH.reset();
+            PATH.addRoundRect(b, r, r, Path.Direction.CW);
+            canvas.clipPath(PATH);
+            canvas.translate(b.left, b.top);
+            canvas.drawRenderNode(innerShadowNode);
+            canvas.restoreToCount(save);
+        } catch (Throwable t) {
+            Dydock.warnOnce("inner-shadow", "KernelSU 内阴影绘制失败: " + t);
+        } finally {
+            SHADOW_CLEAR.setXfermode(null);
+        }
+    }
+
+    /** KernelSU BottomBarMiuix outer dropShadow(radius=10dp). */
+    static void drawOuterShadow(Canvas canvas, RectF b, float r, float density,
+                                boolean dark, int entranceAlpha) {
+        if (entranceAlpha <= 0 || android.os.Build.VERSION.SDK_INT < 31
+                || !canvas.isHardwareAccelerated()) return;
+        float blur = 10f * density;
+        int pad = Math.max(1, (int) Math.ceil(blur * 2f));
+        int w = Math.max(1, (int) Math.ceil(b.width()) + pad * 2);
+        int h = Math.max(1, (int) Math.ceil(b.height()) + pad * 2);
+        try {
+            if (outerShadowNode == null) outerShadowNode = new RenderNode("KernelSUOuterShadow");
+            outerShadowNode.setPosition(0, 0, w, h);
+            outerShadowNode.setAlpha((dark ? 0.2f : 0.1f) * (entranceAlpha / 255f));
+            RecordingCanvas recording = outerShadowNode.beginRecording(w, h);
+            SHADOW_FILL.setStyle(Paint.Style.FILL);
+            SHADOW_FILL.setShader(null);
+            SHADOW_FILL.setXfermode(null);
+            SHADOW_FILL.setColor(android.graphics.Color.BLACK);
+            RectF shape = new RectF(pad, pad, pad + b.width(), pad + b.height());
+            recording.drawRoundRect(shape, r, r, SHADOW_FILL);
+            outerShadowNode.endRecording();
+            outerShadowNode.setRenderEffect(RenderEffect.createBlurEffect(
+                    blur, blur, Shader.TileMode.DECAL));
+            int save = canvas.save();
+            canvas.translate(b.left - pad, b.top - pad);
+            canvas.drawRenderNode(outerShadowNode);
+            canvas.restoreToCount(save);
+        } catch (Throwable t) {
+            Dydock.warnOnce("outer-shadow", "KernelSU 外阴影绘制失败: " + t);
+        }
     }
 
     private static boolean isDarkTheme(View owner) {
