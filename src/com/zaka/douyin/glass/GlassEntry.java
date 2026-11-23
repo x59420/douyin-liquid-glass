@@ -5,6 +5,7 @@ import android.app.Application;
 import android.app.Instrumentation;
 import android.graphics.Color;
 import android.view.View;
+import android.view.MotionEvent;
 import android.view.Window;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -26,6 +27,50 @@ public final class GlassEntry implements IXposedHookLoadPackage {
         if (lp == null || !Dydock.HOST.equals(lp.packageName)) return;
 
         Dydock.log("dydock " + Dydock.VER + " 装载进宿主（仅 Dock 液态玻璃）");
+
+
+        // Observe the host's own accepted long-click callback without replacing its listeners.
+        // This keeps Douyin's original gesture handling intact.
+        try {
+            XposedBridge.hookAllMethods(View.class, "performLongClick", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        if (Boolean.TRUE.equals(param.getResult())
+                                && param.thisObject instanceof View) {
+                            DockController.onHostLongPress((View) param.thisObject);
+                        }
+                    } catch (Throwable t) {
+                        Dydock.warnOnce("host-long-press-hook", "长按状态回调失败: " + t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Dydock.warn("挂 View.performLongClick 失败: " + t);
+        }
+
+        // Clear the transient hold state only after the same host View receives UP/CANCEL.
+        try {
+            XposedBridge.hookAllMethods(View.class, "dispatchTouchEvent", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.thisObject instanceof View && param.args != null
+                                && param.args.length > 0 && param.args[0] instanceof MotionEvent) {
+                            MotionEvent event = (MotionEvent) param.args[0];
+                            int action = event.getActionMasked();
+                            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                                DockController.onHostTouchEnd((View) param.thisObject, action);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        Dydock.warnOnce("host-touch-end-hook", "长按结束状态回调失败: " + t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Dydock.warn("挂 View.dispatchTouchEvent 失败: " + t);
+        }
 
         try {
             XposedHelpers.findAndHookMethod(Instrumentation.class, "callActivityOnResume",
