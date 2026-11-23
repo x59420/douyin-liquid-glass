@@ -306,10 +306,11 @@ fun FloatingBottomBar(
 
     fun activateTab(index: Int) {
         if (index !in 0 until tabsCount) return
-        if (currentIndex != index) {
-            currentIndex = index
-            onSelectedUpdated(index)
-        }
+        // 和 KernelSU 原版有意不同：点当前已选中的 tab 也要回调宿主。
+        // 抖音原生底栏那一下「再点首页回到顶部 / 重新拉推荐流」就是靠重复点击做的，
+        // 原版只在 currentIndex 变化时回调，等于把重复点击吞掉了。
+        currentIndex = index
+        onSelectedUpdated(index)
         dampedDragAnimation.animateToValue(index.toFloat())
     }
 

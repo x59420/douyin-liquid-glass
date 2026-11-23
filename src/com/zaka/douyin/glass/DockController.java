@@ -1066,35 +1066,71 @@ final class DockController {
     /**
      * 触发宿主自己的点击。
      *
-     * 先走 performClick（抖音的 tab 基本都挂了点击回调）；
-     * 有些自定义 View 只在自己的 onTouchEvent 里处理，不挂 listener，performClick 会返回 false，
-     * 这时候补一对真实的按下 / 抬起事件，让它的手势识别照常跑一遍。
-     * 两条路都不做我们自己的页面跳转 —— 全程都是抖音原生行为。
+     * 一定要先送**真实触摸**，不能只 performClick：
+     * 抖音底栏那套「再点一次当前 tab」的行为（首页回到顶部 / 重新拉推荐流、消息回到未读起点）
+     * 是靠触摸序列 + 连击判定做的，挂在这些 View 的 onTouchEvent / 手势识别里。
+     * performClick 只跑 listener，连击计数根本不会增加，表现就是「点首页没反应」。
+     *
+     * 触摸从 tab 自己开始；它不消费就往上找真正处理手势的那一层（抖音的点击有时挂在
+     * 底栏容器上）。全都不消费再退回 performClick。
      */
     private static void clickHostView(final View target) {
         if (target == null) return;
-        boolean handled = false;
         try {
-            handled = target.performClick();
-        } catch (Throwable t) {
-            Dydock.warnOnce("host-click", "转发点击失败: " + t);
-        }
-        if (handled) return;
-        try {
-            long now = SystemClock.uptimeMillis();
-            float x = target.getWidth() / 2f;
-            float y = target.getHeight() / 2f;
-            android.view.MotionEvent down = android.view.MotionEvent.obtain(
-                    now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0);
-            android.view.MotionEvent up = android.view.MotionEvent.obtain(
-                    now, now + 40L, android.view.MotionEvent.ACTION_UP, x, y, 0);
-            target.dispatchTouchEvent(down);
-            target.dispatchTouchEvent(up);
-            down.recycle();
-            up.recycle();
+            int[] tabPos = new int[2];
+            target.getLocationOnScreen(tabPos);
+            View node = target;
+            for (int depth = 0; depth < 4 && node != null; depth++) {
+                if (dispatchTap(node, target, tabPos)) return;
+                android.view.ViewParent parent = node.getParent();
+                node = parent instanceof View ? (View) parent : null;
+            }
         } catch (Throwable t) {
             Dydock.warnOnce("host-click-touch", "触摸转发失败: " + t);
         }
+        try {
+            target.performClick();
+        } catch (Throwable t) {
+            Dydock.warnOnce("host-click", "转发点击失败: " + t);
+        }
+    }
+
+    /**
+     * 往 node 里送一对真实的按下 / 抬起，坐标换成 node 自己的坐标系。
+     *
+     * @return node 消费了这次按下就返回 true（抬起已经一起送出去了）
+     */
+    private static boolean dispatchTap(View node, View target, int[] tabPos) {
+        int w = node.getWidth();
+        int h = node.getHeight();
+        if (w <= 0 || h <= 0) return false;
+        int[] nodePos = new int[2];
+        node.getLocationOnScreen(nodePos);
+        float x = tabPos[0] - nodePos[0] + target.getWidth() / 2f;
+        float y = tabPos[1] - nodePos[1] + target.getHeight() / 2f;
+        if (x < 0 || y < 0 || x > w || y > h) return false;
+
+        long now = SystemClock.uptimeMillis();
+        android.view.MotionEvent down = android.view.MotionEvent.obtain(
+                now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0);
+        down.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+        boolean consumed;
+        try {
+            consumed = node.dispatchTouchEvent(down);
+        } finally {
+            down.recycle();
+        }
+        if (!consumed) return false;
+
+        android.view.MotionEvent up = android.view.MotionEvent.obtain(
+                now, now + 48L, android.view.MotionEvent.ACTION_UP, x, y, 0);
+        up.setSource(android.view.InputDevice.SOURCE_TOUCHSCREEN);
+        try {
+            node.dispatchTouchEvent(up);
+        } finally {
+            up.recycle();
+        }
+        return true;
     }
 
     /** 设置里重新打开「启用玻璃 Dock」：把见过的页面重新接管一遍。 */

@@ -77,6 +77,10 @@ public final class Backdrop {
     private int lastLoggedLayerCount = -1;
     private int meanAlpha;
     private int meanLuma = 255;
+    /** 当前这一帧的采样指纹：像素没变就别再往玻璃层推，省一次拷贝也省一次重绘。 */
+    private long frameSignature;
+    private long lastNotifiedSignature;
+    private boolean notified;
     private String note = "未采集";
     private String lastDiagnostic = "";
     private long lastDiagnosticAt;
@@ -389,6 +393,10 @@ public final class Backdrop {
     private void notifyFrame() {
         Runnable cb = onFrame;
         if (cb == null) return;
+        // 画面没变（静态页面）就不推：否则「推一帧 → 玻璃重绘 → 又触发采样」会自激成 10fps 空转。
+        if (notified && frameSignature == lastNotifiedSignature) return;
+        notified = true;
+        lastNotifiedSignature = frameSignature;
         try {
             cb.run();
         } catch (Throwable t) {
@@ -427,6 +435,7 @@ public final class Backdrop {
         int stepY = Math.max(1, h / 12);
         long alphaSum = 0L;
         long lumaSum = 0L;
+        long signature = 1125899906842597L;
         int count = 0;
         for (int y = 0; y < h; y += stepY) {
             for (int x = 0; x < w; x += stepX) {
@@ -435,12 +444,14 @@ public final class Backdrop {
                 lumaSum += ((pixel >> 16 & 0xFF) * 299
                         + (pixel >> 8 & 0xFF) * 587
                         + (pixel & 0xFF) * 114) / 1000;
+                signature = signature * 31 + pixel;
                 count++;
             }
         }
         if (count > 0) {
             meanAlpha = (int) (alphaSum / count);
             meanLuma = (int) (lumaSum / count);
+            frameSignature = signature;
         }
     }
 
@@ -663,6 +674,7 @@ public final class Backdrop {
         vid = recycle(vid);
         out = recycle(out);
         uiValid = false;
+        notified = false;
     }
 
     private static Bitmap recycle(Bitmap b) {
