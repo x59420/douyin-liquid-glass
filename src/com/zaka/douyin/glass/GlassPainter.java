@@ -236,6 +236,10 @@ final class GlassPainter {
         }
     }
 
+    private static void inner(Canvas canvas, RectF b, float r, float density) {
+        inner(canvas, b, r, density, 0f);
+    }
+
     private static void inner(Canvas canvas, RectF b, float r, float density, float press) {
         float p = clamp01(press);
         INNER.setStyle(Paint.Style.STROKE);
