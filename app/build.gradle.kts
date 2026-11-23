@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.zaka.douyin.glass"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.zaka.douyin.glass"
@@ -42,9 +42,10 @@ android {
     signingConfigs {
         create("release") {
             storeFile = rootProject.file("keystore/dydock.jks")
-            storePassword = "dydock2026"
+            val signingPassword = providers.environmentVariable("DYDOCK_KEYSTORE_PASSWORD").orElse("").get()
+            storePassword = signingPassword
             keyAlias = "dydock"
-            keyPassword = "dydock2026"
+            keyPassword = signingPassword
         }
     }
 
