@@ -8,7 +8,6 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.SystemClock;
 import android.view.Choreographer;
 import android.view.MotionEvent;
 import android.view.View;
@@ -88,7 +87,6 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final boolean[] badgeDot = new boolean[MAX_SLOTS];
 
     private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint selPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
     private final RectF rect = new RectF();
 
@@ -368,7 +366,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         scaled(plusPill, k * (1f - 0.04f * pp), rect);
         drawPlusGlass(canvas, rect, pp, alpha);
 
-        drawLens(canvas, a, framed, luma, light, ink, panelOffset);
+        drawLens(canvas, a, framed, luma, ink, panelOffset);
         drawIcons(canvas, a, p, ink, panelOffset);
         drawPlus(canvas, a, pp, 0xFFFFFFFF);
         drawBadges(canvas, a);
@@ -406,7 +404,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
      * 拖得越快沿运动方向拉得越长（KernelSU 的 scaleX /= 1 - velocity * 0.75）。
      */
     private void drawLens(Canvas canvas, float a, boolean framed,
-                          int luma, boolean light, int ink, float panelOffset) {
+                          int luma, int ink, float panelOffset) {
         float x = droplet.x();
         float dropletPress = droplet.pressProgress();
 
