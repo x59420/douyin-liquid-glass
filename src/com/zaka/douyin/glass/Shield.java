@@ -99,6 +99,40 @@ final class Shield {
         return false;
     }
 
+
+    /**
+     * 抖音长按视频进入倍速播放时会在页面层显示倍速提示。
+     * 识别可见文案/无障碍描述，不把普通长按暂停当成倍速。
+     */
+    static boolean hasSpeedPlaybackOverlay(View root) {
+        return hasSpeedMarker(root, 0, new int[]{1800});
+    }
+
+    private static boolean hasSpeedMarker(View view, int depth, int[] budget) {
+        if (view == null || depth > 14 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
+        String value = "";
+        if (view instanceof TextView) {
+            CharSequence text = ((TextView) view).getText();
+            if (text != null) value = text.toString();
+        }
+        CharSequence desc = view.getContentDescription();
+        if (desc != null) value += " " + desc;
+        String lower = value.toLowerCase();
+        if (value.contains("倍速") || value.contains("倍速播放")
+                || lower.contains("speed playback")
+                || lower.matches(".*(?:1\\.[25]|1\\.5|2\\.0|2)x.*")) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                View child = group.getChildAt(i);
+                if (child != null && child.getClass().getName().contains("DockOverlay")) continue;
+                if (hasSpeedMarker(child, depth + 1, budget)) return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean containsExpandedPanel(View view, Rect page, int depth, int[] budget) {
         if (view == null || depth > 8 || budget[0]-- <= 0
                 || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.08f
