@@ -74,9 +74,19 @@ final class DropletMotion {
         lastVelocityEventTime = downTime;
     }
 
+    void animateToValue(float value) {
+        press();
+        moveTo(value, true);
+        release();
+    }
+
     void release() {
         releasePending = true;
         releaseArmed = false;
+    }
+
+    void dispose() {
+        velocityTracker.recycle();
     }
 
     void snapTo(float x) {
@@ -110,7 +120,7 @@ final class DropletMotion {
         height.advance(seconds);
         dragOffset.advance(seconds);
 
-        if (trackVelocity) {
+        if (trackVelocity && position.moving()) {
             long eventTime = SystemClock.uptimeMillis();
             if (eventTime <= lastVelocityEventTime) eventTime = lastVelocityEventTime + 1L;
             MotionEvent sample = MotionEvent.obtain(
@@ -123,7 +133,7 @@ final class DropletMotion {
             lastVelocityEventTime = eventTime;
             velocityTracker.computeCurrentVelocity(1000);
             velocity.snapTo(velocityTracker.getXVelocity() / span);
-        } else {
+        } else if (!trackVelocity) {
             velocity.advance(seconds);
         }
         return isAnimating();
