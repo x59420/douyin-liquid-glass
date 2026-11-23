@@ -403,6 +403,7 @@ fun FloatingBottomBar(
             ) {
                 Row(
                     Modifier
+                        .fillMaxWidth()
                         .clearAndSetSemantics {}
                         .alpha(0f)
                         .layerBackdrop(tabsBackdrop)
