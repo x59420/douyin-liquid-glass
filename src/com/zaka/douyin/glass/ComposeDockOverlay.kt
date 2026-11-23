@@ -85,7 +85,7 @@ class ComposeDockOverlay private constructor(
 ) : FrameLayout(context) {
 
     private val overlayOwner = OverlayLifecycleOwner()
-    private val composeView = SafeComposeView(context)
+    private val composeView = SafeComposeHost(context)
 
     internal data class TabSnapshot(
         val label: String,
@@ -162,12 +162,14 @@ class ComposeDockOverlay private constructor(
             }
         }
         composeView.setViewTreeLifecycleOwner(overlayOwner)
+        composeView.inner.setViewTreeLifecycleOwner(overlayOwner)
         composeView.setViewTreeSavedStateRegistryOwner(overlayOwner)
+        composeView.inner.setViewTreeSavedStateRegistryOwner(overlayOwner)
         overlayOwner.resume()
-        composeView.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        composeView.inner.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         addView(composeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        composeView.setContent {
+        composeView.inner.setContent {
             // 只创建一次：ThemeController 自带状态/协程，放在 composable 体里
             // 会随着每次重组重新 new（背景 30fps 刷新时就是每秒几十个），
             // 几十秒就能把宿主内存拖爆 —— 这是打开抖音闪退的主要来源之一。
@@ -551,19 +553,27 @@ private class OverlayLifecycleOwner : SavedStateRegistryOwner {
 
 
 /**
- * ComposeView 的护栏版。
+ * ComposeView 的护栏外壳。
  *
- * 玻璃贴在宿主 DecorView 上，测量/布局/绘制全都跑在抖音主线程。
- * 只要有一条异常逃出去，宿主进程当场就挂（用户看到的就是「打开抖音闪退」）。
- * 这里把三条链路全兜住：出错就锁死绘制，交给控制器恢复官方底栏。
+ * ComposeView 本身是 final，不能继承，所以这里套一层 FrameLayout：
+ * 测量/布局/绘制三条链路全部兜住。玻璃贴在宿主 DecorView 上，这些都在
+ * 抖音主线程跑，只要有一条异常逃出去，宿主进程当场就挂（打开抖音闪退）。
+ * 出错就锁死绘制，交给 DockController 把官方底栏还回去。
  */
-private class SafeComposeView(context: Context) : ComposeView(context) {
+private class SafeComposeHost(context: Context) : FrameLayout(context) {
+
+    val inner = ComposeView(context)
 
     @Volatile
     var broken = false
         private set
 
     var onBroken: ((String, Throwable) -> Unit)? = null
+
+    init {
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        addView(inner, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
 
     private fun guard(where: String, block: () -> Unit) {
         if (broken) return
