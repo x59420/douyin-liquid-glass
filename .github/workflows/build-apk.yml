@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [main, compose-dock-migration]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -50,7 +50,7 @@ jobs:
           retention-days: 14
 
   release:
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/compose-dock-migration'
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:

@@ -142,6 +142,8 @@ out/dydock-0.1.2.apk
 - `ComposeView` 增加测量/布局/绘制三级护栏，Compose 或 Miuix 出错时自动收起玻璃并恢复官方底栏，异常不会冒到宿主主线程。
 - **修复背景采样导致的崩溃**：玻璃背景会周期性回收采样用的位图，而 Compose 之前直接引用了同一块内存，回收之后再绘制就是原生崩溃。现在交给 Compose 的一律是副本，采样缓冲可以放心回收；同一时刻也只允许一个抓帧请求在飞，避免 30fps 多视频层把渲染线程压死。玻璃观感（30fps 跟随视频）保持不变。
 - 图标取样不再走 `androidx.core` 的 `toBitmap`，改为自己绘制，避开模块与宿主 androidx 版本不一致导致的 `NoSuchMethodError`。
+- 清理 0.1.x 遗留的 Java 渲染器（`DockOverlay` / `GlassPainter` / `Api33Glass` / `GlassShader` / `DropletMotion` / `Spring` / `InteractiveHighlight`）以及仓库里的历史 APK，仓库和产物都更小。
+- 重新打开 R8 代码/资源收缩来压缩体积；只收缩不重命名（`-dontobfuscate`），LSPosed 按名字加载的入口保持稳定。
 
 ### 0.1.14
 
