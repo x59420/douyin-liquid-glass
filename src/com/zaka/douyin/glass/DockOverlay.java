@@ -359,9 +359,8 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float panelScale = 1f + (16f * density / Math.max(1f, leftPill.width())) * panelPress;
         scaled(leftPill, k * panelScale, tmp);
         tmp.offset(panelOffset, 0f);
-        float touchX = slotCenterX(droplet.x()) + panelOffset - tmp.left;
         drawPane(canvas, tmp, tmp.height() / 2f, framed, luma, panelPress,
-                dragging && panelPress > 0.3f, alpha, droplet.glowProgress(), touchX);
+                dragging && panelPress > 0.3f, alpha);
 
         // 右侧「＋」独立，不跟随左侧导航透镜的长按放大。
         scaled(plusPill, k * (1f - 0.04f * pp), rect);
@@ -376,8 +375,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     }
 
     private void drawPane(Canvas canvas, RectF b, float rad, boolean framed,
-                          int luma, float press, boolean dispersion, int alpha,
-                          float glow, float touchX) {
+                          int luma, float press, boolean dispersion, int alpha) {
         int save = canvas.save();
         try {
             if (alpha < 255) {
@@ -387,7 +385,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
             if (framed) {
                 try {
                     GlassPainter.draw(canvas, b, rad, backdrop, this, press, dispersion,
-                            luma, density, glow, touchX);
+                            luma, density);
                 } catch (Throwable t) {
                     // 着色器在一些机型/系统版本上会直接抛（AGSL 编不过、RuntimeShader 不支持）。
                     // 以前这一下会把整块玻璃带走 —— 退回磨砂，至少看得见。
