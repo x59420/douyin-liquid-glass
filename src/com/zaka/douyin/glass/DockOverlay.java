@@ -89,6 +89,7 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     private final boolean[] badgeDot = new boolean[MAX_SLOTS];
 
     private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     // KernelSU combines the live backdrop with a separately captured tab layer
     // before applying the selected lens. Keep a reusable low-resolution buffer.
     private Bitmap lensComposite;
@@ -277,18 +278,18 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
         float bandH = band.height();
 
         // 比官方那一条大一圈：太小了托不住 4 个图标
-        pillH = Math.min(64f * density, Math.max(52f * density, bandH + 10f * density));
+        // KernelSU FloatingBottomBar: 64dp outer height, 4dp inner padding.
+        pillH = 64f * density;
         float plusSize = Math.min(pillH, 64f * density);
         float plusGap = 12f * density;
         float edge = 16f * density;
-        // Tieba's native horizontal inset is 4dp, matching the 4dp vertical inset.
-        // This makes the resting lens sit equally close to all four panel edges and
-        // gives the held 78/56 lens the same overhang beyond the dock at either end.
+        // KernelSU uses a 4dp inset on the tab row and a 56dp inner content height.
+        // Keep the inset identical on all four sides of the selected lens.
         slotPad = 4f * density;
 
-        // Tieba 的列宽基准约 76dp；抖音这里有 4 个槽位和独立的右侧按钮，
-        // 因此先按 72dp 计算，再根据屏幕实际宽度收敛，避免两块玻璃相撞。
-        float desiredSlotW = 72f * density;
+        // KernelSU BottomBarMiuix gives each item a 76dp minimum width.
+        // Preserve that proportion where the separate Douyin plus dock allows it.
+        float desiredSlotW = 76f * density;
         float desiredLeftW = desiredSlotW * count + slotPad * 2f;
         float maxLeftW = Math.max(0f, bandW - edge * 2f - plusSize - plusGap);
         float leftW = Math.min(desiredLeftW, maxLeftW);
@@ -529,21 +530,48 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     // ---------------------------------------------------------------- 图标
 
     private void drawIcons(Canvas canvas, float a, float p, int ink, float panelOffset) {
-        float size = 23f * density;
+        // KernelSU BottomBarMiuix: 24dp icon + 1dp gap + 11sp label (14sp line height).
+        final float iconSize = 24f * density;
+        final float labelSize = 11f * getResources().getDisplayMetrics().scaledDensity;
+        final float labelLine = 14f * getResources().getDisplayMetrics().scaledDensity;
+        final float contentHeight = iconSize + 1f * density + labelLine;
+        final String[] labels = {"首页", "朋友", "消息", "我"};
+
+        labelPaint.setTypeface(android.graphics.Typeface.DEFAULT);
+        labelPaint.setTextAlign(Paint.Align.CENTER);
+        labelPaint.setTextSize(labelSize);
+        labelPaint.setStyle(Paint.Style.FILL);
 
         for (int i = 0; i < count; i++) {
             float d = Math.abs(droplet.x() - i);
             boolean sel = d < 0.5f;
             float near = Math.max(0f, 1f - Math.min(1f, d));
-            // 出现时依次亮起
+            // Keep the existing entrance stagger while the tab's icon and label move together.
             float seq = Math.max(0f, Math.min(1f, (a - i * 0.08f) * 2.4f));
             int alpha = (int) ((sel ? 255 : 176 + 44 * near) * seq);
             if (alpha <= 2) continue;
-            // KernelSU scales each tab around its own centre; slot spacing is unchanged.
+
             float itemScale = 1f + 0.20f * p;
             float cx = slots[i].centerX() + panelOffset;
             float cy = slots[i].centerY() + (1f - seq) * 4f * density;
-            drawIcon(canvas, i, cx, cy, size * itemScale, alpha, ink);
+            float top = cy - contentHeight * 0.5f;
+            float iconCy = top + iconSize * 0.5f;
+            float labelCy = top + iconSize + density + labelLine * 0.5f;
+
+            // KernelSU scales the complete Column around the tab centre, not the glyphs alone.
+            int save = canvas.save();
+            try {
+                canvas.translate(cx, cy);
+                canvas.scale(itemScale, itemScale);
+                canvas.translate(-cx, -cy);
+                drawIcon(canvas, i, cx, iconCy, iconSize, alpha, ink);
+                labelPaint.setColor((alpha << 24) | (ink & 0x00FFFFFF));
+                Paint.FontMetrics fm = labelPaint.getFontMetrics();
+                float baseline = labelCy - (fm.ascent + fm.descent) * 0.5f;
+                canvas.drawText(labels[i], cx, baseline, labelPaint);
+            } finally {
+                canvas.restoreToCount(save);
+            }
         }
     }
 
