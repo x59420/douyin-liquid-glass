@@ -31,7 +31,7 @@ import java.util.List;
  * 这里对每个视频层单独走 PixelCopy 抓它**在底栏那一条里的**像素，
  * 再把 UI 层里那块挖空，两层叠起来才是「玻璃后面真实看到的画面」。
  */
-final class Backdrop {
+public final class Backdrop {
 
     /** API 33+ uses Miuix's adaptive quarter-octave recording scale; older APIs keep 1/4. */
     private float downscaleFactor = 4f;
