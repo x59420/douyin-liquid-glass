@@ -696,21 +696,16 @@ public final class Backdrop {
     /**
      * 记一次「这一帧是不是黑的」。
      *
-     * SurfaceView 的 PixelCopy 可能在切帧/首帧阶段短暂返回黑图；连续多帧才降级。
-     * TextureView.getBitmap() 是直接读取纹理，黑画面也可能是真实暗场，不用亮度阈值禁用。
+     * 视频层在切帧/首帧阶段可能短暂返回黑图；连续多帧才降级，避免单帧黑屏变成黑块。
+     * 持续近乎全黑时不再挖空 UI 内容树，改用宿主原有内容作为安全回退。
      */
     private static void noteFrameLuma(Layer l) {
         if (l == null || l.frame == null) return;
-        if (!(l.view instanceof SurfaceView)) {
-            l.blackHits = 0;
-            l.usable = true;
-            return;
-        }
         if (quickLuma(l.frame) < 12) {
             l.blackHits++;
             if (l.blackHits >= 8 && l.usable) {
                 l.usable = false;
-                Dydock.warnOnce("pixelcopy-dark", "SurfaceView 连续多帧采样接近全黑，已停止挖空该区域并回退内容树背景");
+                Dydock.warnOnce("video-dark-frame", "视频层连续多帧采样接近全黑，已停止挖空该区域并回退内容树背景");
             }
         } else {
             l.blackHits = 0;
