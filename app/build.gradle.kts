@@ -53,7 +53,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // Strip unused legacy renderers and unused Material icon definitions.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                rootProject.file("app/proguard-rules.pro")
+            )
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
