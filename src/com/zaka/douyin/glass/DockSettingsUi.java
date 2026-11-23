@@ -71,7 +71,15 @@ final class DockSettingsUi {
                 new ViewGroup[]{null}, new int[]{-1});
         if (list != null) {
             try {
-                list.addView(buildRow(act, list), 0);
+                View row = buildRow(act, list);
+                ViewGroup.LayoutParams params = list instanceof LinearLayout
+                        ? new LinearLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT)
+                        : new ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.WRAP_CONTENT);
+                list.addView(row, 0, params);
                 Dydock.log("设置入口:已插入设置列表顶部（共 " + list.getChildCount() + " 项）");
                 return;
             } catch (Throwable t) {
