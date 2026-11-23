@@ -459,8 +459,20 @@ public final class Backdrop {
         long now = SystemClock.uptimeMillis();
         if (now - lastWinRequestAt < WINDOW_FRAME_MIN_GAP_MS) return false;
 
-        final int rw = region.width();
-        final int rh = region.height();
+        // 采集区域必须落在窗口里：PixelCopy 对越界的 srcRect 会直接抛异常，
+        // 有的机型底栏会贴着/压过窗口底边，这里先裁一刀。
+        final Rect src = new Rect(region);
+        try {
+            View decor = w.peekDecorView();
+            int dw = decor == null ? 0 : decor.getWidth();
+            int dh = decor == null ? 0 : decor.getHeight();
+            if (dw > 0 && dh > 0) {
+                if (!src.intersect(0, 0, dw, dh)) return false;
+            }
+        } catch (Throwable ignored) {
+        }
+        final int rw = src.width();
+        final int rh = src.height();
         if (rw <= 0 || rh <= 0) return false;
         try {
             if (winBuffer == null || winBuffer.isRecycled()
@@ -477,7 +489,7 @@ public final class Backdrop {
         winPending = true;
         runMask(maskBefore);
         try {
-            PixelCopy.request(w, region, winBuffer,
+            PixelCopy.request(w, src, winBuffer,
                     new PixelCopy.OnPixelCopyFinishedListener() {
                         @Override
                         public void onPixelCopyFinished(int result) {
