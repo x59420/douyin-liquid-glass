@@ -387,13 +387,18 @@ final class DockController {
                 if (!live[0] || overlay.hasDrawn()) return;
                 View d0 = dockRef[0];
                 try {
-                    if (d0 != null) d0.setAlpha(0f);
+                    // Fail safe: if Compose never draws, restore the native navigation
+                    // instead of leaving the user with an empty bottom strip.
+                    if (d0 != null) {
+                        d0.setVisibility(View.VISIBLE);
+                        d0.setAlpha(1f);
+                    }
                     if (overlay.getVisibility() == View.VISIBLE) {
                         overlay.setVisibility(View.GONE);
                     }
                 } catch (Throwable ignored) {
                 }
-                Dydock.warn("底栏:玻璃未能绘制；按设置保持原生 Dock 隐藏");
+                Dydock.warn("底栏:玻璃未能绘制，已恢复原生 Dock 以避免底部空白");
             }
         }, 2500L);
 
