@@ -107,7 +107,11 @@ final class Shield {
         // Small descendants cannot contain a qualifying expanded menu/profile panel.
         // Pruning them avoids repeatedly walking the entire feed tree on the UI thread.
         Rect bounds = rectOf(view);
-        if (bounds.width() < page.width() * 0.34f
+        Rect visibleBounds = new Rect(bounds);
+        if (!visibleBounds.intersect(page)
+                || visibleBounds.width() < page.width() * 0.20f
+                || visibleBounds.height() < page.height() * 0.20f
+                || bounds.width() < page.width() * 0.34f
                 || bounds.height() < page.height() * 0.28f) return false;
 
         String className = view.getClass().getName();
@@ -125,7 +129,12 @@ final class Shield {
         if (view == null || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.08f
                 || !(view instanceof ViewGroup) || view.getWidth() <= 0 || view.getHeight() <= 0) return false;
         Rect r = rectOf(view);
-        if (r.width() < page.width() * 0.34f || r.height() < page.height() * 0.28f) return false;
+        Rect visibleBounds = new Rect(r);
+        if (!visibleBounds.intersect(page)
+                || visibleBounds.width() < page.width() * 0.20f
+                || visibleBounds.height() < page.height() * 0.20f
+                || r.width() < page.width() * 0.34f
+                || r.height() < page.height() * 0.28f) return false;
         String name = view.getClass().getName().toLowerCase();
         // Do not classify arbitrary large background containers as menus.
         // The host's normal feed/page containers also have backgrounds and children;
