@@ -106,6 +106,12 @@ final class DockSettingsUi {
             if (record.wrapper instanceof ViewGroup && record.item != null
                     && record.parent != null) {
                 ViewGroup wrapper = (ViewGroup) record.wrapper;
+                if (wrapper.getParent() != record.parent) {
+                    if (record.entry.getParent() instanceof ViewGroup) {
+                        ((ViewGroup) record.entry.getParent()).removeView(record.entry);
+                    }
+                    return;
+                }
                 if (record.entry.getParent() instanceof ViewGroup) {
                     ((ViewGroup) record.entry.getParent()).removeView(record.entry);
                 }
