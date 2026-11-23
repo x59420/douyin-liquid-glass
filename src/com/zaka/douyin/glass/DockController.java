@@ -799,9 +799,6 @@ final class DockController {
         final boolean[] lastHideStructural = new boolean[]{false};
         final long[] lastFailLogAt = new long[]{0L};
         /** 上一次记下的窗口尺寸：转屏 / 分屏才需要重新量底栏位置。 */
-        /** 锚点自检：低频看一眼锚点还对不对，错了才重新锚定。 */
-        final long[] lastAnchorCheckAt = new long[]{0L};
-        final int[] anchorDrift = new int[]{0};
         final int[] lastWindowW = new int[]{decor.getWidth()};
         final int[] lastWindowH = new int[]{decor.getHeight()};
         final int[] lastAccountedBandW = new int[]{-1};
@@ -821,6 +818,9 @@ final class DockController {
         final int[] dockMissingTicks = new int[]{0};
         /** 宿主把底栏容器真正隐藏了：持续约 400ms 才认，滚动动画那一小段不算。 */
         final int[] hostHiddenTicks = new int[]{0};
+        /** 评论区是不是开着；开着的时候不参与「结构类」隐藏（抖音原生在评论区里不收底栏）。 */
+        final boolean[] commentOpen = new boolean[]{false};
+        final long[] lastCommentScanAt = new long[]{0L};
         /** 这条隐藏理由第一次成立的时刻，用来做误报兜底。 */
         final long[] hostHiddenSince = new long[]{0L};
         /** 这条理由被认定成误报之后，本 Activity 内不再参与判断（否则底栏再也回不来）。 */
@@ -969,6 +969,11 @@ final class DockController {
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
                         lastClearScanAt[0] = now;
                     }
+                    // 评论区开着：抖音原生不收底栏，这里也不收（否则评论一开一合 Dock 会闪）。
+                    if (now - lastCommentScanAt[0] >= 200L) {
+                        lastCommentScanAt[0] = now;
+                        commentOpen[0] = Shield.commentSheetOpen(content);
+                    }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
                             || updateGestureClearMode(act, d, clearScreenState[0]);
@@ -1020,11 +1025,15 @@ final class DockController {
                         Dydock.warn("底栏:祖先层报不可见但底栏仍在窗口内，判定为误报，"
                                 + "本次运行不再用这条理由隐藏 Dock");
                     }
-                    boolean hidden = speedPlayback || longPress || clearScreen
-                            || coveredTicks[0] >= COVER_CONFIRM_TICKS
+                    // 评论区开着时，结构类理由（覆盖 / 浮层 / 底栏脱离 / 宿主隐藏）一律不算：
+                    // 评论面板弹上来会让宿主重新排布底栏，跟着判就是「收起又冒出」。
+                    // 手势类（倍速 / 清屏）不受影响，该收还是收。
+                    boolean structuralHidden = !commentOpen[0]
+                            && (coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
                             || dockMissingTicks[0] >= 12
-                            || hostHiddenTicks[0] >= 25;
+                            || hostHiddenTicks[0] >= 25);
+                    boolean hidden = speedPlayback || longPress || clearScreen || structuralHidden;
                     if (hidden) {
                         revealTicks[0] = 0;
                         // 手势类（倍速 / 清屏）抬手就恢复；结构类（覆盖页 / 浮层 / 底栏脱离）
@@ -1091,53 +1100,6 @@ final class DockController {
                             }
                         }
                     }
-                    // 锚点自检（1.5 秒一次）：
-                    //   1. 锚点本身不合理（比如退全屏之后导航条回来了，旧锚点压着它）→ 立刻修；
-                    //   2. 宿主底栏长期停在明显不同的位置（差 40dp 以上，连续两次）→ 重新锚定。
-                    // 只在这两种情况下动位置，平时死死钉住，不会一路漂。
-                    if (d != null && now - lastAnchorCheckAt[0] >= 1500L) {
-                        lastAnchorCheckAt[0] = now;
-                        int nav = navigationBarInsetBottom(d);
-                        int pillPx = (int) (DockPrefs.heightDp(act) * densityPx);
-                        Rect live = d.isAttachedToWindow() ? rectInWindow(d) : null;
-                        boolean liveOk = live != null && validBand(live, decor, nav, densityPx);
-                        if (!validBand(bandRect[0], decor, nav, densityPx)) {
-                            Rect fixed = liveOk ? live
-                                    : fallbackBand(decor, nav, densityPx,
-                                            DockPrefs.bottomGapDp(act), pillPx);
-                            bandRect[0] = fixed;
-                            synchronized (BANDS) { BANDS.put(act, fixed); }
-                            applyGeometryInBand(iso, backdrop, d, fixed, tabTargets[0].size());
-                            try {
-                                backdrop.capture();
-                            } catch (Throwable ignored) {
-                            }
-                            Dydock.log("底栏:锚点不合理，已重新锚定");
-                            anchorDrift[0] = 0;
-                        } else if (liveOk) {
-                            float tol = 40f * densityPx;
-                            if (Math.abs(live.bottom - bandRect[0].bottom) > tol) {
-                                anchorDrift[0]++;
-                                if (anchorDrift[0] >= 2) {
-                                    bandRect[0] = live;
-                                    synchronized (BANDS) { BANDS.put(act, live); }
-                                    lastAccountedBandW[0] = d.getWidth();
-                                    lastAccountedBandH[0] = d.getHeight();
-                                    applyGeometryInBand(iso, backdrop, d, live,
-                                            tabTargets[0].size());
-                                    try {
-                                        backdrop.capture();
-                                    } catch (Throwable ignored) {
-                                    }
-                                    Dydock.log("底栏:宿主底栏位置与锚点差得远，重新锚定一次");
-                                    anchorDrift[0] = 0;
-                                }
-                            } else {
-                                anchorDrift[0] = 0;
-                            }
-                        }
-                    }
-
                     // 模块自己那个设置页改过配置：读进来立刻生效，不用重开抖音。
                     if (now - lastPrefsSyncAt[0] >= 1000L) {
                         lastPrefsSyncAt[0] = now;

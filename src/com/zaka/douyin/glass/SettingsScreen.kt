@@ -142,8 +142,11 @@ internal class SettingsState(context: Context) {
 }
 
 private val GlassCardShape = RoundedCornerShape(26.dp)
-private val Accent = Color(0xFF5B8CFF)
-private val SubText = Color(0xFF9BA6BC)
+/** 中性色：整套界面只用黑白灰，不要彩虹渐变。 */
+private val Accent = Color(0xFFEAEAEA)
+private val SubText = Color(0xFF9A9DA3)
+private val TrackOn = Color(0xFFD8D8D8)
+private val TrackOff = Color(0x33FFFFFF)
 
 @Composable
 private fun Label(
@@ -184,28 +187,11 @@ internal fun SettingsScreen(
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color(0xFF0B1226), Color(0xFF131C33), Color(0xFF070A12))
+                        listOf(Color(0xFF17181B), Color(0xFF0D0E10))
                     )
                 )
                 .layerBackdrop(scene)
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                fun blob(cx: Float, cy: Float, color: Color, r: Float) {
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            listOf(color, color.copy(alpha = 0f)),
-                            center = Offset(size.width * cx, size.height * cy),
-                            radius = size.maxDimension * r,
-                        ),
-                        radius = size.maxDimension * r,
-                        center = Offset(size.width * cx, size.height * cy),
-                    )
-                }
-                blob(0.18f, 0.10f, Color(0x663E6BFF), 0.55f)
-                blob(0.95f, 0.32f, Color(0x5532D3C8), 0.45f)
-                blob(0.08f, 0.84f, Color(0x44E05A9B), 0.50f)
-            }
-        }
+        )
 
         Column(
             modifier = Modifier
@@ -301,23 +287,22 @@ internal fun SettingsScreen(
 
 @Composable
 private fun TopBar(version: String, onBack: () -> Unit) {
+    // 顶上不放任何底色 / 玻璃层，只有返回箭头 + 标题 + 版本号。
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().height(52.dp)
+        modifier = Modifier.fillMaxWidth().height(56.dp)
     ) {
         Box(
             modifier = Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.10f))
+                .size(40.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                 ) { onBack() },
             contentAlignment = Alignment.Center,
         ) {
-            Canvas(Modifier.size(16.dp)) {
-                val w = size.minDimension * 0.14f
+            Canvas(Modifier.size(17.dp)) {
+                val w = size.minDimension * 0.13f
                 drawLine(
                     color = Color.White,
                     start = Offset(size.width * 0.62f, size.height * 0.12f),
@@ -334,17 +319,10 @@ private fun TopBar(version: String, onBack: () -> Unit) {
                 )
             }
         }
-        Spacer(Modifier.width(14.dp))
-        Label("dydock 设置", Color.White, 20.sp, weight = FontWeight.SemiBold)
+        Spacer(Modifier.width(6.dp))
+        Label("dydock 设置", Color.White, 19.sp, weight = FontWeight.SemiBold)
         Spacer(Modifier.width(10.dp))
-        Box(
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.10f))
-                .padding(horizontal = 9.dp, vertical = 3.dp)
-        ) {
-            Label(version, SubText, 11.sp)
-        }
+        Label(version, SubText, 12.sp)
     }
 }
 
@@ -441,7 +419,7 @@ private fun GlassSwitch(checked: Boolean) {
         modifier = Modifier
             .size(50.dp, 30.dp)
             .clip(CircleShape)
-            .background(lerp(Color.White.copy(alpha = 0.16f), Accent, progress)),
+            .background(lerp(TrackOff, TrackOn, progress)),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
@@ -515,13 +493,13 @@ private fun GlassSlider(
         val trackH = 6.dp.toPx()
         val radius = CornerRadius(trackH / 2f, trackH / 2f)
         drawRoundRect(
-            color = Color.White.copy(alpha = 0.14f),
+            color = TrackOff,
             topLeft = Offset(0f, trackY - trackH / 2f),
             size = Size(size.width, trackH),
             cornerRadius = radius,
         )
         drawRoundRect(
-            brush = Brush.horizontalGradient(listOf(Accent, Color(0xFF37D6C9))),
+            color = TrackOn,
             topLeft = Offset(0f, trackY - trackH / 2f),
             size = Size(size.width * fraction, trackH),
             cornerRadius = radius,

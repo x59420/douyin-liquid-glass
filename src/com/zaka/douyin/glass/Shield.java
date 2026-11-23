@@ -408,11 +408,11 @@ final class Shield {
                 || r.height() < page.height() * 0.28f) return false;
         if (dockRect != null && !dockRect.isEmpty() && !Rect.intersects(r, dockRect)) return false;
         String name = view.getClass().getName().toLowerCase();
-        // 评论区（以及消息页的会话面板）：抖音原生在这里**不会**收底栏，
-        // 底栏就一直贴在评论区底下。旧版把它当「压在 Dock 上的浮层」，
-        // 于是评论一展开 Dock 收掉、面板铺好后判据又不成立，Dock 再冒出来 —— 用户看到的就是闪一下。
-        // 这里直接排除，评论区开合与 Dock 显隐彻底解耦。
-        if (isConversationPanel(view, r, page, name)) return false;
+        // 评论区：抖音原生在这里**不会**收底栏，底栏一直贴在评论区底下。
+        // 旧版把评论面板当「压在 Dock 上的浮层」，展开时收一次、面板铺好后判据又不成立，
+        // Dock 再冒出来 —— 用户看到的就是闪一下。
+        // 注意只排除「半屏的评论面板」：整屏页面（别人主页、详情页）照旧要走下面的判据。
+        if (isCommentSheet(view, r, page, name)) return false;
         // Do not classify arbitrary large background containers as menus.
         // The host's normal feed/page containers also have backgrounds and children;
         // treating them as expanded panels makes the Dock appear briefly, then vanish.
@@ -448,6 +448,61 @@ final class Shield {
         boolean conversationPanel = isConversationPanel(view, r, page, name);
         if (!namedPanel && !profilePage && !menuText && !profileText && !conversationPanel) return false;
         return hasContent((ViewGroup) view, 0);
+    }
+
+    /**
+     * 这是不是「评论区面板」。
+     *
+     * 两个条件一起满足才算：高度是半屏左右（评论区最多铺到 78% 页高）＋ 里面确实有评论特征
+     * （类名带 comment，或者有「写评论 / 说点什么 / 条评论」这类文案 / 评论输入框）。
+     * 整屏页面一律不算，否则别人主页、详情页会被一起排掉。
+     */
+    private static boolean isCommentSheet(View view, Rect bounds, Rect page, String className) {
+        if (view == null || page.height() <= 0) return false;
+        if (bounds.height() > page.height() * 0.78f) return false;
+        if (bounds.width() < page.width() * 0.55f) return false;
+        if (className.contains("comment")) return true;
+        return hasConversationMarker(view, 0);
+    }
+
+    /**
+     * 当前页面上有没有「评论输入框 / 评论区文案」。
+     *
+     * 用来判断评论区是不是开着：开着的时候 Dock 不参与「底栏脱离 / 被整屏盖住」这类结构隐藏，
+     * 因为抖音原生在评论区里本来就不收底栏。查得比较克制（预算 900 个节点）。
+     */
+    static boolean commentSheetOpen(View root) {
+        if (root == null) return false;
+        return findCommentMarker(root, 0, new int[]{900});
+    }
+
+    private static boolean findCommentMarker(View view, int depth, int[] budget) {
+        if (view == null || depth > 26 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
+        String value = "";
+        if (view instanceof EditText) {
+            CharSequence hint = ((EditText) view).getHint();
+            if (hint != null) value = hint.toString();
+            CharSequence text = ((EditText) view).getText();
+            if (text != null) value += " " + text;
+        } else if (view instanceof TextView) {
+            CharSequence text = ((TextView) view).getText();
+            if (text != null) value = text.toString();
+        }
+        CharSequence desc = view.getContentDescription();
+        if (desc != null) value += " " + desc;
+        if (value.contains("写评论") || value.contains("说点什么")
+                || value.contains("善语结善缘") || value.contains("条评论")
+                || value.contains("留下你的精彩评论")) {
+            return true;
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                if (findCommentMarker(group.getChildAt(i), depth + 1, budget)) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isConversationPanel(View view, Rect bounds, Rect page, String className) {
