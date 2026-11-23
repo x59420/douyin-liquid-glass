@@ -214,6 +214,9 @@ class ComposeDockOverlay private constructor(
         main.removeCallbacks(videoPump)
         main.removeCallbacks(hostPoll)
         lifecycleOwner.destroy()
+        // Release PixelCopy/TextureView frames and bitmap buffers when the Activity is destroyed.
+        backdrop.setOnFrame(null)
+        backdrop.release()
         tabs.clear()
         plusTab = null
     }
