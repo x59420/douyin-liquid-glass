@@ -6,11 +6,10 @@ cd "$ROOT"
 
 mkdir -p libs out
 if [ -z "${DYDOCK_KEYSTORE_PASSWORD:-}" ]; then
-  git fetch origin main --depth=1
-  DYDOCK_KEYSTORE_PASSWORD="$(git show origin/main:build.sh | grep -o -- '--ks-pass pass:[^[:space:]]*' | head -n1 | cut -d: -f2)"
-  export DYDOCK_KEYSTORE_PASSWORD
+  echo "ERROR: DYDOCK_KEYSTORE_PASSWORD is not set."
+  echo "Add it in GitHub: Settings > Secrets and variables > Actions."
+  exit 1
 fi
-test -n "$DYDOCK_KEYSTORE_PASSWORD"
 
 if [ ! -f libs/api-82.jar ]; then
   echo "== Download Xposed API 82 =="
