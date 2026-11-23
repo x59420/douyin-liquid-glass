@@ -47,8 +47,8 @@ owners. For personal, non-commercial use only.
 
 
   - src/com/zaka/douyin/glass/DropletMotion.java
-      Multi-channel analytical damped-spring motion (pressure, width, height,
-      velocity, glow and drag offset) adapted from ForbidAd4TieBa:
+      Multi-channel analytical damped-spring motion (position, pressure, width,
+      height, velocity, glow and drag offset) adapted from ForbidAd4TieBa:
       https://github.com/aikavvak12una/ForbidAd4TieBa
       Copyright 2026, compose-miuix-ui contributors.
       The upstream implementation is adapted from miuix DampedDragAnimation
