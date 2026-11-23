@@ -1,5 +1,8 @@
 package com.zaka.douyin.glass;
 
+import android.app.Activity;
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.graphics.Rect;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,6 +27,92 @@ import android.widget.TextView;
 final class Shield {
 
     private Shield() {
+    }
+
+    /** Resolve the Activity that owns a host View without assuming a direct Activity context. */
+    static Activity activityOf(View view) {
+        if (view == null) return null;
+        Context context = view.getContext();
+        for (int i = 0; i < 12 && context != null; i++) {
+            if (context instanceof Activity) return (Activity) context;
+            if (!(context instanceof ContextWrapper)) break;
+            Context next = ((ContextWrapper) context).getBaseContext();
+            if (next == context) break;
+            context = next;
+        }
+        return null;
+    }
+
+    /**
+     * First-pass long-press filter: accept only a large video/feed touch surface in the
+     * central playback area. Small buttons and navigation items must not hide the Dock.
+     */
+    static boolean isVideoLongPressTarget(View view, Activity activity) {
+        if (view == null || activity == null || view.getVisibility() != View.VISIBLE
+                || view.getAlpha() < 0.05f || !view.isShown()) return false;
+        String name = view.getClass().getName().toLowerCase();
+        if (name.contains("dockoverlay") || name.contains("bottomnavigation")
+                || name.contains("tabview") || name.contains("navigationbar")) return false;
+        View content = activity.findViewById(android.R.id.content);
+        if (content == null || content.getWidth() <= 0 || content.getHeight() <= 0) return false;
+        Rect page = rectOf(content);
+        Rect bounds = rectOf(view);
+        if (!bounds.intersect(page)) return false;
+        float cx = bounds.centerX();
+        float cy = bounds.centerY();
+        return bounds.width() >= page.width() * 0.32f
+                && bounds.height() >= page.height() * 0.22f
+                && cx >= page.left + page.width() * 0.08f
+                && cx <= page.right - page.width() * 0.08f
+                && cy >= page.top + page.height() * 0.12f
+                && cy <= page.bottom - page.height() * 0.22f;
+    }
+
+    /**
+     * Clear-screen detection is deliberately state-based, not gesture-based.
+     * It looks for explicit visible host markers (view/resource names or exit labels).
+     * This is a conservative first pass; the exact Douyin marker still needs device
+     * verification because host builds can rename or remove these views.
+     */
+    static boolean hasClearScreenState(View root) {
+        return findClearScreenMarker(root, 0, new int[]{1400});
+    }
+
+    private static boolean findClearScreenMarker(View view, int depth, int[] budget) {
+        if (view == null || depth > 16 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
+        String name = view.getClass().getName().toLowerCase();
+        if (name.contains("clearscreen") || name.contains("clear_screen")
+                || name.contains("cleanscreen") || name.contains("clean_screen")
+                || name.contains("screenclean")) return true;
+        int id = view.getId();
+        if (id != View.NO_ID) {
+            try {
+                String resource = view.getResources().getResourceEntryName(id).toLowerCase();
+                if (resource.contains("clear_screen") || resource.contains("clearscreen")
+                        || resource.contains("clean_screen") || resource.contains("cleanscreen")) {
+                    return true;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        String value = "";
+        if (view instanceof TextView) {
+            CharSequence text = ((TextView) view).getText();
+            if (text != null) value = text.toString();
+        }
+        CharSequence desc = view.getContentDescription();
+        if (desc != null) value += " " + desc;
+        if (value.contains("退出清屏") || value.contains("退出清屏模式")
+                || value.contains("恢复显示") || value.contains("退出纯净模式")
+                || value.toLowerCase().contains("exit clear screen")) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                if (findClearScreenMarker(group.getChildAt(i), depth + 1, budget)) return true;
+            }
+        }
+        return false;
     }
 
     static Rect rectOf(View v) {
