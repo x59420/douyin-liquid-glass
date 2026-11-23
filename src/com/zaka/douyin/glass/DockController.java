@@ -284,12 +284,13 @@ final class DockController {
                         }
                     }
 
+                    boolean speedPlayback = Shield.hasSpeedPlaybackOverlay(decor);
                     boolean expanded = d != null
                             && Shield.hasExpandedOverlay(d, content, decor);
                     expandedTicks[0] = expanded ? Math.min(2, expandedTicks[0] + 1) : 0;
-                    // Two 80ms samples keep transitions responsive while filtering one-frame layout noise.
-                    // Window focus is not a reliable menu/profile signal during transitions.
-                    boolean show = expandedTicks[0] < 2;
+                    // Speed-playback is a transient, explicit state: hide immediately.
+                    // Other panels keep two samples to filter one-frame layout noise.
+                    boolean show = !speedPlayback && expandedTicks[0] < 2;
 
                     // 原生 Dock 永远透明；玻璃层用短淡入淡出，不再直接 GONE/VISIBLE 跳变。
                     if (d != null && d.getAlpha() != 0f) d.setAlpha(0f);
@@ -301,9 +302,9 @@ final class DockController {
                                 overlay.setVisibility(View.VISIBLE);
                             }
                             // 从当前透明度继续，避免反向切换时闪一下。
-                            overlay.animate().alpha(1f).setDuration(75L).start();
+                            overlay.animate().alpha(1f).setDuration(45L).start();
                         } else {
-                            overlay.animate().alpha(0f).setDuration(65L)
+                            overlay.animate().alpha(0f).setDuration(40L)
                                     .withEndAction(new Runnable() {
                                         @Override public void run() {
                                             if (!overlayTargetVisible[0]) {
@@ -316,7 +317,7 @@ final class DockController {
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 80L);
+                MAIN.postDelayed(this, 50L);
             }
         };
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
