@@ -76,6 +76,7 @@ final class DockController {
         }
         try {
             if (overlay != null) {
+                overlay.dispose();
                 ViewParent p = overlay.getParent();
                 if (p instanceof ViewGroup) ((ViewGroup) p).removeView(overlay);
             }
@@ -193,9 +194,24 @@ final class DockController {
             @Override public void run() {
                 if (!live[0]) return;
                 try {
-                    if (!overlay.isAttachedToWindow()) {
+                    if (act.isFinishing() || act.isDestroyed()) {
                         live[0] = false;
                         return;
+                    }
+                    // A navigation transition may temporarily detach the overlay. Keep the
+                    // watchdog alive and reattach it to the same Activity decor on return.
+                    if (!overlay.isAttachedToWindow() && decor.isAttachedToWindow()) {
+                        ViewParent parent = overlay.getParent();
+                        if (parent instanceof ViewGroup && parent != decor) {
+                            ((ViewGroup) parent).removeView(overlay);
+                            parent = null;
+                        }
+                        if (parent == null) {
+                            decor.addView(overlay, new FrameLayout.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT));
+                            Dydock.log("底栏:玻璃层已重新挂回主窗口");
+                        }
                     }
                     View d = dockRef[0];
                     long now = SystemClock.uptimeMillis();
