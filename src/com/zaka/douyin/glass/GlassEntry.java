@@ -75,6 +75,47 @@ public final class GlassEntry implements IXposedHookLoadPackage {
             Dydock.warn("挂 View.dispatchTouchEvent 失败: " + t);
         }
 
+        // 系统侧边返回（以及返回键）：宿主自己处理返回时，清屏态一并结束。
+        try {
+            XposedBridge.hookAllMethods(Activity.class, "onBackPressed", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.thisObject instanceof Activity) {
+                            DockController.onHostBack((Activity) param.thisObject);
+                        }
+                    } catch (Throwable t) {
+                        Dydock.warnOnce("host-back-hook", "返回状态回调失败: " + t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Dydock.warn("挂 Activity.onBackPressed 失败: " + t);
+        }
+
+        try {
+            XposedBridge.hookAllMethods(Activity.class, "dispatchKeyEvent", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.thisObject instanceof Activity && param.args != null
+                                && param.args.length > 0
+                                && param.args[0] instanceof android.view.KeyEvent) {
+                            android.view.KeyEvent key = (android.view.KeyEvent) param.args[0];
+                            if (key.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK
+                                    && key.getAction() == android.view.KeyEvent.ACTION_UP) {
+                                DockController.onHostBack((Activity) param.thisObject);
+                            }
+                        }
+                    } catch (Throwable t) {
+                        Dydock.warnOnce("host-back-key-hook", "返回键状态回调失败: " + t);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Dydock.warn("挂 Activity.dispatchKeyEvent 失败: " + t);
+        }
+
         try {
             XposedHelpers.findAndHookMethod(Instrumentation.class, "callActivityOnResume",
                     Activity.class, new XC_MethodHook() {

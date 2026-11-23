@@ -73,6 +73,9 @@ final class DockController {
     /** 进入清屏后是否真的观察到宿主 UI 被隐藏过；没观察到就说明这只是个缩放手势。 */
     private static final WeakHashMap<Activity, boolean[]> CLEAR_CONFIRMED =
             new WeakHashMap<Activity, boolean[]>();
+    /** 清屏态下手指落点，用来识别「左上角关闭」和「上/下滑到别的视频」。 */
+    private static final WeakHashMap<Activity, float[]> CLEAR_TOUCH =
+            new WeakHashMap<Activity, float[]>();
 
     private DockController() {
     }
@@ -111,6 +114,12 @@ final class DockController {
             if (spread != null) {
                 float density = act.getResources().getDisplayMetrics().density;
                 float now = spanOf(event);
+                // 反方向拉（两指往回收）= 抖音的退出清屏。
+                if (isGestureClearMode(act) && now < spread[1] * 0.72f - 24f * density) {
+                    synchronized (SPREAD) { SPREAD.remove(act); }
+                    exitGestureClearMode(act, "双指内收");
+                    return;
+                }
                 // 往外拉：两指间距明显变大（缩放一点不算）
                 if (now > spread[1] * 1.45f + 48f * density) {
                     synchronized (SPREAD) { SPREAD.remove(act); }
@@ -134,6 +143,41 @@ final class DockController {
                 || action == android.view.MotionEvent.ACTION_CANCEL) {
             synchronized (SPREAD) { SPREAD.remove(act); }
         }
+        if (isGestureClearMode(act)) {
+            if (action == android.view.MotionEvent.ACTION_DOWN) {
+                synchronized (CLEAR_TOUCH) {
+                    CLEAR_TOUCH.put(act, new float[]{event.getRawX(), event.getRawY()});
+                }
+            } else if (action == android.view.MotionEvent.ACTION_MOVE) {
+                float[] start;
+                synchronized (CLEAR_TOUCH) { start = CLEAR_TOUCH.get(act); }
+                if (start != null) {
+                    float density = act.getResources().getDisplayMetrics().density;
+                    float dx = event.getRawX() - start[0];
+                    float dy = event.getRawY() - start[1];
+                    // 往上/往下划到别的视频 = 退出清屏。
+                    if (Math.abs(dy) > 72f * density && Math.abs(dy) > Math.abs(dx) * 1.4f) {
+                        synchronized (CLEAR_TOUCH) { CLEAR_TOUCH.remove(act); }
+                        exitGestureClearMode(act, "划到别的视频");
+                        return;
+                    }
+                }
+            } else if (action == android.view.MotionEvent.ACTION_UP) {
+                float[] start;
+                synchronized (CLEAR_TOUCH) { start = CLEAR_TOUCH.remove(act); }
+                if (start != null) {
+                    View decor = act.getWindow() == null ? null : act.getWindow().peekDecorView();
+                    int w = decor == null ? 0 : decor.getWidth();
+                    int h = decor == null ? 0 : decor.getHeight();
+                    // 左上角的关闭按钮。
+                    if (w > 0 && h > 0
+                            && start[0] <= w * 0.24f && start[1] <= h * 0.22f) {
+                        exitGestureClearMode(act, "左上角关闭");
+                        return;
+                    }
+                }
+            }
+        }
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             if (!Shield.isVideoLongPressTarget(view, act)) return;
             synchronized (PRESS) {
@@ -155,6 +199,21 @@ final class DockController {
             synchronized (PRESS) { PRESS.remove(act); }
             onHostTouchEnd(view, action);
         }
+    }
+
+    /** 退出由手势（或关闭按钮 / 返回键）判定出来的清屏态。 */
+    private static void exitGestureClearMode(Activity act, String reason) {
+        boolean was;
+        synchronized (CLEAR_MODE) { was = CLEAR_MODE.remove(act) != null; }
+        synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
+        synchronized (CLEAR_TOUCH) { CLEAR_TOUCH.remove(act); }
+        if (was) Dydock.log("退出清屏（" + reason + "），恢复 Dock");
+    }
+
+    /** 系统侧边返回：宿主处理返回键时，清屏态一并结束。 */
+    static void onHostBack(Activity act) {
+        if (act == null) return;
+        exitGestureClearMode(act, "返回");
     }
 
     /** 多指手势时第 0、1 根手指的间距。 */
@@ -217,13 +276,9 @@ final class DockController {
                 return true;
             }
             if (!confirmed[0]) {
-                // 手势做完 1.5 秒内宿主 UI 一直没被隐藏 —— 那不是清屏手势（可能只是缩放）。
-                if (android.os.SystemClock.uptimeMillis() - enteredAt[0] > 1500L) {
-                    synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
-                    synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
-                    Dydock.log("双指手势没有触发清屏，恢复 Dock");
-                    return false;
-                }
+                // 还没看到宿主把界面藏起来：继续等。退出由下面几种明确信号负责
+                // （双指内收 / 左上角关闭 / 划到别的视频 / 返回键 / 宿主 UI 重新出现），
+                // 不按时间猜，避免清屏还没结束 Dock 就冒出来。
                 return true;
             }
         }
@@ -280,6 +335,7 @@ final class DockController {
         synchronized (SPREAD) { SPREAD.remove(act); }
         synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
         synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
+        synchronized (CLEAR_TOUCH) { CLEAR_TOUCH.remove(act); }
         View dock;
         ComposeDockOverlay overlay;
         synchronized (DOCKS) {
