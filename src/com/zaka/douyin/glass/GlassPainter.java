@@ -46,6 +46,8 @@ final class GlassPainter {
     private static RenderNode outerShadowNode;
     private static RenderNode innerShadowNode;
     private static final Paint AMBIENT = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private static RuntimeShader bloomHighlight;
+    private static final Paint BLOOM_PAINT = new Paint(Paint.ANTI_ALIAS_FLAG);
 
     private static final Path PATH = new Path();
     private static final RectF RECT = new RectF();
@@ -106,7 +108,7 @@ final class GlassPainter {
                             progress, progress > 0.001f, density, true, combined);
             if (!ok) cropBitmap(canvas, b, source, region, owner);
             surface(canvas, b, isDarkTheme(owner), progress, true);
-            highlight(canvas, b, r, density, isDarkTheme(owner), progress);
+            highlight(canvas, b, r, density, isDarkTheme(owner), progress, true);
             inner(canvas, b, r, density, progress);
         } finally {
             canvas.restoreToCount(save);
@@ -152,7 +154,7 @@ final class GlassPainter {
                     dispersion, density, selectedLens);
             if (!ok) crop(canvas, b, bd, owner);
             surface(canvas, b, isDarkTheme(owner), progress, selectedLens);
-            highlight(canvas, b, r, density, isDarkTheme(owner), selectedLens ? progress : 0f);
+            highlight(canvas, b, r, density, isDarkTheme(owner), selectedLens ? progress : 0f, selectedLens);
             inner(canvas, b, r, density, selectedLens ? progress : 0f);
         } finally {
             canvas.restoreToCount(save);
@@ -272,33 +274,71 @@ final class GlassPainter {
     // ---------------------------------------------------------------- 高光
 
     private static void highlight(Canvas canvas, RectF b, float r, float density,
-                                  boolean dark, float press) {
+                                  boolean dark, float press, boolean selectedLens) {
+        // KernelSU FloatingBottomBar uses a 1dp BloomStroke with two white light sources:
+        // primary intensity 1.0, secondary intensity 0.4, dualPeak enabled.
+        // The main pill rotates the primary source by -45 degrees; the selected lens by +90.
+        if (android.os.Build.VERSION.SDK_INT >= 33 && canvas.isHardwareAccelerated()) {
+            try {
+                if (bloomHighlight == null) {
+                    bloomHighlight = new RuntimeShader(GlassShader.HIGHLIGHT);
+                }
+                float primaryAngle = selectedLens ? 0f : (float) (-Math.PI * 0.75);
+                float alpha = selectedLens ? 0.12f * clamp01(press) : 0.12f * 0.75f;
+                drawBloomPass(canvas, b, r, primaryAngle, 1.0f, alpha);
+                drawBloomPass(canvas, b, r, (float) (Math.PI * 0.5), 0.4f, alpha);
+            } catch (Throwable t) {
+                Dydock.warnOnce("bloom-highlight", "KernelSU 双光源高光回退: " + t);
+                drawFallbackHighlight(canvas, b, r, density);
+            }
+        } else {
+            drawFallbackHighlight(canvas, b, r, density);
+        }
+
+        // KernelSU BloomStroke keeps a very fine 1dp white rim.
+        RIM.setStyle(Paint.Style.STROKE);
+        RIM.setStrokeWidth(Math.max(1f, 1f * density));
+        RIM.setShader(new LinearGradient(
+                b.left, b.top, b.right, b.bottom, 0x1FFFFFFF, 0x0AFFFFFF,
+                Shader.TileMode.CLAMP));
+        RECT.set(b);
+        RECT.inset(0.5f * density, 0.5f * density);
+        canvas.drawRoundRect(RECT, r, r, RIM);
+        RIM.setShader(null);
+    }
+
+    private static void drawBloomPass(Canvas canvas, RectF b, float r, float angle,
+                                      float intensity, float alpha) {
+        if (alpha <= 0.001f) return;
+        bloomHighlight.setFloatUniform("size", b.width(), b.height());
+        bloomHighlight.setFloatUniform("cornerRadii", r, r, r, r);
+        bloomHighlight.setColorUniform("color",
+                Color.argb(Math.round(255f * alpha * intensity), 255, 255, 255));
+        bloomHighlight.setFloatUniform("angle", angle);
+        bloomHighlight.setFloatUniform("falloff", 3.0f);
+        BLOOM_PAINT.setShader(bloomHighlight);
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            BLOOM_PAINT.setBlendMode(android.graphics.BlendMode.PLUS);
+        }
+        int save = canvas.save();
+        try {
+            canvas.translate(b.left, b.top);
+            canvas.drawRect(0f, 0f, b.width(), b.height(), BLOOM_PAINT);
+        } finally {
+            canvas.restoreToCount(save);
+            BLOOM_PAINT.setShader(null);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                BLOOM_PAINT.setBlendMode(null);
+            }
+        }
+    }
+
+    private static void drawFallbackHighlight(Canvas canvas, RectF b, float r, float density) {
         AMBIENT.setShader(new LinearGradient(
                 b.left, b.top, b.right, b.bottom,
                 0x1FFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
         canvas.drawRect(b, AMBIENT);
         AMBIENT.setShader(null);
-
-        RIM.setStyle(Paint.Style.STROKE);
-        RIM.setStrokeWidth(Math.max(1f, 0.5f * density));
-        RIM.setShader(new LinearGradient(
-                b.left, b.top, b.right, b.bottom,
-                0x33FFFFFF,
-                0x0DFFFFFF, Shader.TileMode.CLAMP));
-        RECT.set(b);
-        canvas.drawRoundRect(RECT, r, r, RIM);
-        RIM.setShader(null);
-
-        // Subtle opposing specular reflection, activated by the pressed lens.
-        if (press > 0.001f) {
-            int alpha = Math.round(31f * clamp01(press));
-            AMBIENT.setShader(new LinearGradient(
-                    b.right, b.bottom, b.left, b.top,
-                    Color.argb(alpha, 255, 255, 255),
-                    Color.TRANSPARENT, Shader.TileMode.CLAMP));
-            canvas.drawRect(b, AMBIENT);
-            AMBIENT.setShader(null);
-        }
     }
 
     private static void inner(Canvas canvas, RectF b, float r, float density) {
