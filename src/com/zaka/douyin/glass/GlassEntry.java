@@ -172,6 +172,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                         Object a = param.thisObject;
                         if (a instanceof Activity) {
                             DockController.release((Activity) a);
+                            DockSettingsUi.release((Activity) a);
                         }
                     } catch (Throwable t) {
                         Dydock.error("Dock 销毁收尾", t);
@@ -229,8 +230,8 @@ public final class GlassEntry implements IXposedHookLoadPackage {
         try {
             makeNavigationAreaTransparent(act);
             DockController.onActivity(act);
-            // 抖音自己的设置页里挂一个 dydock 入口（不是设置页就什么也不做）。
-            DockSettingsUi.onHostActivity(act);
+            // 从聊天框 / 会话页退回来时重新量一次底栏位置，Dock 不会偏到左边。
+            DockController.onHostResume(act);
         } catch (Throwable t) {
             Dydock.error("底栏入口", t);
         }

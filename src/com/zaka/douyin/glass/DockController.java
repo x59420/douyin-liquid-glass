@@ -46,7 +46,18 @@ final class DockController {
      * 滚动结束、浮层收起、页面转场收尾的那一两帧会短暂「看起来没被盖住」，
      * 直接跟着它就会闪。16ms 一帧，6 帧约 100ms，感觉不到延迟。
      */
-    private static final int SHOW_CONFIRM_FRAMES = 6;
+    /**
+     * 显隐过渡：所有页面、所有理由（倍速 / 清屏 / 覆盖页 / 浮层 / 宿主隐藏）共用这一套，
+     * 不再有的地方硬切、有的地方慢半拍。显示 150ms、隐藏 110ms，先快后缓，手感轻。
+     */
+    private static final long SHOW_MS = 150L;
+    private static final long HIDE_MS = 110L;
+    private static final android.view.animation.Interpolator TRANSITION =
+            new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f);
+    /** 手势类隐藏（倍速/清屏）恢复要快：抬手就该回来。 */
+    private static final int FAST_REVEAL_TICKS = 2;
+    /** 结构类隐藏（覆盖页/浮层/底栏脱离）恢复要多等几帧，防止转场里闪一下。 */
+    private static final int STRUCTURAL_REVEAL_TICKS = 10;
     /** 「整屏页面盖住 Dock」需要连续命中的帧数（60ms 采一次，两帧约 120ms）。 */
     private static final int COVER_CONFIRM_TICKS = 2;
 
@@ -75,6 +86,9 @@ final class DockController {
     /** 每个 Activity 的背景采样器：设置改了要立刻重算几何，得能拿回它。 */
     private static final WeakHashMap<Activity, Backdrop> BACKDROPS =
             new WeakHashMap<Activity, Backdrop>();
+    /** 回到前台时重新量一次底栏位置：从聊天框返回后位置偏左就是这一步缺了。 */
+    private static final WeakHashMap<Activity, Runnable> REFRESHERS =
+            new WeakHashMap<Activity, Runnable>();
     /** 原生底栏那一带的窗口坐标（底栏被设成 GONE 之后就只能靠这份缓存）。 */
     private static final WeakHashMap<Activity, Rect> BANDS =
             new WeakHashMap<Activity, Rect>();
@@ -84,6 +98,16 @@ final class DockController {
     /** 手指按住视频的起点，用来判断「长按倍速」——抖音自己不一定走 performLongClick。 */
     private static final WeakHashMap<Activity, long[]> PRESS =
             new WeakHashMap<Activity, long[]>();
+    /**
+     * 按住期间最后一次看到触摸事件的时间。
+     *
+     * 以前按住超过 4 秒就直接当成「松手了」，长按倍速按住看十几秒，Dock 就会自己冒回来。
+     * 现在只在「手彻底没有消息」之后才放弃，按住多久都算按住。
+     */
+    private static final WeakHashMap<Activity, long[]> PRESS_ALIVE =
+            new WeakHashMap<Activity, long[]>();
+    /** 按住状态只剩下最后一道保险：一分钟没有任何触摸事件才认为状态失效。 */
+    private static final long PRESS_ABANDON_MS = 60_000L;
     /** 记录这条按住状态是由哪个 View 起的头，别的 View 收到的同一串事件不参与判定。 */
     private static final WeakHashMap<Activity, View> PRESS_TARGET =
             new WeakHashMap<Activity, View>();
@@ -220,6 +244,12 @@ final class DockController {
                 }
             }
         }
+        if (action == android.view.MotionEvent.ACTION_DOWN
+                || action == android.view.MotionEvent.ACTION_MOVE) {
+            synchronized (PRESS_ALIVE) {
+                PRESS_ALIVE.put(act, new long[]{android.os.SystemClock.uptimeMillis()});
+            }
+        }
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             if (!Shield.isVideoLongPressTarget(view, act)) return;
             synchronized (PRESS) {
@@ -245,6 +275,7 @@ final class DockController {
         } else if (action == android.view.MotionEvent.ACTION_UP
                 || action == android.view.MotionEvent.ACTION_CANCEL) {
             synchronized (PRESS) { PRESS.remove(act); }
+            synchronized (PRESS_ALIVE) { PRESS_ALIVE.remove(act); }
             synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
             onHostTouchEnd(view, action);
         }
@@ -417,12 +448,13 @@ final class DockController {
     private static boolean isHostLongPressActive(Activity act, boolean pageHasVideo) {
         synchronized (LONG_PRESS_TARGETS) {
             if (LONG_PRESS_TARGETS.containsKey(act)) {
-                // 兜底：宿主吞掉那次 UP 的话，状态会一直留着；过了 5 秒就当它结束了，
-                // 否则回到视频页的第一帧 Dock 会莫名消失。
-                long[] at;
-                synchronized (LONG_PRESS_AT) { at = LONG_PRESS_AT.get(act); }
-                if (at != null
-                        && android.os.SystemClock.uptimeMillis() - at[0] > 5000L) {
+                // 兜底：宿主吞掉那次 UP 的话状态会一直留着；只有「手上彻底没有触摸事件」
+                // 超过一分钟才当它结束。按住期间不设时间上限。
+                long[] alive;
+                synchronized (PRESS_ALIVE) { alive = PRESS_ALIVE.get(act); }
+                boolean abandoned = alive == null
+                        || android.os.SystemClock.uptimeMillis() - alive[0] > PRESS_ABANDON_MS;
+                if (abandoned) {
                     LONG_PRESS_TARGETS.remove(act);
                     synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
                 } else {
@@ -435,15 +467,59 @@ final class DockController {
         if (start == null) return false;
         // 当前页面没有视频层（消息列表、我的页、设置页）：按住不放不是倍速，不参与隐藏。
         if (!pageHasVideo) return false;
-        long held = android.os.SystemClock.uptimeMillis() - start[0];
-        // 兜底：UP 万一没回到我们这里，按住状态最多只认 4 秒，
-        // 否则一次滑动就能让 Dock 一直藏着。
-        if (held > 4000L) {
+        long now = android.os.SystemClock.uptimeMillis();
+        // 兜底只认「手彻底没消息」：按住期间只要还有触摸事件，就一直算按住。
+        // （长按倍速经常一按十几秒，以前 4 秒一刀切，Dock 会自己冒回来。）
+        long[] alive;
+        synchronized (PRESS_ALIVE) { alive = PRESS_ALIVE.get(act); }
+        if (alive == null || now - alive[0] > PRESS_ABANDON_MS) {
             synchronized (PRESS) { PRESS.remove(act); }
+            synchronized (PRESS_ALIVE) { PRESS_ALIVE.remove(act); }
             synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
             return false;
         }
+        long held = now - start[0];
         return held >= PRESS_SPEED_DELAY_MS;
+    }
+
+    /** 宿主 Activity 回到前台：抖掉转场的影响，按当前底栏重新贴一次位置。 */
+    static void onHostResume(Activity act) {
+        if (act == null) return;
+        final Runnable refresh;
+        synchronized (REFRESHERS) { refresh = REFRESHERS.get(act); }
+        if (refresh == null) return;
+        MAIN.postDelayed(refresh, 80L);
+        MAIN.postDelayed(refresh, 360L);
+    }
+
+    /**
+     * 统一的显隐过渡。
+     *
+     * 以前显示是 18ms、隐藏是 24ms，等于硬切；显示还要连续 6 帧确认，
+     * 看起来就是「该出来的时候不出来、出来时又啪一下」。这里一套曲线走完：
+     * 淡入淡出 + 6dp 的轻微上浮 + 0.985 的轻微缩放，所有隐藏理由共用。
+     */
+    private static void animateDock(final View view, final boolean show, final float dy) {
+        if (view == null) return;
+        view.animate().cancel();
+        if (show) {
+            if (view.getVisibility() != View.VISIBLE) view.setVisibility(View.VISIBLE);
+            view.setAlpha(0f);
+            view.setTranslationY(dy);
+            view.setScaleX(0.985f);
+            view.setScaleY(0.985f);
+            view.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+                    .setDuration(SHOW_MS).setInterpolator(TRANSITION).start();
+        } else {
+            view.animate().alpha(0f).translationY(dy * 0.7f)
+                    .scaleX(0.99f).scaleY(0.99f)
+                    .setDuration(HIDE_MS).setInterpolator(TRANSITION)
+                    .withEndAction(new Runnable() {
+                        @Override public void run() {
+                            if (view.getAlpha() < 0.05f) view.setVisibility(View.GONE);
+                        }
+                    }).start();
+        }
     }
 
     static View dockOf(Activity act) {
@@ -464,6 +540,7 @@ final class DockController {
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
         synchronized (PRESS) { PRESS.remove(act); }
+        synchronized (PRESS_ALIVE) { PRESS_ALIVE.remove(act); }
         synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
         synchronized (SPREAD) { SPREAD.remove(act); }
         synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
@@ -479,6 +556,7 @@ final class DockController {
         }
         synchronized (BACKDROPS) { BACKDROPS.remove(act); }
         synchronized (BANDS) { BANDS.remove(act); }
+        synchronized (REFRESHERS) { REFRESHERS.remove(act); }
         Runnable poller;
         boolean[] pollState;
         synchronized (POLLERS) {
@@ -642,7 +720,7 @@ final class DockController {
                 new Runnable() {
                     @Override public void run() {
                         try {
-                            DockSettingsUi.showDialog(act);
+                            DockSettingsUi.openSettings(act);
                         } catch (Throwable t) {
                             Dydock.warnOnce("iso-longpress-settings", "长按打开设置失败: " + t);
                         }
@@ -715,11 +793,17 @@ final class DockController {
         /** Dock 这一条的窗口坐标，applyGeometry 时存下来（原生 Dock 已被设成 GONE）。 */
         final Rect[] bandRect = new Rect[]{null};
         /**
-         * 显示的确认帧数：隐藏立即生效，显示要连续 6 帧（约 100ms）都干净才露出来。
+         * 显示的确认帧数：隐藏立即生效，显示要连续几帧干净才露出来。
          * 滚动、转场、浮层收起这些过程里会有一两帧的空档，不去抖就会一闪一闪。
+         * 手势类 2 帧（约 30ms，抬手就回来），结构类 10 帧（约 160ms，转场里不闪）。
          */
-        final int[] revealTicks = new int[]{SHOW_CONFIRM_FRAMES};
+        final int[] revealTicks = new int[]{FAST_REVEAL_TICKS};
+        /** 上一次隐藏是不是「结构类」理由（覆盖页/浮层/底栏脱离），决定恢复要等几帧。 */
+        final boolean[] lastHideStructural = new boolean[]{false};
         final long[] lastFailLogAt = new long[]{0L};
+        /** 上一次记下的窗口尺寸：转屏 / 分屏才需要重新量底栏位置。 */
+        final int[] lastWindowW = new int[]{decor.getWidth()};
+        final int[] lastWindowH = new int[]{decor.getHeight()};
         final int[] lastAccountedBandW = new int[]{-1};
         final int[] lastAccountedBandH = new int[]{-1};
         /** 背景采样的泵：只在宿主重绘过/区域变过的时候真的重画。 */
@@ -743,6 +827,38 @@ final class DockController {
         final boolean[] chromeUntrusted = new boolean[]{false};
         /** 上一次隐藏是什么原因，只在变化时记一条日志，方便对着日志定位。 */
         final String[] lastHideReason = new String[]{""};
+        final float densityPx = act.getResources().getDisplayMetrics().density;
+
+        final Runnable refreshGeometry = new Runnable() {
+            @Override public void run() {
+                if (!live[0]) return;
+                try {
+                    View d = dockRef[0];
+                    // 位置已经量过就沿用（位置钉死，不跟着宿主底栏漂）。
+                    // 只有还没量到、或者窗口尺寸变了才重新量一次。
+                    int decorW = decor.getWidth();
+                    int decorH = decor.getHeight();
+                    boolean windowChanged = decorW != lastWindowW[0] || decorH != lastWindowH[0];
+                    lastWindowW[0] = decorW;
+                    lastWindowH[0] = decorH;
+                    if (d != null && d.isAttachedToWindow() && d.getWidth() > 0
+                            && (bandRect[0] == null || windowChanged)) {
+                        bandRect[0] = rectInWindow(d);
+                        synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
+                        lastAccountedBandW[0] = d.getWidth();
+                        lastAccountedBandH[0] = d.getHeight();
+                    }
+                    if (bandRect[0] != null) {
+                        applyGeometryInBand(iso, backdrop, d, bandRect[0], tabTargets[0].size());
+                        backdrop.capture();
+                        pushBackdrop(iso, backdrop, lastStamp);
+                    }
+                } catch (Throwable t) {
+                    Dydock.warnOnce("refresh-geometry", "回到前台重算 Dock 位置失败: " + t);
+                }
+            }
+        };
+        synchronized (REFRESHERS) { REFRESHERS.put(act, refreshGeometry); }
 
         final Runnable visibilityPoll = new Runnable() {
             @Override public void run() {
@@ -904,6 +1020,9 @@ final class DockController {
                             || hostHiddenTicks[0] >= 25;
                     if (hidden) {
                         revealTicks[0] = 0;
+                        // 手势类（倍速 / 清屏）抬手就恢复；结构类（覆盖页 / 浮层 / 底栏脱离）
+                        // 要连续干净地撑过一小段时间才恢复，转场里的那几帧空档就不会闪。
+                        lastHideStructural[0] = !(speedPlayback || longPress || clearScreen);
                         String why = hideReason(speedPlayback, longPress, clearScreen,
                                 coveredTicks[0], expandedTicks[0], dockMissingTicks[0],
                                 hostHiddenTicks[0]);
@@ -911,13 +1030,18 @@ final class DockController {
                             lastHideReason[0] = why;
                             Dydock.log("底栏隐藏：" + why);
                         }
-                    } else if (revealTicks[0] < SHOW_CONFIRM_FRAMES) {
-                        revealTicks[0]++;
-                    } else if (!lastHideReason[0].isEmpty()) {
-                        lastHideReason[0] = "";
-                        Dydock.log("底栏恢复显示");
+                    } else {
+                        int need = lastHideStructural[0]
+                                ? STRUCTURAL_REVEAL_TICKS : FAST_REVEAL_TICKS;
+                        if (revealTicks[0] < need) revealTicks[0]++;
+                        if (revealTicks[0] >= need && !lastHideReason[0].isEmpty()) {
+                            lastHideReason[0] = "";
+                            Dydock.log("底栏恢复显示");
+                        }
                     }
-                    boolean show = !hidden && revealTicks[0] >= SHOW_CONFIRM_FRAMES;
+                    int needed = lastHideStructural[0]
+                            ? STRUCTURAL_REVEAL_TICKS : FAST_REVEAL_TICKS;
+                    boolean show = !hidden && revealTicks[0] >= needed;
 
                     // 位置只在「尺寸真的变了」的时候重算（旋转、导航模式变化、底栏重建）。
                     // 不跟位置走：抖音底栏滚动时会上下位移，跟着它算玻璃就会一路漂。
@@ -927,7 +1051,17 @@ final class DockController {
                         int h = d.getHeight();
                         boolean sizeChanged = w != lastAccountedBandW[0]
                                 || h != lastAccountedBandH[0];
-                        if (sizeChanged || bandRect[0] == null) {
+                        // 位置一旦量好就钉死：宿主底栏滚动、全屏进出、重建底栏都不跟着动。
+                        // （以前会跟着重新量，结果 Dock 时不时漂到系统导航条上。）
+                        // 只有「底栏尺寸变了」或者「窗口尺寸变了（转屏 / 分屏）」才重新量。
+                        int decorW = decor.getWidth();
+                        int decorH = decor.getHeight();
+                        boolean windowChanged = decorW != lastWindowW[0] || decorH != lastWindowH[0];
+                        if (windowChanged) {
+                            lastWindowW[0] = decorW;
+                            lastWindowH[0] = decorH;
+                        }
+                        if (sizeChanged || windowChanged || bandRect[0] == null) {
                             lastAccountedBandW[0] = w;
                             lastAccountedBandH[0] = h;
                             lastBandSig[0] = bandSignature(d);
@@ -949,11 +1083,15 @@ final class DockController {
                         }
                     }
 
-                    // 从隐藏回到显示：页面切回来了，按当前底栏重新贴一次位置，避免用的是旧坐标。
+                    // 从隐藏回到显示：位置沿用锁定的那一份，只把背景换一帧。
+                    // （以前这里会重新量一次底栏坐标 —— 页面一换坐标就变，Dock 就漂了。）
                     if (show && !overlayTargetVisible[0] && d != null) {
-                        bandRect[0] = rectInWindow(d);
-                        synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
-                        applyGeometry(iso, backdrop, d, tabTargets[0].size());
+                        if (bandRect[0] == null) {
+                            bandRect[0] = rectInWindow(d);
+                            synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
+                            applyGeometryInBand(iso, backdrop, d, bandRect[0],
+                                    tabTargets[0].size());
+                        }
                         try {
                             backdrop.capture();
                         } catch (Throwable ignored) {
@@ -968,22 +1106,7 @@ final class DockController {
                     if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
-                        iso.view.animate().cancel();
-                        if (show) {
-                            if (iso.view.getVisibility() != View.VISIBLE) {
-                                iso.view.setVisibility(View.VISIBLE);
-                            }
-                            iso.view.animate().alpha(1f).setDuration(18L).start();
-                        } else {
-                            iso.view.animate().alpha(0f).setDuration(24L)
-                                    .withEndAction(new Runnable() {
-                                        @Override public void run() {
-                                            if (!overlayTargetVisible[0]) {
-                                                iso.view.setVisibility(View.GONE);
-                                            }
-                                        }
-                                    }).start();
-                        }
+                        animateDock(iso.view, show, 6f * densityPx);
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
@@ -1017,7 +1140,6 @@ final class DockController {
             }
         }, 5000L);
 
-        toast(act, "Dydock " + Dydock.VER + "：玻璃底栏已接管");
         Dydock.log("底栏已接管：" + initialTabs.size() + " 个图标"
                 + (plus != null ? " ＋ 独立一块" : "")
                 + "，底栏 " + dock.getWidth() + "x" + dock.getHeight()
@@ -1307,7 +1429,6 @@ final class DockController {
             int[] overlayLocation = new int[2];
             iso.view.getLocationInWindow(overlayLocation);
 
-            int bandLeft = band.left - overlayLocation[0];
             int bandTop = band.top - overlayLocation[1];
             int edge = (int) (DockPrefs.sideMarginDp(ctx) * density);
             int gap = (int) (8f * density);
@@ -1319,7 +1440,12 @@ final class DockController {
             int tabsWidth = tabWidth * count + innerPad;
             int plusBlock = plusSize > 0 ? gap + plusSize : 0;
             int total = tabsWidth + plusBlock;
-            int available = band.width() - edge * 2;
+            // 水平居中一律按覆盖层自己的宽度算，不再跟着原生底栏的 left 走。
+            // 以前从聊天框/会话页返回时，宿主底栏还没重新量好，band.left 是旧的，
+            // 整组就跟着偏到左边去；覆盖层永远是整屏宽，拿它当基准就没有这个问题。
+            int baseWidth = iso.view.getWidth() > 0 ? iso.view.getWidth() : band.width();
+            if (baseWidth <= 0) baseWidth = band.width();
+            int available = baseWidth - edge * 2;
             if (total > available) {
                 // 窄屏：先压胶囊，保住「＋」，但不低过每格 48dp，再窄就让它居中溢出一点。
                 tabsWidth = Math.max((int) (48f * density) * count,
@@ -1329,8 +1455,18 @@ final class DockController {
             if (tabsWidth <= 0) return;
 
             // 两个 dock 作为一整组水平居中；「＋」紧贴胶囊右边，只留 8dp。
-            int groupLeft = bandLeft + (band.width() - total) / 2;
+            int groupLeft = Math.max(edge, (baseWidth - total) / 2);
             int top = bandTop + band.height() - (int) (DockPrefs.bottomGapDp(ctx) * density) - pill;
+
+            // 位置兜底：不许压到系统导航条（手势条）上。
+            // 全屏页面上底栏会贴到屏幕最底，量到的 band 就是「贴着边」的；
+            // 之后回到普通页面如果还沿用那次量到的坐标，Dock 就叠在系统导航条上了。
+            int overlayHeight = iso.view.getHeight();
+            int navBottom = navigationBarInsetBottom(dock);
+            if (overlayHeight > 0 && navBottom > 0) {
+                int limit = overlayHeight - navBottom - (int) (2f * density) - pill;
+                if (top > limit) top = limit;
+            }
 
             Rect tabsRect = new Rect(groupLeft, top, groupLeft + tabsWidth, top + pill);
             Rect plusRect = plusSize > 0
@@ -1465,6 +1601,8 @@ final class DockController {
                 if (selected < 0 && isSelectedDeep(item, 0)) selected = i;
             }
             iso.setTabs(labels, icons, selected < 0 ? 0 : selected);
+            // 「我的」页才需要那个 dydock 入口：只在这一页监听菜单里的设置项。
+            DockSettingsUi.onTabSelected(Shield.activityOf(tabs.get(0)), selected < 0 ? 0 : selected);
         } catch (Throwable t) {
             Dydock.warnOnce("iso-tabs", "同步导航状态失败: " + t);
         }
@@ -1577,6 +1715,28 @@ final class DockController {
         h = h * 31 + v.getWidth();
         h = h * 31 + v.getHeight();
         return h;
+    }
+
+    /**
+     * 系统导航条（手势条）在窗口底部占掉的高度。
+     *
+     * 抖音全屏播放时这条是 0，回到普通页面又会恢复。玻璃 Dock 一律不许压进这一段，
+     * 否则看起来就是「Dock 跑到系统导航上去了」。
+     */
+    private static int navigationBarInsetBottom(View v) {
+        if (v == null) return 0;
+        try {
+            android.view.WindowInsets insets = v.getRootWindowInsets();
+            if (insets == null) return 0;
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                return insets.getInsets(android.view.WindowInsets.Type.navigationBars()).bottom;
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 20) {
+                return insets.getStableInsetBottom();
+            }
+        } catch (Throwable ignored) {
+        }
+        return 0;
     }
 
     private static Rect rectInWindow(View v) {

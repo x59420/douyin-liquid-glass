@@ -408,6 +408,11 @@ final class Shield {
                 || r.height() < page.height() * 0.28f) return false;
         if (dockRect != null && !dockRect.isEmpty() && !Rect.intersects(r, dockRect)) return false;
         String name = view.getClass().getName().toLowerCase();
+        // 评论区（以及消息页的会话面板）：抖音原生在这里**不会**收底栏，
+        // 底栏就一直贴在评论区底下。旧版把它当「压在 Dock 上的浮层」，
+        // 于是评论一展开 Dock 收掉、面板铺好后判据又不成立，Dock 再冒出来 —— 用户看到的就是闪一下。
+        // 这里直接排除，评论区开合与 Dock 显隐彻底解耦。
+        if (isConversationPanel(view, r, page, name)) return false;
         // Do not classify arbitrary large background containers as menus.
         // The host's normal feed/page containers also have backgrounds and children;
         // treating them as expanded panels makes the Dock appear briefly, then vanish.

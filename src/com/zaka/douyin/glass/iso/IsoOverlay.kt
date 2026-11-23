@@ -8,13 +8,11 @@ import android.os.Build
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
@@ -29,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,6 +39,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
@@ -126,7 +126,8 @@ class IsoOverlay private constructor(
     private var region by mutableStateOf(Rect())
     private var tabsRect by mutableStateOf(Rect())
     private var plusRect by mutableStateOf(Rect())
-    private var backdropImage by mutableStateOf<ImageBitmap?>(null)
+    /** 宿主采来的背景帧。用 State 而不是普通变量：玻璃在绘制阶段读它，换帧就自动重录。 */
+    private val backdropImage = mutableStateOf<ImageBitmap?>(null)
     private var labels by mutableStateOf<List<String>>(emptyList())
     private var icons by mutableStateOf<List<ImageBitmap?>>(emptyList())
     private var selectedIndex by mutableIntStateOf(0)
@@ -226,7 +227,7 @@ class IsoOverlay private constructor(
     /** 宿主采来的底栏那一条真实画面。所有权交给这里，宿主每帧给的都是新副本。 */
     fun setBackdrop(bitmap: Bitmap?) {
         if (disposed || bitmap == null || bitmap.isRecycled) return
-        backdropImage = try {
+        backdropImage.value = try {
             bitmap.asImageBitmap()
         } catch (t: Throwable) {
             log("背景位图转换失败：$t")
@@ -237,7 +238,7 @@ class IsoOverlay private constructor(
     /** 采样画面整片发黑时把它清掉：宁可只留玻璃本身的模糊，也不要一块黑玻璃。 */
     fun clearBackdrop() {
         if (disposed) return
-        backdropImage = null
+        backdropImage.value = null
     }
 
     fun setTabs(labelArray: Array<String>, iconArray: Array<Bitmap?>, selected: Int) {
@@ -277,7 +278,7 @@ class IsoOverlay private constructor(
         } catch (_: Throwable) {
         }
         overlayOwner.destroy()
-        backdropImage = null
+        backdropImage.value = null
     }
 
     private fun log(message: String) {
@@ -377,7 +378,7 @@ private fun LineTabIcon(index: Int, color: Color) {
 
 @Composable
 private fun GlassSurface(
-    image: ImageBitmap?,
+    image: MutableState<ImageBitmap?>,
     region: Rect,
     tabsRect: Rect,
     plusRect: Rect,
@@ -389,7 +390,22 @@ private fun GlassSurface(
     onLongPress: () -> Unit,
     onDrawn: () -> Unit
 ) {
-    val backdrop = rememberLayerBackdrop()
+    // 背景层只做记录，不负责显示：画面由宿主采集好之后交给这里，
+    // 玻璃（drawBackdrop）自己去采样。界面上不会再画一份副本。
+    val backdrop = rememberLayerBackdrop(onDraw = {
+        val frame = image.value
+        if (frame != null && size.width > 0f && size.height > 0f) {
+            drawImage(
+                image = frame,
+                dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                dstSize = androidx.compose.ui.unit.IntSize(
+                    size.width.toInt().coerceAtLeast(1),
+                    size.height.toInt().coerceAtLeast(1),
+                ),
+                filterQuality = FilterQuality.Low,
+            )
+        }
+    })
     val density = LocalDensity.current
     // 33 以下没有 RuntimeShader；个别机型/ROM 上 AGSL 编译会直接抛错，
     // 这里先探一次：探不通就走 Miuix 自带的「无模糊」降级，绝不让一帧着色器异常把整层玻璃干掉。
@@ -406,11 +422,8 @@ private fun GlassSurface(
             .fillMaxSize()
             .onGloballyPositioned { onDrawn() }
     ) {
-        if (image != null && region.width() > 0 && region.height() > 0) {
-            Image(
-                bitmap = image,
-                contentDescription = null,
-                contentScale = ContentScale.FillBounds,
+        if (region.width() > 0 && region.height() > 0) {
+            Box(
                 modifier = Modifier
                     .offset(with(density) { region.left.toDp() }, with(density) { region.top.toDp() })
                     .size(
@@ -439,7 +452,9 @@ private fun GlassSurface(
                     onSelected = onTabClick,
                     backdrop = backdrop,
                     tabsCount = labels.size,
-                    isBlurEnabled = isBlurEnabled
+                    isBlurEnabled = isBlurEnabled,
+                    barWidth = with(density) { tabsRect.width().toDp() },
+                    barHeight = with(density) { tabsRect.height().toDp() }
                 ) { activate ->
                     labels.forEachIndexed { index, label ->
                         FloatingBottomBarItem(
@@ -448,17 +463,21 @@ private fun GlassSurface(
                             // KernelSU 的 BottomBarMiuix 就是给每个 item 定 76dp 最小宽度，
                             // FloatingBottomBar 用的是 width(IntrinsicSize.Min)，没有这个下限
                             // 胶囊会被内容挤到很窄，看起来像「玻璃没出来」。
-                            modifier = Modifier.defaultMinSize(minWidth = 76.dp)
+                            modifier = Modifier
                         ) {
                             LineTabIcon(index = index, color = LocalContentColor.current)
-                            Text(
-                                text = label,
-                                fontSize = 11.sp,
-                                lineHeight = 14.sp,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Visible
-                            )
+                            // 关掉文字标签时不再塞一个空 Text —— 空 Text 照样占 14sp 的行高，
+                            // 图标会被顶在上面。没有这个兄弟节点，Column 自然把图标居中。
+                            if (label.isNotEmpty()) {
+                                Text(
+                                    text = label,
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Visible
+                                )
+                            }
                         }
                     }
                 }

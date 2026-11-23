@@ -58,6 +58,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastCoerceIn
@@ -210,6 +211,17 @@ fun FloatingBottomBar(
     backdrop: Backdrop,
     tabsCount: Int,
     isBlurEnabled: Boolean = true,
+    /**
+     * 胶囊的实测宽度。
+     *
+     * KernelSU 那边是 `width(IntrinsicSize.Min)`（按内容自己撑开），因为它的底栏铺满屏宽。
+     * 我们这边宽度是宿主算好后传进来的（要比原生窄、还要留出右边「＋」），
+     * 让胶囊死按这个宽度走，玻璃采样区域和实际画出来的形状才对得上。
+     * 传 null 时保持 KernelSU 原样。
+     */
+    barWidth: Dp? = null,
+    /** 胶囊高度；内部内容高 8dp 作为上下留白，和 KernelSU 的 64 / 56 是同一套比例。 */
+    barHeight: Dp = 64.dp,
     content: @Composable RowScope.((Int) -> Unit) -> Unit
 ) {
     val isInDark = isSystemInDarkTheme()
@@ -334,8 +346,11 @@ fun FloatingBottomBar(
 
     val combinedBackdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop)
 
+    val innerHeight = barHeight - 8.dp
     Box(
-        modifier = modifier.width(IntrinsicSize.Min),
+        modifier = modifier.then(
+            if (barWidth != null) Modifier.width(barWidth) else Modifier.width(IntrinsicSize.Min)
+        ),
         contentAlignment = Alignment.CenterStart
     ) {
         Row(
@@ -388,7 +403,7 @@ fun FloatingBottomBar(
                     } else Modifier
                 )
                 .then(dampedDragAnimation.modifier)
-                .height(64.dp)
+                .height(barHeight)
                 .padding(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -424,7 +439,7 @@ fun FloatingBottomBar(
                             onDrawSurface = { drawRect(containerColor) },
                         )
                         .then(interactiveHighlight?.modifier ?: Modifier)
-                        .height(56.dp)
+                        .height(innerHeight)
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     content = { content(::activateTab) }
@@ -491,7 +506,7 @@ fun FloatingBottomBar(
                         }
                         .clip(pillShape)
                         .background(accentColor.copy(alpha = 0.15f), pillShape)
-                        .height(56.dp)
+                        .height(innerHeight)
                         .width(tabWidthDp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
@@ -501,7 +516,7 @@ fun FloatingBottomBar(
                                 .clearAndSetSemantics {}
                                 .wrapContentWidth(align = Alignment.Start, unbounded = true)
                                 .requiredWidth(with(density) { (totalWidthPx - 8.dp.toPx()).toDp() })
-                                .height(56.dp)
+                                .height(innerHeight)
                                 .graphicsLayer {
                                     val progressOffset = dampedDragAnimation.value * tabWidthPx
                                     translationX = if (isLtr) -progressOffset else progressOffset

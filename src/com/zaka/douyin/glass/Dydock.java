@@ -27,7 +27,7 @@ import de.robv.android.xposed.XposedBridge;
 public final class Dydock {
 
     public static final String TAG = "dydock";
-    public static final String VER = "0.4.3";
+    public static final String VER = "0.5.0";
     public static final String HOST = "com.ss.android.ugc.aweme";
     public static final String PKG = "com.zaka.douyin.glass";
 
@@ -40,6 +40,8 @@ public final class Dydock {
     private static volatile Uri logUri;
     private static volatile File fallbackFile;
     private static volatile boolean fileReady;
+    /** 日志开关：默认开，设置页里关掉之后日常流程不再写日志。 */
+    private static volatile boolean verbose = true;
     private static volatile Thread.UncaughtExceptionHandler previousCrashHandler;
 
     private Dydock() {
@@ -51,6 +53,10 @@ public final class Dydock {
         synchronized (FILE_LOCK) {
             if (appContext != null) return;
             appContext = context.getApplicationContext();
+        }
+        try {
+            verbose = DockPrefs.logEnabled(context);
+        } catch (Throwable ignored) {
         }
         // 诊断文件走 MediaStore，放到后台线程建，别在宿主启动那一下卡主线程。
         Thread worker = new Thread(new Runnable() {
@@ -150,7 +156,17 @@ public final class Dydock {
     }
 
     public static void log(String msg) {
+        if (!verbose) return;
         push("I", msg, null);
+    }
+
+    /** 设置页的日志开关：关掉之后日常流程不再刷日志，警告/错误照旧。 */
+    public static void setVerbose(boolean value) {
+        verbose = value;
+    }
+
+    public static boolean verbose() {
+        return verbose;
     }
 
     public static void warn(String msg) {

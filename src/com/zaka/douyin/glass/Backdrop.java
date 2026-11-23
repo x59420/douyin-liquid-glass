@@ -42,7 +42,7 @@ public final class Backdrop {
     /** 视频层重新扫描的间隔 */
     private static final long RESCAN_MS = 1500L;
     /** 两次内容树重绘之间的最小间隔（约 10fps）。玻璃后面还压着一层 4dp 模糊，够用且不抢帧。 */
-    private static final long UI_GAP_MS = 96L;
+    private static final long UI_GAP_MS = 80L;
     /** 视频层帧多久算过期。过期就不参与合成 —— 换页后残留的旧画面就是「别的界面」。 */
     private static final long LAYER_MAX_AGE_MS = 500L;
 
@@ -165,6 +165,16 @@ public final class Backdrop {
         return out;
     }
 
+    /** 有没有正在播放的视频层（SurfaceView / TextureView 都算）。 */
+    private boolean hasLiveVideoLayer() {
+        for (Layer l : layers) {
+            View v = l.view;
+            if (v != null && v.isAttachedToWindow() && v.isShown()
+                    && v.getWidth() > 16 && v.getHeight() > 16) return true;
+        }
+        return false;
+    }
+
     private boolean hasVideo() {
         for (Layer l : layers) {
             if (l.valid) return true;
@@ -225,7 +235,10 @@ public final class Backdrop {
         attachPreDraw();
         int drawn = drawCount.get();
         boolean changed = drawn != lastPumpedDrawCount;
-        if (!changed && !force) return;
+        // 播放中的视频层不会让 View 树重绘，只看「重绘次数」的话画面会冻在第一帧，
+        // 玻璃里就是一张不动的旧截图。有活着的视频层时按固定节奏重新抓。
+        boolean live = hasLiveVideoLayer();
+        if (!changed && !force && !live) return;
         long now = SystemClock.uptimeMillis();
         if (now - lastUiAt < UI_GAP_MS) return;
         lastUiAt = now;

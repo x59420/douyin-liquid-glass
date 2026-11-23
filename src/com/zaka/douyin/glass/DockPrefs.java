@@ -22,6 +22,8 @@ final class DockPrefs {
     private static final String KEY_SHOW_PLUS = "show_plus";
     private static final String KEY_SHOW_LABELS = "show_labels";
     private static final String KEY_ENTRY_OFFSET = "entry_top_offset_dp";
+    /** 日志开关：关掉之后只留警告/错误，LSPosed 里不再刷日常流程。 */
+    private static final String KEY_LOG = "verbose_log";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -111,6 +113,15 @@ final class DockPrefs {
         return clamp(readInt(context, KEY_ENTRY_OFFSET, 0), 0, 240);
     }
 
+    /** 日志开关（默认开）：关掉只保留警告/错误。 */
+    static boolean logEnabled(Context context) {
+        return readBool(context, KEY_LOG, true);
+    }
+
+    static void setLogEnabled(Context context, boolean value) {
+        writeBool(context, KEY_LOG, value);
+    }
+
     static void setEntryOffsetDp(Context context, int value) {
         writeInt(context, KEY_ENTRY_OFFSET, clamp(value, 0, 240));
     }
@@ -119,6 +130,24 @@ final class DockPrefs {
         try {
             prefs(context).edit().clear()
                     .putLong(KEY_REV, System.currentTimeMillis()).apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 让抖音进程读得到这份配置。
+     *
+     * 设置界面跑在模块进程里，写的是模块包名下的 SharedPreferences；宿主进程用
+     * XSharedPreferences 直接读这个文件。这里把文件和目录设成「其他用户可读/可进入」，
+     * 不需要 Xposed API（模块进程里没有那个类），纯 java.io 就够。
+     */
+    static void publish(Context context) {
+        try {
+            String dataDir = context.getApplicationInfo().dataDir;
+            java.io.File file = new java.io.File(dataDir, "shared_prefs/" + NAME + ".xml");
+            java.io.File dir = file.getParentFile();
+            if (dir != null && dir.isDirectory()) dir.setExecutable(true, false);
+            if (file.isFile()) file.setReadable(true, false);
         } catch (Throwable ignored) {
         }
     }
@@ -157,8 +186,10 @@ final class DockPrefs {
             editor.putInt(KEY_SIDE_MARGIN, remote.getInt(KEY_SIDE_MARGIN, DEF_SIDE_MARGIN));
             editor.putInt(KEY_BOTTOM_GAP, remote.getInt(KEY_BOTTOM_GAP, DEF_BOTTOM_GAP));
             editor.putInt(KEY_ENTRY_OFFSET, remote.getInt(KEY_ENTRY_OFFSET, 0));
+            editor.putBoolean(KEY_LOG, remote.getBoolean(KEY_LOG, true));
             editor.putLong(KEY_REV, remoteRev);
             editor.apply();
+            Dydock.setVerbose(remote.getBoolean(KEY_LOG, true));
             return true;
         } catch (Throwable t) {
             return false;
