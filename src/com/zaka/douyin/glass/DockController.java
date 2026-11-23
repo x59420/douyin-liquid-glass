@@ -799,6 +799,9 @@ final class DockController {
         final boolean[] lastHideStructural = new boolean[]{false};
         final long[] lastFailLogAt = new long[]{0L};
         /** 上一次记下的窗口尺寸：转屏 / 分屏才需要重新量底栏位置。 */
+        /** 锚点自检：低频看一眼锚点还对不对，错了才重新锚定。 */
+        final long[] lastAnchorCheckAt = new long[]{0L};
+        final int[] anchorDrift = new int[]{0};
         final int[] lastWindowW = new int[]{decor.getWidth()};
         final int[] lastWindowH = new int[]{decor.getHeight()};
         final int[] lastAccountedBandW = new int[]{-1};
@@ -840,7 +843,14 @@ final class DockController {
                     lastWindowH[0] = decorH;
                     if (d != null && d.isAttachedToWindow() && d.getWidth() > 0
                             && (bandRect[0] == null || windowChanged)) {
-                        bandRect[0] = rectInWindow(d);
+                        int nav = navigationBarInsetBottom(d);
+                        int pillPx = (int) (DockPrefs.heightDp(act) * densityPx);
+                        Rect measured = rectInWindow(d);
+                        if (!validBand(measured, decor, nav, densityPx)) {
+                            measured = fallbackBand(decor, nav, densityPx,
+                                    DockPrefs.bottomGapDp(act), pillPx);
+                        }
+                        bandRect[0] = measured;
                         synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
                         lastAccountedBandW[0] = d.getWidth();
                         lastAccountedBandH[0] = d.getHeight();
@@ -1062,7 +1072,17 @@ final class DockController {
                             lastAccountedBandW[0] = w;
                             lastAccountedBandH[0] = h;
                             lastBandSig[0] = bandSignature(d);
-                            bandRect[0] = rectInWindow(d);
+                            int nav = navigationBarInsetBottom(d);
+                            int pillPx = (int) (DockPrefs.heightDp(act) * densityPx);
+                            Rect measured = rectInWindow(d);
+                            if (!validBand(measured, decor, nav, densityPx)) {
+                                // 量到的位置不可信（全屏刚退出、底栏还没量好……）：
+                                // 用「导航条上方」这个永远成立的兜底，绝不把错的定下来。
+                                measured = fallbackBand(decor, nav, densityPx,
+                                        DockPrefs.bottomGapDp(act), pillPx);
+                                Dydock.log("底栏:量到的位置不可信，改用导航条上方的兜底位置");
+                            }
+                            bandRect[0] = measured;
                             synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
                             applyGeometry(iso, backdrop, d, tabTargets[0].size());
                             try {
@@ -1071,6 +1091,53 @@ final class DockController {
                             }
                         }
                     }
+                    // 锚点自检（1.5 秒一次）：
+                    //   1. 锚点本身不合理（比如退全屏之后导航条回来了，旧锚点压着它）→ 立刻修；
+                    //   2. 宿主底栏长期停在明显不同的位置（差 40dp 以上，连续两次）→ 重新锚定。
+                    // 只在这两种情况下动位置，平时死死钉住，不会一路漂。
+                    if (d != null && now - lastAnchorCheckAt[0] >= 1500L) {
+                        lastAnchorCheckAt[0] = now;
+                        int nav = navigationBarInsetBottom(d);
+                        int pillPx = (int) (DockPrefs.heightDp(act) * densityPx);
+                        Rect live = d.isAttachedToWindow() ? rectInWindow(d) : null;
+                        boolean liveOk = live != null && validBand(live, decor, nav, densityPx);
+                        if (!validBand(bandRect[0], decor, nav, densityPx)) {
+                            Rect fixed = liveOk ? live
+                                    : fallbackBand(decor, nav, densityPx,
+                                            DockPrefs.bottomGapDp(act), pillPx);
+                            bandRect[0] = fixed;
+                            synchronized (BANDS) { BANDS.put(act, fixed); }
+                            applyGeometryInBand(iso, backdrop, d, fixed, tabTargets[0].size());
+                            try {
+                                backdrop.capture();
+                            } catch (Throwable ignored) {
+                            }
+                            Dydock.log("底栏:锚点不合理，已重新锚定");
+                            anchorDrift[0] = 0;
+                        } else if (liveOk) {
+                            float tol = 40f * densityPx;
+                            if (Math.abs(live.bottom - bandRect[0].bottom) > tol) {
+                                anchorDrift[0]++;
+                                if (anchorDrift[0] >= 2) {
+                                    bandRect[0] = live;
+                                    synchronized (BANDS) { BANDS.put(act, live); }
+                                    lastAccountedBandW[0] = d.getWidth();
+                                    lastAccountedBandH[0] = d.getHeight();
+                                    applyGeometryInBand(iso, backdrop, d, live,
+                                            tabTargets[0].size());
+                                    try {
+                                        backdrop.capture();
+                                    } catch (Throwable ignored) {
+                                    }
+                                    Dydock.log("底栏:宿主底栏位置与锚点差得远，重新锚定一次");
+                                    anchorDrift[0] = 0;
+                                }
+                            } else {
+                                anchorDrift[0] = 0;
+                            }
+                        }
+                    }
+
                     // 模块自己那个设置页改过配置：读进来立刻生效，不用重开抖音。
                     if (now - lastPrefsSyncAt[0] >= 1000L) {
                         lastPrefsSyncAt[0] = now;
@@ -1734,6 +1801,37 @@ final class DockController {
         } catch (Throwable ignored) {
         }
         return 0;
+    }
+
+    /**
+     * 量到的底栏那一条合不合理。
+     *
+     * 不合理就不能拿它当锚点 —— 比如全屏播放时量到的位置贴着屏幕最底，
+     * 拿这个当锚点，Dock 就会一直压在系统导航条上。
+     */
+    private static boolean validBand(Rect band, View decor, int navBottom, float density) {
+        if (band == null || band.width() <= 0 || band.height() <= 0) return false;
+        int windowHeight = decor == null ? 0 : decor.getHeight();
+        if (windowHeight <= 0) return true;
+        float tol = 4f * density;
+        if (band.bottom > windowHeight - navBottom + tol) return false;   // 压进导航条
+        if (band.top < windowHeight * 0.45f) return false;                // 太靠上，不可能是底栏
+        if (band.height() > 160f * density) return false;
+        return true;
+    }
+
+    /**
+     * 量不出可信位置时的兜底：就贴在系统导航条上方，按设置里的「离底部间距」留白。
+     *
+     * 这条永远是对的，不依赖宿主有没有量好、也不依赖底栏在不在窗口里。
+     */
+    private static Rect fallbackBand(View decor, int navBottom, float density, int bottomGapDp,
+                                     int pillPx) {
+        int windowWidth = decor == null ? 0 : decor.getWidth();
+        int windowHeight = decor == null ? 0 : decor.getHeight();
+        int bottom = windowHeight - navBottom;
+        int top = bottom - Math.max(pillPx, (int) (32f * density));
+        return new Rect(0, top, windowWidth, bottom);
     }
 
     private static Rect rectInWindow(View v) {
