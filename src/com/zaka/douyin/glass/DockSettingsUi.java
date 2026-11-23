@@ -37,9 +37,28 @@ final class DockSettingsUi {
     /** 每个 Activity 一个监听器（只在自己这一页有效）。 */
     private static final WeakHashMap<Activity, Watcher> WATCHERS =
             new WeakHashMap<Activity, Watcher>();
-    /** 我们插进去的那一行，用来判断它还在不在（菜单被重建之后要重插）。 */
-    private static final WeakHashMap<Activity, View> ENTRIES =
-            new WeakHashMap<Activity, View>();
+    /** 记录插入项及其原生设置行，确保停止监听时能完整还原宿主布局。 */
+    private static final WeakHashMap<Activity, EntryRecord> ENTRIES =
+            new WeakHashMap<Activity, EntryRecord>();
+
+    private static final class EntryRecord {
+        final View entry;
+        final ViewGroup parent;
+        final View item;
+        final View wrapper;
+        final ViewGroup.LayoutParams itemParams;
+        final int index;
+
+        EntryRecord(View entry, ViewGroup parent, View item, View wrapper,
+                    ViewGroup.LayoutParams itemParams, int index) {
+            this.entry = entry;
+            this.parent = parent;
+            this.item = item;
+            this.wrapper = wrapper;
+            this.itemParams = itemParams;
+            this.index = index;
+        }
+    }
 
     private DockSettingsUi() {
     }
@@ -75,7 +94,36 @@ final class DockSettingsUi {
         Watcher watcher;
         synchronized (WATCHERS) { watcher = WATCHERS.remove(act); }
         if (watcher != null) watcher.stop();
-        synchronized (ENTRIES) { ENTRIES.remove(act); }
+        EntryRecord record;
+        synchronized (ENTRIES) { record = ENTRIES.remove(act); }
+        removeEntry(record);
+    }
+
+    /** 移除模块入口；若曾包裹原生「设置」行，则把原生 View 和原布局参数原样放回。 */
+    private static void removeEntry(EntryRecord record) {
+        if (record == null) return;
+        try {
+            if (record.wrapper instanceof ViewGroup && record.item != null
+                    && record.parent != null) {
+                ViewGroup wrapper = (ViewGroup) record.wrapper;
+                if (record.entry.getParent() instanceof ViewGroup) {
+                    ((ViewGroup) record.entry.getParent()).removeView(record.entry);
+                }
+                if (record.item.getParent() instanceof ViewGroup) {
+                    ((ViewGroup) record.item.getParent()).removeView(record.item);
+                }
+                int at = record.parent.indexOfChild(wrapper);
+                if (at >= 0) record.parent.removeViewAt(at);
+                if (record.item.getParent() == null) {
+                    record.parent.addView(record.item, Math.min(Math.max(0, at),
+                            record.parent.getChildCount()), record.itemParams);
+                }
+            } else if (record.entry.getParent() instanceof ViewGroup) {
+                ((ViewGroup) record.entry.getParent()).removeView(record.entry);
+            }
+        } catch (Throwable t) {
+            Dydock.warnOnce("settings-remove", "清理重复设置入口时未能完整还原菜单: " + t);
+        }
     }
 
     /** 打开模块自己的设置界面（新的整屏界面，液态玻璃风格）。 */
@@ -127,9 +175,9 @@ final class DockSettingsUi {
                 return;
             }
             try {
-                View entry;
-                synchronized (ENTRIES) { entry = ENTRIES.get(act); }
-                boolean attached = entry != null && entry.isAttachedToWindow();
+                EntryRecord record;
+                synchronized (ENTRIES) { record = ENTRIES.get(act); }
+                boolean attached = record != null && record.entry.isAttachedToWindow();
                 if (!attached) {
                     attempts++;
                     if (inject(act)) {
@@ -153,6 +201,7 @@ final class DockSettingsUi {
         int index = Math.max(0, Math.min(hit.index, parent.getChildCount()));
 
         View row = buildRow(act, hit);
+        row.setContentDescription("Dydock settings entry");
         ViewGroup.LayoutParams source = hit.item.getLayoutParams();
         boolean horizontal = parent instanceof LinearLayout
                 && ((LinearLayout) parent).getOrientation() == LinearLayout.HORIZONTAL;
@@ -161,7 +210,12 @@ final class DockSettingsUi {
             // 我们这一项放在它**左边**，原生那一行保持原样在右边。
             // （只是包一层，原生控件还是原来那个实例，点击/绑定都不受影响。）
             if (wrapBeside(act, parent, index, hit.item, row)) {
-                synchronized (ENTRIES) { ENTRIES.put(act, row); }
+                View wrapper = hit.item.getParent() instanceof ViewGroup
+                        ? (View) hit.item.getParent() : null;
+                synchronized (ENTRIES) {
+                    ENTRIES.put(act, new EntryRecord(row, parent, hit.item, wrapper,
+                            source, index));
+                }
                 Dydock.log("设置入口:已放在「设置」左边");
                 return true;
             }
@@ -187,7 +241,9 @@ final class DockSettingsUi {
             Dydock.warnOnce("settings-add", "插入入口被宿主拒绝: " + t);
             return false;
         }
-        synchronized (ENTRIES) { ENTRIES.put(act, row); }
+        synchronized (ENTRIES) {
+            ENTRIES.put(act, new EntryRecord(row, parent, null, null, null, index));
+        }
         Dydock.log("设置入口:已插到「设置」前面（第 " + index + " 项，共 "
                 + parent.getChildCount() + " 项）");
         return true;
