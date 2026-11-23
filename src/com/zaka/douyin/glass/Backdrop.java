@@ -696,15 +696,22 @@ public final class Backdrop {
     /**
      * 记一次「这一帧是不是黑的」。
      *
-     * 连续三帧整片黑就判定这一层采不到（PixelCopy 抓 SurfaceView 在部分机型/播放器上
-     * 就是全黑，或者拿的是受保护图层），之后不再用它，也不再把它那块从 UI 层挖掉 ——
-     * 否则玻璃底下永远是一块黑。
+     * SurfaceView 的 PixelCopy 可能在切帧/首帧阶段短暂返回黑图；连续多帧才降级。
+     * TextureView.getBitmap() 是直接读取纹理，黑画面也可能是真实暗场，不用亮度阈值禁用。
      */
     private static void noteFrameLuma(Layer l) {
         if (l == null || l.frame == null) return;
+        if (!(l.view instanceof SurfaceView)) {
+            l.blackHits = 0;
+            l.usable = true;
+            return;
+        }
         if (quickLuma(l.frame) < 12) {
             l.blackHits++;
-            if (l.blackHits >= 3) l.usable = false;
+            if (l.blackHits >= 8 && l.usable) {
+                l.usable = false;
+                Dydock.warnOnce("pixelcopy-dark", "SurfaceView 连续多帧采样接近全黑，已停止挖空该区域并回退内容树背景");
+            }
         } else {
             l.blackHits = 0;
             l.usable = true;
