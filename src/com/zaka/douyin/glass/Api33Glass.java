@@ -1,96 +1,120 @@
 package com.zaka.douyin.glass;
 
 import android.graphics.Bitmap;
-import android.graphics.BitmapShader;
 import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RecordingCanvas;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.RenderEffect;
+import android.graphics.RenderNode;
 import android.graphics.RuntimeShader;
 import android.graphics.Shader;
 import android.view.View;
 
-/** API 33+ RuntimeShader adapter. Loaded only after the SDK guard succeeds. */
+/**
+ * API 33+ GPU implementation of KernelSU's Miuix backdrop chain:
+ * vibrancy -> 4dp Gaussian blur -> rounded-rectangle SDF lens.
+ *
+ * The sampled backdrop is recorded into a RenderNode; RenderEffect performs
+ * the blur on the GPU instead of pre-blurring a bitmap on the CPU.
+ */
 final class Api33Glass {
     private static RuntimeShader refract;
     private static RuntimeShader disperse;
-    private static RuntimeShader blurHorizontal;
-    private static RuntimeShader blurVertical;
+    private static RenderEffect vibrancy;
+
+    private static final RenderNode panelNode = new RenderNode("dydock-panel-backdrop");
+    private static final RenderNode lensNode = new RenderNode("dydock-selected-lens-backdrop");
+    private static final Paint capturePaint =
+            new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+    private static final Rect dst = new Rect();
 
     private Api33Glass() {
     }
 
     static boolean draw(Canvas canvas, RectF bounds, float radius, Bitmap bitmap,
-                        Rect region, Backdrop backdrop, View owner, float press, boolean dispersion,
-                        float density, boolean selectedLens) {
+                        Rect region, Backdrop backdrop, View owner, float press,
+                        boolean dispersion, float density, boolean selectedLens) {
+        if (canvas == null || !canvas.isHardwareAccelerated()
+                || bitmap == null || bitmap.isRecycled()
+                || region == null || region.isEmpty() || backdrop == null) {
+            return false;
+        }
         try {
             int[] location = GlassPainter.LOC;
             owner.getLocationInWindow(location);
+
+            // KernelSU explicitly keeps at least 40dp of backdrop around the bar;
+            // Lens.kt raises padding to at least its 24dp refraction amount.
+            int pad = Math.round(40f * density);
+            int nodeW = Math.max(1, Math.round(bounds.width()) + pad * 2);
+            int nodeH = Math.max(1, Math.round(bounds.height()) + pad * 2);
+            RenderNode node = selectedLens ? lensNode : panelNode;
+            node.setPosition(0, 0, nodeW, nodeH);
+
             float sx = bitmap.getWidth() / (float) region.width();
             float sy = bitmap.getHeight() / (float) region.height();
+            int sl = clamp((int) Math.floor((location[0] + bounds.left - pad - region.left) * sx),
+                    0, bitmap.getWidth() - 1);
+            int st = clamp((int) Math.floor((location[1] + bounds.top - pad - region.top) * sy),
+                    0, bitmap.getHeight() - 1);
+            int sr = clamp((int) Math.ceil((location[0] + bounds.right + pad - region.left) * sx),
+                    sl + 1, bitmap.getWidth());
+            int sb = clamp((int) Math.ceil((location[1] + bounds.bottom + pad - region.top) * sy),
+                    st + 1, bitmap.getHeight());
+            Rect src = new Rect(sl, st, sr, sb);
+            dst.set(0, 0, nodeW, nodeH);
 
-            BitmapShader content = new BitmapShader(
-                    bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
-            android.graphics.Matrix matrix = GlassPainter.MAT;
-            matrix.reset();
-            matrix.setScale(sx, sy);
-            matrix.postTranslate((location[0] - region.left) * sx,
-                    (location[1] - region.top) * sy);
-            content.setLocalMatrix(matrix);
+            RecordingCanvas recording = node.beginRecording(nodeW, nodeH);
+            try {
+                recording.drawBitmap(bitmap, src, dst, capturePaint);
+            } finally {
+                node.endRecording();
+            }
 
-            // Miuix order: vibrancy -> 4dp Gaussian blur -> rounded-rect lens.
-            // The captured bitmap is already recorded at Miuix's adaptive downscale level.
-            Shader blurred = gaussianBlur(content, backdrop.blurSigmaInTexels(),
-                    backdrop.downscaleFactor());
-            RuntimeShader shader = shader(dispersion);
-            shader.setInputShader("content", blurred);
+            RuntimeShader shader = shader(dispersion && selectedLens);
+            float progress = GlassPainter.clamp01(press);
             shader.setFloatUniform("size", bounds.width(), bounds.height());
-            shader.setFloatUniform("offset", -bounds.left, -bounds.top);
+            shader.setFloatUniform("offset", -pad, -pad);
             shader.setFloatUniform("cornerRadii", radius, radius, radius, radius);
 
-            float minSide = Math.min(bounds.width(), bounds.height());
-            float progress = GlassPainter.clamp01(press);
-            float lensHeight = selectedLens
+            float refractionHeight = selectedLens
                     ? 10f * density * progress
-                    : Math.min(24f * density, minSide * 0.42f);
-            float lensAmount = selectedLens
+                    : 24f * density;
+            float refractionAmount = selectedLens
                     ? 14f * density * progress
-                    : Math.min(24f * density, minSide * 0.46f);
-            shader.setFloatUniform("refractionHeight", Math.max(0.001f, lensHeight));
-            shader.setFloatUniform("refractionAmount", -Math.max(0.001f, lensAmount));
+                    : 24f * density;
+            shader.setFloatUniform("refractionHeight", Math.max(0.001f, refractionHeight));
+            // KernelSU's Lens.kt negates the refraction amount before setting the uniform.
+            shader.setFloatUniform("refractionAmount", -Math.max(0.001f, refractionAmount));
             shader.setFloatUniform("depthEffect", selectedLens ? progress : 0f);
             if (dispersion && selectedLens) {
                 shader.setFloatUniform("chromaticAberration", 0.5f);
             }
 
-            GlassPainter.FILL.setShader(shader);
-            GlassPainter.FILL.setColorFilter(GlassPainter.vibrant());
-            canvas.drawRect(bounds.left, bounds.top, bounds.right, bounds.bottom,
-                    GlassPainter.FILL);
+            if (vibrancy == null) {
+                vibrancy = RenderEffect.createColorFilterEffect(GlassPainter.vibrant());
+            }
+            // Miuix blur(radius=4dp) converts radius to sigma with 0.45f.
+            float blurSigma = 4f * density * 0.45f;
+            RenderEffect blur = RenderEffect.createBlurEffect(
+                    blurSigma, blurSigma, vibrancy, Shader.TileMode.CLAMP);
+            RenderEffect lens = RenderEffect.createRuntimeShaderEffect(shader, "content");
+            node.setRenderEffect(RenderEffect.createChainEffect(lens, blur));
+
+            int save = canvas.save();
+            try {
+                canvas.translate(bounds.left - pad, bounds.top - pad);
+                canvas.drawRenderNode(node);
+            } finally {
+                canvas.restoreToCount(save);
+            }
             return true;
         } catch (Throwable t) {
-            Dydock.warnOnce("shader", "折射着色器失败，退回普通裁切: " + t);
+            Dydock.warnOnce("shader", "Miuix GPU 背景链失败，退回普通裁切: " + t);
             return false;
-        } finally {
-            GlassPainter.FILL.setShader(null);
-            GlassPainter.FILL.setColorFilter(null);
         }
-    }
-
-    private static Shader gaussianBlur(Shader source, float sigma, float scale) {
-        if (blurHorizontal == null) {
-            blurHorizontal = new RuntimeShader(GlassShader.GAUSSIAN_BLUR);
-        }
-        if (blurVertical == null) {
-            blurVertical = new RuntimeShader(GlassShader.GAUSSIAN_BLUR);
-        }
-        // One texel in the downscaled backdrop corresponds to 'scale' screen pixels.
-        blurHorizontal.setInputShader("content", source);
-        blurHorizontal.setFloatUniform("direction", scale, 0f);
-        blurHorizontal.setFloatUniform("sigma", sigma);
-        blurVertical.setInputShader("content", blurHorizontal);
-        blurVertical.setFloatUniform("direction", 0f, scale);
-        blurVertical.setFloatUniform("sigma", sigma);
-        return blurVertical;
     }
 
     private static RuntimeShader shader(boolean dispersion) {
@@ -100,7 +124,13 @@ final class Api33Glass {
             }
             return disperse;
         }
-        if (refract == null) refract = new RuntimeShader(GlassShader.REFRACTION);
+        if (refract == null) {
+            refract = new RuntimeShader(GlassShader.REFRACTION);
+        }
         return refract;
+    }
+
+    private static int clamp(int value, int low, int high) {
+        return value < low ? low : (value > high ? high : value);
     }
 }
