@@ -1,9 +1,11 @@
-# LSPosed loads this class by its fully-qualified name from assets/xposed_init.
-# Keep its name, constructor, and hook entry method stable.
--keep class com.zaka.douyin.glass.GlassEntry { *; }
+# LSPosed 按 assets/xposed_init 里的全名反射加载入口类，名字必须保留。
+-keep class com.zaka.douyin.glass.** { *; }
 
-# Xposed APIs are supplied by the LSPosed runtime, not packaged into this APK.
+# Xposed API 由 LSPosed 运行时提供，不打进包里。
+-keep class de.robv.android.xposed.** { *; }
 -dontwarn de.robv.android.xposed.**
 
-# Preserve Kotlin/Compose metadata used by reflection and tooling.
 -keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+
+# 只做收缩和优化，不做重命名：避免 Compose/LSPosed 任何按名字走的路径被改坏。
+-dontobfuscate

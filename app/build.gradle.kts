@@ -53,9 +53,10 @@ android {
 
     buildTypes {
         release {
-            // Temporarily disable shrinking until LSPosed reflection hooks are fully verified.
-            isMinifyEnabled = false
-            isShrinkResources = false
+            // 剪掉没用到的代码/资源来压体积；类名不混淆（-dontobfuscate），
+            // 保证 LSPosed 按 assets/xposed_init 里的全名加载入口类不出问题。
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
