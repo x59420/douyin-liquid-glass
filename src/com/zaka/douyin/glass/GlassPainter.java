@@ -246,7 +246,9 @@ final class GlassPainter {
         FILL.setShader(null);
         FILL.setColorFilter(null);
         // 暗底提亮，亮底压一点点，让它始终「贴在画面上」而不是贴一张纸
-        int base = luma < 118 ? 0x1AFFFFFF : 0x1C000000;
+        // KernelSU's onDrawSurface draws surfaceContainer at 0.4 alpha.
+        // Use the matching 40% neutral surface wash rather than the old ~10% tint.
+        int base = luma < 118 ? 0x66242424 : 0x66F3F3F3;
         FILL.setColor(base);
         canvas.drawRect(b, FILL);
         if (press > 0.01f) {
