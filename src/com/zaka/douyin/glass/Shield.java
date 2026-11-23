@@ -148,8 +148,46 @@ final class Shield {
                 || name.contains("othershomepage");
         boolean menuText = hasMenuMarker(view, 0);
         boolean profileText = hasProfileSignature(view);
-        if (!namedPanel && !profilePage && !menuText && !profileText) return false;
+        boolean conversationPanel = isConversationPanel(view, r, page, name);
+        if (!namedPanel && !profilePage && !menuText && !profileText && !conversationPanel) return false;
         return hasContent((ViewGroup) view, 0);
+    }
+
+    /**
+     * 评论抽屉和聊天浮层不一定叫 menu/panel，之前因此漏判。
+     * 只把贴近页面底部、横向展开且带有消息输入区/评论文案的面板视为会话浮层；
+     * 顶部搜索框、普通信息流中的评论按钮不会触发。
+     */
+    private static boolean isConversationPanel(View view, Rect bounds, Rect page, String className) {
+        if (bounds.width() < page.width() * 0.55f
+                || bounds.height() < page.height() * 0.16f
+                || bounds.bottom < page.bottom - page.height() * 0.22f) return false;
+
+        boolean conversationClass = className.contains("comment") || className.contains("chat")
+                || className.contains("conversation") || className.contains("message");
+        boolean input = hasVisibleInput(view, 0);
+        boolean commentText = hasConversationMarker(view, 0);
+        return conversationClass || input || commentText;
+    }
+
+    private static boolean hasConversationMarker(View view, int depth) {
+        if (view == null || depth > 8 || view.getVisibility() != View.VISIBLE) return false;
+        String value = "";
+        if (view instanceof TextView) {
+            CharSequence text = ((TextView) view).getText();
+            if (text != null) value = text.toString();
+        }
+        CharSequence desc = view.getContentDescription();
+        if (desc != null) value += " " + desc;
+        String[] markers = {"写评论", "说点什么", "发条友善的评论", "评论区", "发送消息", "输入消息"};
+        for (String marker : markers) if (value.contains(marker)) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                if (hasConversationMarker(group.getChildAt(i), depth + 1)) return true;
+            }
+        }
+        return false;
     }
 
     /** 菜单面板使用较明确的菜单文案，避免普通信息流中的“关注”等词误触发。 */
