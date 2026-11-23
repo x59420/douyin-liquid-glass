@@ -62,7 +62,7 @@ final class GlassPainter {
      * @param b      在 canvas 本地坐标里的位置
      * @param rad    圆角
      * @param press  0..1 按压/拖动进度，决定折射强度和色散
-     * @param luma   底下画面的亮度，决定表面膜是加白还是加黑
+     * 表面颜色只由系统明暗主题决定，不读取视频画面亮度
      */
     static void draw(Canvas canvas, RectF b, float rad, Backdrop bd, View owner,
                      float press, boolean dispersion, int luma, float density) {
@@ -97,8 +97,8 @@ final class GlassPainter {
                     && Api33Glass.draw(canvas, b, r, source, region, bd, owner,
                             progress, progress > 0.001f, density, true, combined);
             if (!ok) cropBitmap(canvas, b, source, region, owner);
-            surface(canvas, b, luma, progress);
-            highlight(canvas, b, r, density, luma, progress);
+            surface(canvas, b, isDarkTheme(owner), progress, true);
+            highlight(canvas, b, r, density, isDarkTheme(owner), progress);
             inner(canvas, b, r, density, progress);
         } finally {
             canvas.restoreToCount(save);
@@ -143,8 +143,8 @@ final class GlassPainter {
             boolean ok = refraction(canvas, b, r, bd, owner, progress,
                     dispersion, density, selectedLens);
             if (!ok) crop(canvas, b, bd, owner);
-            surface(canvas, b, luma, progress);
-            highlight(canvas, b, r, density, luma, selectedLens ? progress : 0f);
+            surface(canvas, b, isDarkTheme(owner), progress, selectedLens);
+            highlight(canvas, b, r, density, isDarkTheme(owner), selectedLens ? progress : 0f);
             inner(canvas, b, r, density, selectedLens ? progress : 0f);
         } finally {
             canvas.restoreToCount(save);
@@ -160,10 +160,10 @@ final class GlassPainter {
      *
      * @param luma 底下大致亮度（拿不到就给 128，按暗底处理）
      */
-    static void drawFrosted(Canvas canvas, RectF b, float rad, float density, int luma) {
+    static void drawFrosted(Canvas canvas, RectF b, float rad, float density, View owner) {
         if (canvas == null || b == null || b.width() <= 0 || b.height() <= 0) return;
         float r = Math.max(0f, Math.min(rad, Math.min(b.width(), b.height()) / 2f));
-        boolean light = luma >= 140;
+        boolean dark = isDarkTheme(owner);
 
         int save = canvas.save();
         try {
@@ -175,19 +175,19 @@ final class GlassPainter {
             FILL.setColorFilter(null);
             // 无法取得实时采样时也不能用近乎不透明的底色盖住抖音画面。
             // 保留可见的磨砂质感，同时让底下视频明显透出。
-            FILL.setColor(light ? 0x70EFEFEF : 0x70181818);
+            FILL.setColor(dark ? 0x702C2C2E : 0x70F2F2F7);
             canvas.drawRect(b, FILL);
 
             AMBIENT.setShader(new LinearGradient(
                     b.left, b.top, b.right, b.bottom,
-                    light ? 0x33FFFFFF : 0x26FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+                    0x26FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
             canvas.drawRect(b, AMBIENT);
             AMBIENT.setShader(null);
 
             RIM.setStyle(Paint.Style.STROKE);
             RIM.setStrokeWidth(Math.max(1f, 0.75f * density));
             RIM.setShader(null);
-            RIM.setColor(light ? 0x33FFFFFF : 0x4DFFFFFF);
+            RIM.setColor(0x33FFFFFF);
             RECT.set(b);
             RECT.inset(0.5f * density, 0.5f * density);
             canvas.drawRoundRect(RECT, r, r, RIM);
@@ -244,17 +244,19 @@ final class GlassPainter {
 
     // ---------------------------------------------------------------- 表面膜
 
-    private static void surface(Canvas canvas, RectF b, int luma, float press) {
+    private static void surface(Canvas canvas, RectF b, boolean dark, float press, boolean selectedLens) {
         FILL.setShader(null);
         FILL.setColorFilter(null);
-        // 暗底提亮，亮底压一点点，让它始终「贴在画面上」而不是贴一张纸
-        // KernelSU's onDrawSurface draws surfaceContainer at 0.4 alpha.
-        // Use the matching 40% neutral surface wash rather than the old ~10% tint.
-        int base = luma < 118 ? 0x662C2C2E : 0x66F2F2F7;
-        FILL.setColor(base);
-        canvas.drawRect(b, FILL);
-        if (press > 0.01f) {
-            FILL.setColor(Color.argb((int) (10 * clamp01(press)), 255, 255, 255));
+        float p = clamp01(press);
+        if (selectedLens) {
+            int tint = dark ? Color.WHITE : Color.BLACK;
+            FILL.setColor(Color.argb(Math.round(26f * (1f - p)),
+                    Color.red(tint), Color.green(tint), Color.blue(tint)));
+            canvas.drawRect(b, FILL);
+            FILL.setColor(Color.argb(Math.round(7.65f * p), 0, 0, 0));
+            canvas.drawRect(b, FILL);
+        } else {
+            FILL.setColor(dark ? 0x662C2C2E : 0x66F2F2F7);
             canvas.drawRect(b, FILL);
         }
     }
@@ -262,11 +264,10 @@ final class GlassPainter {
     // ---------------------------------------------------------------- 高光
 
     private static void highlight(Canvas canvas, RectF b, float r, float density,
-                                  int luma, float press) {
-        boolean light = luma >= 140;
+                                  boolean dark, float press) {
         AMBIENT.setShader(new LinearGradient(
                 b.left, b.top, b.right, b.bottom,
-                light ? 0x1FFFFFFF : 0x2EFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+                0x1FFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
         canvas.drawRect(b, AMBIENT);
         AMBIENT.setShader(null);
 
@@ -274,8 +275,8 @@ final class GlassPainter {
         RIM.setStrokeWidth(Math.max(1f, 0.5f * density));
         RIM.setShader(new LinearGradient(
                 b.left, b.top, b.right, b.bottom,
-                light ? 0x3D000000 : 0x66FFFFFF,
-                light ? 0x0A000000 : 0x0DFFFFFF, Shader.TileMode.CLAMP));
+                0x33FFFFFF,
+                0x0DFFFFFF, Shader.TileMode.CLAMP));
         RECT.set(b);
         canvas.drawRoundRect(RECT, r, r, RIM);
         RIM.setShader(null);
@@ -308,6 +309,14 @@ final class GlassPainter {
         RECT.inset(0.5f * density, 0.5f * density);
         canvas.drawRoundRect(RECT, r, r, INNER);
         INNER.setShader(null);
+    }
+
+    private static boolean isDarkTheme(View owner) {
+        int uiMode = owner == null
+                ? android.content.res.Resources.getSystem().getConfiguration().uiMode
+                : owner.getResources().getConfiguration().uiMode;
+        return (uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK)
+                == android.content.res.Configuration.UI_MODE_NIGHT_YES;
     }
 
     static float clamp01(float v) {
