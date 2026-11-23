@@ -226,7 +226,6 @@ class ComposeDockOverlay private constructor(
         }
         val bitmap = try { backdrop.bitmap() } catch (_: Throwable) { null }
         backdropImage = bitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
-        dockLayout = dockLayout.copy(region = Rect(backdrop.region()))
         updateLayout()
         invalidate()
     }
@@ -328,7 +327,8 @@ class ComposeDockOverlay private constructor(
             plusLeft + plusSize + regionPad,
             top + pillHeight + regionPad
         )
-        backdrop.setRegion(region)
+        val regionInWindow = Rect(region).apply { offset(location[0], location[1]) }
+        backdrop.setRegion(regionInWindow)
         dockLayout = DockLayout(
             band = Rect(band),
             region = region,
