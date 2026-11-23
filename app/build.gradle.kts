@@ -53,13 +53,9 @@ android {
 
     buildTypes {
         release {
-            // Strip unused legacy renderers and unused Material icon definitions.
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                rootProject.file("app/proguard-rules.pro")
-            )
+            // Temporarily disable shrinking until LSPosed reflection hooks are fully verified.
+            isMinifyEnabled = false
+            isShrinkResources = false
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
