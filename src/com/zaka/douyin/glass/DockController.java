@@ -207,7 +207,7 @@ final class DockController {
                             parent = null;
                         }
                         if (parent == null) {
-                            decor.addView(overlay, new FrameLayout.LayoutParams(
+                            ((ViewGroup) decor).addView(overlay, new FrameLayout.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT));
                             Dydock.log("底栏:玻璃层已重新挂回主窗口");
