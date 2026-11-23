@@ -161,7 +161,9 @@ final class DockSettingsUi {
                             ? source.width : ViewGroup.LayoutParams.WRAP_CONTENT)
                         : ViewGroup.LayoutParams.MATCH_PARENT,
                 source != null && source.height > 0
-                        ? source.height : ViewGroup.LayoutParams.WRAP_CONTENT);
+                        ? Math.min(source.height, (int) (72f * act.getResources()
+                            .getDisplayMetrics().density))
+                        : ViewGroup.LayoutParams.WRAP_CONTENT);
         if (source instanceof LinearLayout.LayoutParams) {
             LinearLayout.LayoutParams origin = (LinearLayout.LayoutParams) source;
             // 权重一定不要抄：抄过来我们这一行会跟原生项抢高度，把人家挤掉/盖住。
@@ -202,7 +204,7 @@ final class DockSettingsUi {
      */
     private static void scan(ViewGroup group, int depth, int[] budget, Hit hit) {
         if (hit.item != null || depth > 34 || budget[0]-- <= 0) return;
-        boolean isList = group instanceof LinearLayout && group.getWidth() > 0;
+        boolean isList = canInsert(group);
         for (int i = 0, n = group.getChildCount(); i < n && budget[0] > 0; i++) {
             View child = group.getChildAt(i);
             if (child == null || child.getVisibility() != View.VISIBLE) continue;
@@ -224,6 +226,25 @@ final class DockSettingsUi {
             }
             if (child instanceof ViewGroup) scan((ViewGroup) child, depth + 1, budget, hit);
         }
+    }
+
+    /**
+     * 这个容器能不能安全地多插一行。
+     *
+     * 只有「普通线性列表」才可以：必须是 LinearLayout；兄弟姐妹里只要有一个是带权重的，
+     * 说明这一列是按权重分高度的，再插一行会把原生项挤掉（那正是「挡到原生设置和别的入口」
+     * 的来源）——这种情况宁可不插，也不动宿主布局。
+     */
+    private static boolean canInsert(ViewGroup parent) {
+        if (!(parent instanceof LinearLayout) || parent.getWidth() <= 0) return false;
+        for (int i = 0; i < parent.getChildCount(); i++) {
+            ViewGroup.LayoutParams lp = parent.getChildAt(i).getLayoutParams();
+            if (lp instanceof LinearLayout.LayoutParams
+                    && ((LinearLayout.LayoutParams) lp).weight > 0f) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -296,7 +317,10 @@ final class DockSettingsUi {
         return null;
     }
 
-    /** 照旁边那一行的样式拼我们这一行：图标 + 文案 + 箭头。 */
+    /**
+     * 我们这一行：只写一个「dydock」，样式全部跟着旁边那一行走
+     * （字色、字号、左右内边距、高度都抄原生的），不做图标、不做箭头，看起来就是一项目录。
+     */
     private static View buildRow(Context context, Hit hit) {
         float density = context.getResources().getDisplayMetrics().density;
 
@@ -305,44 +329,23 @@ final class DockSettingsUi {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setClickable(true);
         row.setFocusable(true);
-        // 竖向内边距：宿主那一行有固定高度就不加，避免撑得比原生行高、把下面的项挤掉。
+
         ViewGroup.LayoutParams source = hit.item == null ? null : hit.item.getLayoutParams();
         boolean fixedHeight = source != null && source.height > 0;
-        row.setPadding(Math.max(hit.padLeft, (int) (16f * density)),
-                fixedHeight ? 0 : (int) (10f * density),
-                Math.max(hit.padRight, (int) (16f * density)),
-                fixedHeight ? 0 : (int) (10f * density));
-
-        // 小圆角方块当图标：抖音那个菜单里的图标也是这种淡淡的色块。
-        View icon = new View(context);
-        int size = (int) (20f * density);
-        LinearLayout.LayoutParams iconParams = new LinearLayout.LayoutParams(size, size);
-        iconParams.rightMargin = (int) (12f * density);
-        icon.setLayoutParams(iconParams);
-        GradientDrawable iconBg = new GradientDrawable(
-                GradientDrawable.Orientation.TL_BR,
-                new int[]{withAlpha(hit.textColor, 0.85f), withAlpha(hit.textColor, 0.45f)});
-        iconBg.setCornerRadius(6f * density);
-        icon.setBackground(iconBg);
-        row.addView(icon);
 
         TextView label = new TextView(context);
-        label.setText("dydock 液态玻璃");
+        label.setText("dydock");
         label.setTextSize(TypedValue.COMPLEX_UNIT_PX, hit.textSize > 0
                 ? hit.textSize
                 : 16f * context.getResources().getDisplayMetrics().scaledDensity);
         label.setTextColor(hit.textColor);
         label.setSingleLine(true);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(0,
-                ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        label.setLayoutParams(labelParams);
         row.addView(label);
 
-        TextView arrow = new TextView(context);
-        arrow.setText("›");
-        arrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f);
-        arrow.setTextColor(withAlpha(hit.textColor, 0.45f));
-        row.addView(arrow);
+        row.setPadding(Math.max(hit.padLeft, (int) (16f * density)),
+                fixedHeight ? 0 : (int) (10f * density),
+                Math.max(hit.padRight, (int) (16f * density)),
+                fixedHeight ? 0 : (int) (10f * density));
 
         row.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
