@@ -169,12 +169,15 @@ final class Shield {
 
     /** 个人资料页必须同时出现至少两个资料页特征，避免普通信息流文案误触发。 */
     private static boolean hasProfileSignature(View root) {
+        // "关注" and "作品" also occur in ordinary feeds. They are not enough
+        // to identify a profile page and could keep the Dock hidden after returning.
         String[] markers = {"编辑资料", "抖音号", "获赞", "粉丝", "关注", "作品", "私信"};
         boolean[] found = new boolean[markers.length];
         collectProfileMarkers(root, 0, markers, found);
         int count = 0;
         for (boolean hit : found) if (hit) count++;
-        return count >= 2;
+        boolean strongIdentity = found[0] || found[1] || found[2];
+        return strongIdentity && count >= 2;
     }
 
     private static void collectProfileMarkers(View view, int depth,
