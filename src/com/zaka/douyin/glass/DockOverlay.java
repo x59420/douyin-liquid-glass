@@ -909,9 +909,9 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
     /** Refresh native tab references before each press; Douyin may rebuild its nav views. */
     private void refreshNativeTargets() {
         View dock = dockView;
-        if (dock == null || !dock.isAttachedToWindow()) return;
+        if (!(dock instanceof android.view.ViewGroup) || !dock.isAttachedToWindow()) return;
         try {
-            List<View> current = DockController.Finder.tabItems(dock);
+            List<View> current = DockController.Finder.tabItems((android.view.ViewGroup) dock);
             if (current.size() < 4) return;
             View currentPlus = DockController.Finder.pickPlus(current);
             List<View> currentTabs = new ArrayList<View>(current);
