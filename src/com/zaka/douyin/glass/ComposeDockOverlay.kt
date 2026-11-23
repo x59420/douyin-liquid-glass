@@ -454,7 +454,7 @@ private fun ComposeDockSurface(
                     .offset(x, y)
                     .size(size)
                     .clip(CircleShape)
-                    .background(Color(0xFFE91F49))
+                    .background(Color(0xFFFE2C55))
                     .clickable(onClick = onPlusClick),
                 contentAlignment = Alignment.Center
             ) {
