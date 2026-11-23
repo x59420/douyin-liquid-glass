@@ -522,9 +522,8 @@ final class DockController {
                     @Override public void accept(int index) {
                         try {
                             List<View> targets = tabTargets[0];
-                            if (index >= 0 && index < targets.size()) {
-                                targets.get(index).performClick();
-                            }
+                            View target = latestTab(act, targets, plusTarget[0], index);
+                            if (target != null) clickHostView(target);
                         } catch (Throwable t) {
                             Dydock.warnOnce("iso-tab-click", "转发导航点击失败: " + t);
                         }
@@ -533,8 +532,8 @@ final class DockController {
                 new Runnable() {
                     @Override public void run() {
                         try {
-                            View target = plusTarget[0];
-                            if (target != null) target.performClick();
+                            View target = latestPlus(act, plusTarget[0]);
+                            if (target != null) clickHostView(target);
                         } catch (Throwable t) {
                             Dydock.warnOnce("iso-plus-click", "转发发布点击失败: " + t);
                         }
@@ -697,6 +696,17 @@ final class DockController {
 
                     if (now - lastTabRefreshAt[0] >= 500L) {
                         lastTabRefreshAt[0] = now;
+                        // 点击目标跟着当前底栏走：抖音重建底栏后，旧的引用点了不会响。
+                        if (d != null) {
+                            List<View> fresh = Finder.tabItems(d);
+                            View freshPlus = Finder.pickPlus(fresh);
+                            List<View> freshTabs = new ArrayList<View>(fresh);
+                            if (freshPlus != null) freshTabs.remove(freshPlus);
+                            if (freshTabs.size() >= 4) {
+                                tabTargets[0] = freshTabs;
+                                plusTarget[0] = freshPlus;
+                            }
+                        }
                         refreshTabs(iso, tabTargets[0], plusTarget[0]);
                     }
 
@@ -867,6 +877,78 @@ final class DockController {
                 + "，底栏 " + dock.getWidth() + "x" + dock.getHeight()
                 + "（" + dock.getClass().getSimpleName() + "）");
         return true;
+    }
+
+    /**
+     * 取当前底栏里第 index 个 tab。
+     *
+     * 抖音切页、换皮、重建底栏之后，安装时抓到的那批 View 引用可能已经失效 ——
+     * 拿失效引用去 performClick 就是「点了没反应」。所以每次点之前都按当前底栏重新取一次，
+     * 取不到才退回缓存的那批。
+     */
+    private static View latestTab(Activity act, List<View> cached, View cachedPlus, int index) {
+        try {
+            View host = dockOf(act);
+            if (host != null) {
+                List<View> fresh = Finder.tabItems(host);
+                View p = Finder.pickPlus(fresh);
+                List<View> tabs = new ArrayList<View>(fresh);
+                if (p != null) tabs.remove(p);
+                if (tabs.size() >= 4 && index >= 0 && index < tabs.size()) {
+                    return tabs.get(index);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        if (cached != null && index >= 0 && index < cached.size()) return cached.get(index);
+        return null;
+    }
+
+    /** 取当前的「＋ / 发布」按钮，同理。 */
+    private static View latestPlus(Activity act, View cached) {
+        try {
+            View host = dockOf(act);
+            if (host != null) {
+                View p = Finder.pickPlus(Finder.tabItems(host));
+                if (p != null) return p;
+            }
+        } catch (Throwable ignored) {
+        }
+        return cached;
+    }
+
+    /**
+     * 触发宿主自己的点击。
+     *
+     * 先走 performClick（抖音的 tab 基本都挂了点击回调）；
+     * 有些自定义 View 只在自己的 onTouchEvent 里处理，不挂 listener，performClick 会返回 false，
+     * 这时候补一对真实的按下 / 抬起事件，让它的手势识别照常跑一遍。
+     * 两条路都不做我们自己的页面跳转 —— 全程都是抖音原生行为。
+     */
+    private static void clickHostView(final View target) {
+        if (target == null) return;
+        boolean handled = false;
+        try {
+            handled = target.performClick();
+        } catch (Throwable t) {
+            Dydock.warnOnce("host-click", "转发点击失败: " + t);
+        }
+        if (handled) return;
+        try {
+            long now = SystemClock.uptimeMillis();
+            float x = target.getWidth() / 2f;
+            float y = target.getHeight() / 2f;
+            android.view.MotionEvent down = android.view.MotionEvent.obtain(
+                    now, now, android.view.MotionEvent.ACTION_DOWN, x, y, 0);
+            android.view.MotionEvent up = android.view.MotionEvent.obtain(
+                    now, now + 40L, android.view.MotionEvent.ACTION_UP, x, y, 0);
+            target.dispatchTouchEvent(down);
+            target.dispatchTouchEvent(up);
+            down.recycle();
+            up.recycle();
+        } catch (Throwable t) {
+            Dydock.warnOnce("host-click-touch", "触摸转发失败: " + t);
+        }
     }
 
     /** 把玻璃层从窗口上摘掉（不销毁，dispose 由 release 负责）。 */
@@ -1329,6 +1411,12 @@ final class DockController {
             if (plus != null) score += 10f;
             if (middlePlus) score += 12f;
             return score;
+        }
+
+        /** 方便宿主那边直接拿 View 调：不是容器就返回空表。 */
+        static List<View> tabItems(View v) {
+            if (v instanceof ViewGroup) return tabItems((ViewGroup) v);
+            return new ArrayList<View>();
         }
 
         /** 底栏里那一排可点的子项（从左到右）；不像一排就返回 null。 */
