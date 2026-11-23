@@ -42,6 +42,14 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.ComposeView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.SavedStateRegistry
+import androidx.savedstate.SavedStateRegistryController
+import androidx.savedstate.SavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,6 +83,7 @@ class ComposeDockOverlay private constructor(
     private val densityScale: Float
 ) : FrameLayout(context) {
 
+    private val overlayOwner = OverlayLifecycleOwner()
     private val composeView = ComposeView(context)
 
     internal data class TabSnapshot(
@@ -129,6 +138,12 @@ class ComposeDockOverlay private constructor(
     init {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         setWillNotDraw(false)
+        // Xposed overlays are attached to Douyin's DecorView, which may not expose
+        // ComponentActivity's owners. Supply explicit owners so ComposeView can create
+        // its composition safely even in a plain Activity hierarchy.
+        composeView.setViewTreeLifecycleOwner(overlayOwner)
+        composeView.setViewTreeSavedStateRegistryOwner(overlayOwner)
+        overlayOwner.resume()
         composeView.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
         addView(composeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
@@ -187,6 +202,7 @@ class ComposeDockOverlay private constructor(
 
     fun dispose() {
         disposed = true
+        overlayOwner.destroy()
         main.removeCallbacks(videoPump)
         main.removeCallbacks(hostPoll)
         // Release PixelCopy/TextureView frames and bitmap buffers when the Activity is destroyed.
@@ -445,5 +461,34 @@ private fun ComposeDockSurface(
                 Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
             }
         }
+    }
+}
+
+
+/** Minimal lifecycle + saved-state owners for a ComposeView hosted by an Xposed overlay. */
+private class OverlayLifecycleOwner : SavedStateRegistryOwner {
+    private val registry = LifecycleRegistry(this)
+    private val savedStateController = SavedStateRegistryController.create(this)
+
+    override val lifecycle: Lifecycle
+        get() = registry
+
+    override val savedStateRegistry: SavedStateRegistry
+        get() = savedStateController.savedStateRegistry
+
+    init {
+        savedStateController.performAttach()
+        savedStateController.performRestore(null)
+    }
+
+    fun resume() {
+        if (registry.currentState == Lifecycle.State.INITIALIZED) {
+            registry.currentState = Lifecycle.State.CREATED
+        }
+        registry.currentState = Lifecycle.State.RESUMED
+    }
+
+    fun destroy() {
+        registry.currentState = Lifecycle.State.DESTROYED
     }
 }
