@@ -39,14 +39,6 @@ final class DockController {
     private static final int MAX_ATTEMPTS = 40;
     private static final long RETRY_MS = 300L;
     /**
-     * 显示前的确认帧数。
-     *
-     * 隐藏跟着「是否被盖住 / 是否在倍速」这些明确状态走，成立就立刻收；
-     * 显示反过来用同一套判据，但要连续这么多帧都干净才露出来 ——
-     * 滚动结束、浮层收起、页面转场收尾的那一两帧会短暂「看起来没被盖住」，
-     * 直接跟着它就会闪。16ms 一帧，6 帧约 100ms，感觉不到延迟。
-     */
-    /**
      * 显隐过渡：所有页面、所有理由（倍速 / 清屏 / 覆盖页 / 浮层 / 宿主隐藏）共用这一套，
      * 不再有的地方硬切、有的地方慢半拍。显示 150ms、隐藏 110ms，先快后缓，手感轻。
      */
@@ -246,8 +238,13 @@ final class DockController {
         }
         if (action == android.view.MotionEvent.ACTION_DOWN
                 || action == android.view.MotionEvent.ACTION_MOVE) {
-            synchronized (PRESS_ALIVE) {
-                PRESS_ALIVE.put(act, new long[]{android.os.SystemClock.uptimeMillis()});
+            // 同一串触摸会流过分发链上的每个 View，这里按 200ms 节流写一次就够了
+            // （只是用来判断「手还在不在」，不需要精确到每一帧）。
+            long nowAlive = android.os.SystemClock.uptimeMillis();
+            long[] last;
+            synchronized (PRESS_ALIVE) { last = PRESS_ALIVE.get(act); }
+            if (last == null || nowAlive - last[0] >= 200L) {
+                synchronized (PRESS_ALIVE) { PRESS_ALIVE.put(act, new long[]{nowAlive}); }
             }
         }
         if (action == android.view.MotionEvent.ACTION_DOWN) {
