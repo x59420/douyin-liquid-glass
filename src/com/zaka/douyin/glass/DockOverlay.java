@@ -256,11 +256,13 @@ final class DockOverlay extends View implements Choreographer.FrameCallback {
 
     private void syncRegion() {
         if (leftPill.isEmpty()) return;
+        // KernelSU FloatingBottomBar: padding = maxOf(padding, 40.dp.toPx()).
+        int pad = Math.round(40f * density);
         backdrop.setRegion(new Rect(
-                Math.round(leftPill.left + winLoc[0]) - Math.round(30 * density),
-                Math.round(leftPill.top + winLoc[1]) - Math.round(26 * density),
-                Math.round(plusPill.right + winLoc[0]) + Math.round(30 * density),
-                Math.round(leftPill.bottom + winLoc[1]) + Math.round(22 * density)));
+                Math.round(leftPill.left + winLoc[0]) - pad,
+                Math.round(leftPill.top + winLoc[1]) - pad,
+                Math.round(plusPill.right + winLoc[0]) + pad,
+                Math.round(leftPill.bottom + winLoc[1]) + pad));
     }
 
     /** 玻璃有没有真的画出来过（没画出来就得把官方底栏还回去） */
