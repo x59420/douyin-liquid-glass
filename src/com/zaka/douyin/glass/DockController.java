@@ -630,13 +630,14 @@ final class DockController {
 
     /** 把当前成立的隐藏理由拼成一行，只在状态变化时写日志。 */
     private static String hideReason(boolean speedPlayback, boolean longPress, boolean clearScreen,
-                                     int coveredTicks, int expandedTicks, int dockMissingTicks,
-                                     int hostHiddenTicks) {
+                                     boolean commentOpen, int coveredTicks, int expandedTicks,
+                                     int dockMissingTicks, int hostHiddenTicks) {
         StringBuilder sb = new StringBuilder();
         if (speedPlayback) sb.append("倍速播放 ");
         if (longPress) sb.append("长按加速 ");
         if (clearScreen) sb.append("清屏 ");
         if (coveredTicks >= COVER_CONFIRM_TICKS) sb.append("整屏覆盖页 ");
+        if (commentOpen) sb.append("评论区 ");
         if (expandedTicks >= COVER_CONFIRM_TICKS) sb.append("展开浮层 ");
         if (dockMissingTicks >= 12) sb.append("原生底栏脱离窗口 ");
         if (hostHiddenTicks >= 25) sb.append("宿主隐藏了底栏容器 ");
@@ -1031,20 +1032,25 @@ final class DockController {
                     // 评论区开着时，结构类理由（覆盖 / 浮层 / 底栏脱离 / 宿主隐藏）一律不算：
                     // 评论面板弹上来会让宿主重新排布底栏，跟着判就是「收起又冒出」。
                     // 手势类（倍速 / 清屏）不受影响，该收还是收。
-                    boolean structuralHidden = !commentOpen[0]
-                            && (coveredTicks[0] >= COVER_CONFIRM_TICKS
+                    // 评论区本身就是需要隐藏 Dock 的页面状态；不要再用 commentOpen
+                    // 去屏蔽结构隐藏判据，否则评论区会一直保留 Dock。
+                    boolean structuralHidden = commentOpen[0]
+                            || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
                             || dockMissingTicks[0] >= 12
-                            || hostHiddenTicks[0] >= 25);
-                    boolean hidden = speedPlayback || longPress || clearScreen || structuralHidden;
+                            || hostHiddenTicks[0] >= 25;
+                    boolean otherProfile = Shield.isOtherProfilePage(content);
+                    boolean hidden = speedPlayback || longPress || clearScreen
+                            || structuralHidden || otherProfile;
                     if (hidden) {
                         revealTicks[0] = 0;
                         // 手势类（倍速 / 清屏）抬手就恢复；结构类（覆盖页 / 浮层 / 底栏脱离）
                         // 要连续干净地撑过一小段时间才恢复，转场里的那几帧空档就不会闪。
                         lastHideStructural[0] = !(speedPlayback || longPress || clearScreen);
                         String why = hideReason(speedPlayback, longPress, clearScreen,
-                                coveredTicks[0], expandedTicks[0], dockMissingTicks[0],
-                                hostHiddenTicks[0]);
+                                commentOpen[0], coveredTicks[0], expandedTicks[0],
+                                dockMissingTicks[0], hostHiddenTicks[0]);
+                        if (otherProfile) why += " 他人主页";
                         if (!why.equals(lastHideReason[0])) {
                             lastHideReason[0] = why;
                             Dydock.log("底栏隐藏：" + why);
