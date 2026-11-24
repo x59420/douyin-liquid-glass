@@ -430,6 +430,12 @@ private fun GlassSurface(
         animationSpec = tween(durationMillis = 60, easing = FastOutSlowInEasing),
         label = "dockCapsuleVisibility"
     ).value
+    val capsuleMotion = Modifier.graphicsLayer {
+        alpha = dockProgress
+        scaleX = 0.985f + 0.015f * dockProgress
+        scaleY = 0.985f + 0.015f * dockProgress
+        translationY = with(density) { 6.dp.toPx() } * (1f - dockProgress)
+    }
     // 33 以下没有 RuntimeShader；个别机型/ROM 上 AGSL 编译会直接抛错，
     // 这里先探一次：探不通就走 Miuix 自带的「无模糊」降级，绝不让一帧着色器异常把整层玻璃干掉。
     val isBlurEnabled = remember {
@@ -457,20 +463,13 @@ private fun GlassSurface(
             )
         }
 
-        // 只动画底部胶囊与加号，不再移动/缩放全屏 IsoOverlay。
-        Box(
-            modifier = Modifier.fillMaxSize().graphicsLayer {
-                alpha = dockProgress
-                scaleX = 0.985f + 0.015f * dockProgress
-                scaleY = 0.985f + 0.015f * dockProgress
-                translationY = with(density) { 6.dp.toPx() } * (1f - dockProgress)
-            }
-        ) {
+        // 只动画胶囊本身与独立加号，不移动全屏覆盖层或背景采样区域。
         if (labels.isNotEmpty() && tabsRect.width() > 0 && tabsRect.height() > 0) {
             Box(
                 modifier = Modifier
                     .offset(with(density) { tabsRect.left.toDp() }, with(density) { tabsRect.top.toDp() })
-                    .width(with(density) { tabsRect.width().toDp() }),
+                    .width(with(density) { tabsRect.width().toDp() })
+                    .then(capsuleMotion),
                 contentAlignment = Alignment.TopCenter
             ) {
                 FloatingBottomBar(
@@ -519,6 +518,7 @@ private fun GlassSurface(
                         with(density) { plusRect.width().toDp() },
                         with(density) { plusRect.height().toDp() }
                     )
+                    .then(capsuleMotion)
                     .clip(CircleShape)
                     .background(Color(0xFFFE2C55))
                     .clickable(onClick = onPlusClick),
@@ -526,7 +526,6 @@ private fun GlassSurface(
             ) {
                 Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
             }
-        }
         }
     }
 }
