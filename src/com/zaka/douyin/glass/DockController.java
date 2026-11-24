@@ -1788,6 +1788,7 @@ final class DockController {
     static final class Finder {
 
         private static final int MAX_DEPTH = 44;
+        private static final String EXACT_DOCK_CLASS = "X.1JgG";
         /** 已经攒够分数的门槛：≥70 直接认，55~70 要连续两帧都看到同一个才认。 */
         private static final float STRONG = 70f;
         private static final float ACCEPT = 55f;
@@ -1803,6 +1804,29 @@ final class DockController {
             int rw = root.getWidth();
             int rh = root.getHeight();
             if (rw <= 0 || rh <= 0) return null;
+
+            // DouAi's 41.0.0 host rules identify MainBottomTabViewNew as X.1JgG.
+            // Prefer its unique native instance over text/geometry scoring.
+            ArrayList<ViewGroup> exact = new ArrayList<ViewGroup>();
+            findExactDock(root, exact, 0, new int[]{2600});
+            if (exact.size() == 1) {
+                ViewGroup target = exact.get(0);
+                if (tabItems(target).size() >= 4) {
+                    lastBestScore = 100f;
+                    lastBestClass = target.getClass().getName();
+                    pending = new java.lang.ref.WeakReference<View>(target);
+                    pendingHits = 2;
+                    return target;
+                }
+                lastBestScore = -1f;
+                lastBestClass = target.getClass().getName() + " (tab structure not recognized)";
+                return null;
+            }
+            if (exact.size() > 1) {
+                lastBestScore = -1f;
+                lastBestClass = EXACT_DOCK_CLASS + " (ambiguous: " + exact.size() + ")";
+                return null;
+            }
             Best best = new Best();
             walk(root, root, best, 0, new int[]{2600});
             if (best.view != null) {
@@ -1827,6 +1851,22 @@ final class DockController {
         private static final class Best {
             ViewGroup view;
             float score = -1f;
+        }
+
+        private static void findExactDock(View node, ArrayList<ViewGroup> found,
+                                          int depth, int[] budget) {
+            if (node == null || depth > MAX_DEPTH || budget[0]-- <= 0) return;
+            boolean match = false;
+            for (Class<?> type = node.getClass(); type != null; type = type.getSuperclass()) {
+                if (EXACT_DOCK_CLASS.equals(type.getName())) { match = true; break; }
+            }
+            if (match && node instanceof ViewGroup) found.add((ViewGroup) node);
+            if (node instanceof ViewGroup) {
+                ViewGroup group = (ViewGroup) node;
+                for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                    findExactDock(group.getChildAt(i), found, depth + 1, budget);
+                }
+            }
         }
 
         private static void walk(View root, View node, Best best, int depth, int[] budget) {
