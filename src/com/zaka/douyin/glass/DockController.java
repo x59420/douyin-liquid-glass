@@ -1035,16 +1035,16 @@ final class DockController {
                     // 手势类（倍速 / 清屏）不受影响，该收还是收。
                     // 评论区本身就是需要隐藏 Dock 的页面状态；不要再用 commentOpen
                     // 去屏蔽结构隐藏判据，否则评论区会一直保留 Dock。
-                    boolean structuralHidden = commentOpen[0]
-                            || dockMissingTicks[0] >= 12
-                            || (!messagesTabSelected && (coveredTicks[0] >= COVER_CONFIRM_TICKS
-                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
-                            || hostHiddenTicks[0] >= 25));
                     // 每帧读取当前选中的底部 Tab。本人「我」页和「消息」主 Tab
                     // 都是一级导航页面；切换消息 Tab 时抖音会短暂叠加页面容器，
                     // 不能把这几帧误判成覆盖页/浮层，否则 Dock 会闪一下。
                     boolean ownProfileTabSelected = Finder.isOwnProfileTabSelected(tabTargets[0]);
                     boolean messagesTabSelected = Finder.isMessagesTabSelected(tabTargets[0]);
+                    boolean structuralHidden = commentOpen[0]
+                            || dockMissingTicks[0] >= 12
+                            || (!messagesTabSelected && (coveredTicks[0] >= COVER_CONFIRM_TICKS
+                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
+                            || hostHiddenTicks[0] >= 25));
                     boolean otherProfile = otherProfileState[0] && !ownProfileTabSelected;
                     boolean hidden = speedPlayback || longPress || clearScreen
                             || structuralHidden || otherProfile;
