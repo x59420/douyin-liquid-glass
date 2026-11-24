@@ -336,8 +336,8 @@ public final class Backdrop {
         if (!covered && !skipTree) {
             Canvas uc = new Canvas(ui);
             uc.drawColor(0, PorterDuff.Mode.CLEAR);
+            int saveCount = uc.save();
             try {
-                uc.save();
                 uc.scale(kx, ky);
                 int[] cl = new int[2];
                 c.getLocationInWindow(cl);
@@ -345,12 +345,12 @@ public final class Backdrop {
                 c.draw(uc);
                 uiValid = true;
             } catch (Throwable t) {
-                // 绘制中断时清掉半帧，不能把上一次页面的残留像素带进合成。
-                uc.drawColor(0, PorterDuff.Mode.CLEAR);
+                // 使用新 Canvas 清掉半帧，不能把上一次页面或本次局部绘制残留带进合成。
+                new Canvas(ui).drawColor(0, PorterDuff.Mode.CLEAR);
                 uiValid = false;
                 Dydock.warnOnce("ui-draw", "内容树绘制中断（通常无害）: " + t);
             } finally {
-                uc.restore();
+                uc.restoreToCount(saveCount);
             }
         } else {
             // 视频已覆盖取景区，或原生底栏临时恢复而需跳过内容树；
