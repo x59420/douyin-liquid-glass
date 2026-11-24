@@ -111,16 +111,24 @@ final class NativeUiTransparency {
                 }
             }
 
+            boolean hideStatus = DockPrefs.hideStatusBar(activity);
             int layoutFlags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                     | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                     | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
             int visibilityFlags = View.SYSTEM_UI_FLAG_FULLSCREEN
                     | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                     | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-            int flags = (decor.getSystemUiVisibility()
-                    & ~(visibilityFlags | layoutFlags)) | layoutFlags;
 
-            if (DockPrefs.hideStatusBar(activity)) {
+            // When the status bar is hidden, fullscreen already expands app content into
+            // its former area. Keeping LAYOUT_FULLSCREEN can preserve the old top inset,
+            // exposing an unpainted (often black) strip with the status icons gone.
+            // Only lay out behind the status bar while it remains visible.
+            int flags = decor.getSystemUiVisibility() & ~(visibilityFlags | layoutFlags);
+            flags |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            if (!hideStatus) {
+                flags |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+            } else {
                 flags |= View.SYSTEM_UI_FLAG_FULLSCREEN;
             }
             if (DockPrefs.hideNavigationBar(activity)) {
