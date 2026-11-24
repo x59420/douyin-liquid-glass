@@ -50,9 +50,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +65,8 @@ import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import com.zaka.douyin.glass.ksu.liquid.vibrancy
 import com.zaka.douyin.glass.iso.SettingsModel
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 
 /**
  * dydock 设置界面。
@@ -401,57 +405,64 @@ private fun ModeRow(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Label("模式", palette.primary, 15.sp, modifier = Modifier.weight(1f))
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(palette.card.copy(alpha = 0.78f))
-                    .border(1.dp, palette.border, RoundedCornerShape(12.dp))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { menuOpen = !menuOpen }
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Label(modes.getOrElse(themeMode) { modes[0] }, palette.primary, 12.5.sp)
-                    Spacer(Modifier.width(7.dp))
-                    Label(if (menuOpen) "⌃" else "⌄", palette.secondary, 13.sp)
-                }
-            }
-        }
-        if (menuOpen) {
-            Column(
-                Modifier.fillMaxWidth().padding(top = 10.dp),
-                horizontalAlignment = Alignment.End,
-            ) {
-                Column(
-                    Modifier.width(148.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(palette.panel.copy(alpha = 0.97f))
-                        .border(1.dp, palette.border, RoundedCornerShape(20.dp))
-                        .padding(6.dp)
+            Box {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(palette.card.copy(alpha = 0.78f))
+                        .border(1.dp, palette.border, RoundedCornerShape(12.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { menuOpen = !menuOpen }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
-                    modes.forEachIndexed { index, label ->
-                        val selected = themeMode == index
-                        Box(
-                            Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                ) {
-                                    onThemeChange(index)
-                                    menuOpen = false
-                                }
-                                .padding(horizontal = 13.dp, vertical = 11.dp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Label(modes.getOrElse(themeMode) { modes[0] }, palette.primary, 12.5.sp)
+                        Spacer(Modifier.width(7.dp))
+                        Label(if (menuOpen) "⌃" else "⌄", palette.secondary, 13.sp)
+                    }
+                }
+                if (menuOpen) {
+                    val popupOffset = with(LocalDensity.current) {
+                        IntOffset(0, 44.dp.roundToPx())
+                    }
+                    Popup(
+                        alignment = Alignment.TopEnd,
+                        offset = popupOffset,
+                        onDismissRequest = { menuOpen = false },
+                        properties = PopupProperties(focusable = true),
+                    ) {
+                        Column(
+                            Modifier.width(148.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(palette.panel.copy(alpha = 0.97f))
+                                .border(1.dp, palette.border, RoundedCornerShape(20.dp))
+                                .padding(6.dp)
                         ) {
-                            Label(
-                                label,
-                                if (selected) palette.selectedText else palette.primary,
-                                13.sp,
-                                weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            )
+                            modes.forEachIndexed { index, label ->
+                                val selected = themeMode == index
+                                Box(
+                                    Modifier.fillMaxWidth()
+                                        .clip(RoundedCornerShape(14.dp))
+                                        .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
+                                        .clickable(
+                                            interactionSource = remember { MutableInteractionSource() },
+                                            indication = null,
+                                        ) {
+                                            onThemeChange(index)
+                                            menuOpen = false
+                                        }
+                                        .padding(horizontal = 13.dp, vertical = 11.dp)
+                                ) {
+                                    Label(
+                                        label,
+                                        if (selected) palette.selectedText else palette.primary,
+                                        13.sp,
+                                        weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
