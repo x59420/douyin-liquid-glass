@@ -27,6 +27,7 @@ internal interface SettingsModel {
     val navigationTransparent: MutableState<Boolean>
     val hideNavigationBar: MutableState<Boolean>
     val hideStatusBar: MutableState<Boolean>
+    val followNativeDockVisibility: MutableState<Boolean>
 
     fun setEnabled(value: Boolean)
     fun setShowPlus(value: Boolean)
@@ -48,5 +49,6 @@ internal interface SettingsModel {
     fun setNavigationTransparent(value: Boolean)
     fun setHideNavigationBar(value: Boolean)
     fun setHideStatusBar(value: Boolean)
+    fun setFollowNativeDockVisibility(value: Boolean)
     fun reset()
 }

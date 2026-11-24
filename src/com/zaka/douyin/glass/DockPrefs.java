@@ -42,6 +42,7 @@ final class DockPrefs {
     private static final String KEY_NAVIGATION_TRANSPARENT = "navigation_bar_transparent_enabled";
     private static final String KEY_HIDE_NAVIGATION = "hide_navigation_bar_enabled";
     private static final String KEY_HIDE_STATUS = "hide_status_bar_enabled";
+    private static final String KEY_FOLLOW_NATIVE_DOCK_VISIBILITY = "follow_native_dock_visibility";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -192,6 +193,12 @@ final class DockPrefs {
     static void setHideNavigationBar(Context c, boolean v) { writeBool(c, KEY_HIDE_NAVIGATION, v); }
     static boolean hideStatusBar(Context c) { return readBool(c, KEY_HIDE_STATUS, false); }
     static void setHideStatusBar(Context c, boolean v) { writeBool(c, KEY_HIDE_STATUS, v); }
+    static boolean followNativeDockVisibility(Context c) {
+        return readBool(c, KEY_FOLLOW_NATIVE_DOCK_VISIBILITY, true);
+    }
+    static void setFollowNativeDockVisibility(Context c, boolean v) {
+        writeBool(c, KEY_FOLLOW_NATIVE_DOCK_VISIBILITY, v);
+    }
 
     static void setThemeMode(Context context, int value) {
         writeInt(context, KEY_THEME_MODE, clamp(value, 0, 2));

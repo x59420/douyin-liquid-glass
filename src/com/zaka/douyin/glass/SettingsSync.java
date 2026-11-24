@@ -118,6 +118,11 @@ public final class SettingsSync {
         if (intent.hasExtra("navigation_transparent")) { DockPrefs.setNavigationTransparent(context, intent.getBooleanExtra("navigation_transparent", true)); changed = true; }
         if (intent.hasExtra("hide_navigation_bar")) { DockPrefs.setHideNavigationBar(context, intent.getBooleanExtra("hide_navigation_bar", false)); changed = true; }
         if (intent.hasExtra("hide_status_bar")) { DockPrefs.setHideStatusBar(context, intent.getBooleanExtra("hide_status_bar", false)); changed = true; }
+        if (intent.hasExtra("follow_native_dock_visibility")) {
+            DockPrefs.setFollowNativeDockVisibility(context,
+                    intent.getBooleanExtra("follow_native_dock_visibility", true));
+            changed = true;
+        }
         if (!changed) return;
         Dydock.log("设置:收到设置界面的改动，立刻应用");
         DockController.applySettingsToAll();
@@ -132,7 +137,8 @@ public final class SettingsSync {
                      boolean nativeControlsEnabled, int nativeControlsAlpha,
                      boolean nativeBottomEnabled, int nativeBottomAlpha,
                      boolean homeTopTransparent, boolean homeBottomTransparent,
-                     boolean navigationTransparent, boolean hideNavigationBar, boolean hideStatusBar) {
+                     boolean navigationTransparent, boolean hideNavigationBar, boolean hideStatusBar,
+                     boolean followNativeDockVisibility) {
         if (context == null) return;
         try {
             Intent intent = new Intent(ACTION);
@@ -156,6 +162,7 @@ public final class SettingsSync {
             intent.putExtra("navigation_transparent", navigationTransparent);
             intent.putExtra("hide_navigation_bar", hideNavigationBar);
             intent.putExtra("hide_status_bar", hideStatusBar);
+            intent.putExtra("follow_native_dock_visibility", followNativeDockVisibility);
             context.sendBroadcast(intent);
         } catch (Throwable t) {
             Dydock.warnOnce("settings-push", "发送设置广播失败: " + t);

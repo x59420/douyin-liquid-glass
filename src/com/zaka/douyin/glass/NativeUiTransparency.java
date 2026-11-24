@@ -73,6 +73,11 @@ final class NativeUiTransparency {
         Candidate top = (topOn || homeTopOn) ? choose(found, 1, null, null) : null;
         Candidate controls = controlsOn ? choose(found, 2, top, null) : null;
         Candidate bottom = (bottomOn || homeBottomOn) ? choose(found, 3, top, controls) : null;
+        if (bottom != null && DockController.isManagedNativeDock(activity, bottom.view)) {
+            // The original navigation tree remains the real click target but is visually
+            // suppressed by DockController; its opacity must not be multiplied by this setting.
+            bottom = null;
+        }
 
         WeakHashMap<View, Integer> alphaTargets = new WeakHashMap<>();
         WeakHashMap<View, Boolean> backgroundTargets = new WeakHashMap<>();

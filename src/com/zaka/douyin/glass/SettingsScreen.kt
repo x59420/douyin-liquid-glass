@@ -103,6 +103,7 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val navigationTransparent = mutableStateOf(DockPrefs.navigationTransparent(ctx))
     override val hideNavigationBar = mutableStateOf(DockPrefs.hideNavigationBar(ctx))
     override val hideStatusBar = mutableStateOf(DockPrefs.hideStatusBar(ctx))
+    override val followNativeDockVisibility = mutableStateOf(DockPrefs.followNativeDockVisibility(ctx))
 
     override fun setEnabled(value: Boolean) {
         enabled.value = value
@@ -193,6 +194,11 @@ internal class SettingsState(context: Context) : SettingsModel {
     override fun setNavigationTransparent(value: Boolean) { navigationTransparent.value = value; DockPrefs.setNavigationTransparent(ctx,value); push() }
     override fun setHideNavigationBar(value: Boolean) { hideNavigationBar.value = value; DockPrefs.setHideNavigationBar(ctx,value); push() }
     override fun setHideStatusBar(value: Boolean) { hideStatusBar.value = value; DockPrefs.setHideStatusBar(ctx,value); push() }
+    override fun setFollowNativeDockVisibility(value: Boolean) {
+        followNativeDockVisibility.value = value
+        DockPrefs.setFollowNativeDockVisibility(ctx, value)
+        push()
+    }
 
     /**
      * 把当前这一份配置推给抖音进程。
@@ -222,6 +228,7 @@ internal class SettingsState(context: Context) : SettingsModel {
             navigationTransparent.value,
             hideNavigationBar.value,
             hideStatusBar.value,
+            followNativeDockVisibility.value,
         )
     }
 
@@ -244,6 +251,7 @@ internal class SettingsState(context: Context) : SettingsModel {
         setNavigationTransparent(true)
         setHideNavigationBar(false)
         setHideStatusBar(false)
+        setFollowNativeDockVisibility(true)
     }
 }
 
@@ -404,8 +412,15 @@ internal fun SettingsScreen(
                 SwitchRow("主页顶部背景透明", "移除主页顶部原生菜单背景，不改变文字和点击区域",
                     state.homeTopTransparent.value, state::setHomeTopTransparent)
                 Divider()
-                SwitchRow("主页底部背景透明", "移除主页底部原生导航背景，不处理 dyDock 玻璃层",
+                SwitchRow("主页底部背景透明", "持续清理原生底栏背景层；不改变抖音导航点击逻辑",
                     state.homeBottomTransparent.value, state::setHomeBottomTransparent)
+                Divider()
+                SwitchRow(
+                    title = "Dock 跟随抖音原生底栏显隐",
+                    subtitle = "原生底栏被隐藏或移除时同步收起；恢复后再显示",
+                    checked = state.followNativeDockVisibility.value,
+                    onChange = state::setFollowNativeDockVisibility,
+                )
                 Divider()
                 SwitchRow("系统导航栏透明", "保留系统手势区域与手势操作",
                     state.navigationTransparent.value, state::setNavigationTransparent)

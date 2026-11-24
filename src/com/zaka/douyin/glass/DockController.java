@@ -66,6 +66,8 @@ final class DockController {
 
     /** 每个 Activity 识别出的官方 Dock。 */
     private static final WeakHashMap<Activity, View> DOCKS = new WeakHashMap<Activity, View>();
+    private static final WeakHashMap<Activity, NativeDockState> NATIVE_DOCK_STATES =
+            new WeakHashMap<Activity, NativeDockState>();
     /** Host video view currently holding a recognized long press. */
     private static final WeakHashMap<Activity, View> LONG_PRESS_TARGETS =
             new WeakHashMap<Activity, View>();
@@ -84,10 +86,10 @@ final class DockController {
             new WeakHashMap<Activity, ViewTreeObserver>();
     private static final WeakHashMap<Activity, ViewTreeObserver.OnPreDrawListener> HOST_PRE_DRAWS =
             new WeakHashMap<Activity, ViewTreeObserver.OnPreDrawListener>();
-    private static final WeakHashMap<Activity, WeakHashMap<View, Drawable>> STRIPPED_BACKGROUNDS =
-            new WeakHashMap<Activity, WeakHashMap<View, Drawable>>();
-    private static final WeakHashMap<Activity, WeakHashMap<View, Drawable>> STRIPPED_FOREGROUNDS =
-            new WeakHashMap<Activity, WeakHashMap<View, Drawable>>();
+    private static final WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>> STRIPPED_BACKGROUNDS =
+            new WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>>();
+    private static final WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>> STRIPPED_FOREGROUNDS =
+            new WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>>();
     /** 每个 Activity 的背景采样器：设置改了要立刻重算几何，得能拿回它。 */
     private static final WeakHashMap<Activity, Backdrop> BACKDROPS =
             new WeakHashMap<Activity, Backdrop>();
@@ -561,6 +563,30 @@ final class DockController {
         }
     }
 
+    /** NativeUiTransparency must not fade the original nav that the glass Dock replaces. */
+    static boolean isManagedNativeDock(Activity activity, View candidate) {
+        if (activity == null || candidate == null) return false;
+        View nativeDock;
+        synchronized (DOCKS) { nativeDock = DOCKS.get(activity); }
+        if (nativeDock == null) return false;
+        if (candidate == nativeDock) return true;
+        View current = nativeDock;
+        for (int i = 0; i < 24 && current != null; i++) {
+            ViewParent parent = current.getParent();
+            if (!(parent instanceof View)) break;
+            current = (View) parent;
+            if (current == candidate) return true;
+        }
+        current = candidate;
+        for (int i = 0; i < 24 && current != null; i++) {
+            ViewParent parent = current.getParent();
+            if (!(parent instanceof View)) break;
+            current = (View) parent;
+            if (current == nativeDock) return true;
+        }
+        return false;
+    }
+
     /**
      * Activity 销毁时收尾。
      *
@@ -769,6 +795,8 @@ final class DockController {
         refreshTabs(iso, initialTabs, plus);
 
         final View[] dockRef = new View[]{dock};
+        final NativeDockState[] nativeDockState = new NativeDockState[]{new NativeDockState(dock)};
+        synchronized (NATIVE_DOCK_STATES) { NATIVE_DOCK_STATES.put(act, nativeDockState[0]); }
         final boolean[] live = new boolean[]{true};
         final long[] lastStamp = new long[]{Long.MIN_VALUE};
         synchronized (DOCKS) {
@@ -792,9 +820,9 @@ final class DockController {
             }
         });
 
-        // 原生底栏先让位：留在原位会被一起采进玻璃里。
-        // 玻璃万一脸都没画出来，下面的看门狗会把原生底栏原样还回去。
-        dock.setVisibility(View.GONE);
+        // Keep the native navigation View attached and laid out. Like DouAi, observe its
+        // host-owned visibility/alpha; alpha-only suppression preserves native click targets.
+        nativeDockState[0].suppress(dock);
         try {
             backdrop.capture();
         } catch (Throwable t) {
@@ -897,7 +925,7 @@ final class DockController {
                         synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                         removeHostMonitor(act);
                         detachOverlay(iso);
-                        restoreNative(dockRef[0]);
+                        restoreNative(act, dockRef[0]);
                         Dydock.warn("底栏:玻璃渲染出错，已恢复官方 Dock");
                         toast(act, "Dydock " + Dydock.VER + "：玻璃渲染出错，已恢复官方底栏");
                         return;
@@ -948,9 +976,15 @@ final class DockController {
                                     View p = Finder.pickPlus(its);
                                     List<View> lf = new ArrayList<View>(its);
                                     if (p != null) lf.remove(p);
+                                    NativeDockState previousNativeState = nativeDockState[0];
+                                    if (previousNativeState != null) previousNativeState.restore(d);
+                                    nativeDockState[0] = new NativeDockState(fresh);
+                                    synchronized (NATIVE_DOCK_STATES) {
+                                        NATIVE_DOCK_STATES.put(act, nativeDockState[0]);
+                                    }
                                     chrome[0] = new ChromeSnapshot(fresh, content, decor);
                                     stripDockBackground(act, fresh);
-                                    fresh.setVisibility(View.GONE);
+                                    nativeDockState[0].suppress(fresh);
                                     dockRef[0] = fresh;
                                     backdrop.setExcluded(fresh);
                                     tabTargets[0] = lf;
@@ -1106,7 +1140,8 @@ final class DockController {
                         backdrop.pump();
                     }
 
-                    if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
+                    // Native visibility is no longer overwritten by a 50ms GONE loop.
+                    // The pre-draw monitor owns synchronization with the host's real state.
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
                         animateDock(iso.view, show, 6f * densityPx);
@@ -1120,6 +1155,7 @@ final class DockController {
         // DouAi-style native state monitoring: observe the actual host View tree at draw time.
         final int[] missingDraws = new int[]{0};
         final int[] hiddenDraws = new int[]{0};
+        final long[] lastBackgroundScanAt = new long[]{0L};
         final ViewTreeObserver.OnPreDrawListener hostStateMonitor =
                 new ViewTreeObserver.OnPreDrawListener() {
             @Override public boolean onPreDraw() {
@@ -1127,8 +1163,15 @@ final class DockController {
                 View nativeDock = dockRef[0];
                 boolean attached = nativeDock != null && nativeDock.isAttachedToWindow();
                 missingDraws[0] = attached ? 0 : Math.min(3, missingDraws[0] + 1);
-                boolean hostHidden = attached && chrome[0] != null
-                        && chrome[0].isHiddenNow(nativeDock);
+                boolean nativeVisible = nativeDockState[0] != null
+                        && nativeDockState[0].suppress(nativeDock);
+                long scanAt = SystemClock.uptimeMillis();
+                if (attached && scanAt - lastBackgroundScanAt[0] >= 180L) {
+                    lastBackgroundScanAt[0] = scanAt;
+                    stripDockBackground(act, nativeDock);
+                }
+                boolean hostHidden = attached && DockPrefs.followNativeDockVisibility(act)
+                        && (!nativeVisible || (chrome[0] != null && chrome[0].isHiddenNow(nativeDock)));
                 hiddenDraws[0] = hostHidden ? Math.min(3, hiddenDraws[0] + 1) : 0;
                 int nextMissing = missingDraws[0] >= 2 ? 12 : 0;
                 int nextHidden = hiddenDraws[0] >= 2 ? 25 : 0;
@@ -1172,7 +1215,7 @@ final class DockController {
                 synchronized (POLLERS) { POLLERS.remove(act); }
                 synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                 detachOverlay(iso);
-                restoreNative(dockRef[0]);
+                restoreNative(act, dockRef[0]);
                 Dydock.warn("底栏:玻璃 5 秒内没有画出第一帧，已恢复原生 Dock");
                 toast(act, "Dydock " + Dydock.VER + "：玻璃没画出来，已恢复原生底栏");
             }
@@ -1407,7 +1450,7 @@ final class DockController {
             } catch (Throwable ignored) {
             }
         }
-        restoreNative(dock);
+        restoreNative(act, dock);
         synchronized (BACKDROPS) { BACKDROPS.remove(act); }
         synchronized (BANDS) { BANDS.remove(act); }
         synchronized (DONE) { DONE.put(act, Boolean.TRUE); }
@@ -1468,15 +1511,54 @@ final class DockController {
         }
     }
 
-    private static void restoreNative(View dock) {
-        Activity owner = Shield.activityOf(dock);
+    private static void restoreNative(Activity owner, View dock) {
+        NativeDockState state;
+        synchronized (NATIVE_DOCK_STATES) { state = NATIVE_DOCK_STATES.remove(owner); }
+        if (state != null) state.restore(dock);
         if (owner != null) restoreStrippedBackgrounds(owner);
-        try {
-            if (dock != null) {
-                dock.setVisibility(View.VISIBLE);
-                dock.setAlpha(1f);
+    }
+
+    /** Mirrors DouAi's reversible host-state snapshot, but keeps the native tab click tree alive. */
+    private static final class NativeDockState {
+        private static final float SUPPRESSED_ALPHA = 0.001f;
+        private int visibility;
+        private float alpha;
+        private int appliedVisibility;
+        private float appliedAlpha;
+
+        NativeDockState(View view) {
+            visibility = view.getVisibility();
+            alpha = view.getAlpha();
+            recordApplied(view);
+        }
+
+        boolean suppress(View view) {
+            if (view == null) return false;
+            observeHostState(view);
+            boolean hostVisible = visibility == View.VISIBLE && alpha > 0.05f;
+            if (Math.abs(view.getAlpha() - SUPPRESSED_ALPHA) > 0.00001f) {
+                view.setAlpha(SUPPRESSED_ALPHA);
             }
-        } catch (Throwable ignored) {
+            recordApplied(view);
+            return hostVisible;
+        }
+
+        void restore(View view) {
+            if (view == null) return;
+            observeHostState(view);
+            if (view.getVisibility() != visibility) view.setVisibility(visibility);
+            if (Math.abs(view.getAlpha() - alpha) > 0.00001f) view.setAlpha(alpha);
+            recordApplied(view);
+        }
+
+        private void observeHostState(View view) {
+            if (view.getVisibility() != appliedVisibility) visibility = view.getVisibility();
+            if (Math.abs(view.getAlpha() - appliedAlpha) > 0.00001f) alpha = view.getAlpha();
+        }
+
+        private void recordApplied(View view) {
+            appliedVisibility = view.getVisibility();
+            appliedAlpha = view.getAlpha();
         }
     }
 
@@ -1646,57 +1728,73 @@ final class DockController {
         Rect bounds = rectInWindow(view);
         if (!bounds.intersect(dockBand)) return;
 
-        WeakHashMap<View, Drawable> backgrounds;
-        synchronized (STRIPPED_BACKGROUNDS) {
-            backgrounds = STRIPPED_BACKGROUNDS.get(owner);
-            if (backgrounds == null) {
-                backgrounds = new WeakHashMap<View, Drawable>();
-                STRIPPED_BACKGROUNDS.put(owner, backgrounds);
-            }
-        }
-        Drawable background = view.getBackground();
-        if (background != null) {
-            if (!backgrounds.containsKey(view)) backgrounds.put(view, background);
-            view.setBackground(null);
-        }
+        clearSurfaceBackground(owner, view, false);
         if (android.os.Build.VERSION.SDK_INT >= 23) {
-            WeakHashMap<View, Drawable> foregrounds;
-            synchronized (STRIPPED_FOREGROUNDS) {
-                foregrounds = STRIPPED_FOREGROUNDS.get(owner);
-                if (foregrounds == null) {
-                    foregrounds = new WeakHashMap<View, Drawable>();
-                    STRIPPED_FOREGROUNDS.put(owner, foregrounds);
-                }
-            }
-            Drawable foreground = view.getForeground();
-            if (foreground != null) {
-                if (!foregrounds.containsKey(view)) foregrounds.put(view, foreground);
-                view.setForeground(null);
+            clearSurfaceBackground(owner, view, true);
+        }
+    }
+
+    private static void clearSurfaceBackground(Activity owner, View view, boolean foreground) {
+        WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>> outer =
+                foreground ? STRIPPED_FOREGROUNDS : STRIPPED_BACKGROUNDS;
+        WeakHashMap<View, BackgroundSnapshot> states;
+        synchronized (outer) {
+            states = outer.get(owner);
+            if (states == null) {
+                states = new WeakHashMap<View, BackgroundSnapshot>();
+                outer.put(owner, states);
             }
         }
+        Drawable current = foreground ? view.getForeground() : view.getBackground();
+        BackgroundSnapshot state = states.get(view);
+        if (state == null) {
+            state = new BackgroundSnapshot(current);
+            states.put(view, state);
+        } else if (current != state.applied) {
+            // The host replaced its drawable since our previous frame; preserve that new baseline.
+            state.original = current;
+        }
+        if (current != null) {
+            if (foreground) view.setForeground(null);
+            else view.setBackground(null);
+        }
+        state.applied = null;
     }
 
     private static void restoreStrippedBackgrounds(Activity owner) {
         if (owner == null) return;
-        WeakHashMap<View, Drawable> backgrounds;
-        synchronized (STRIPPED_BACKGROUNDS) { backgrounds = STRIPPED_BACKGROUNDS.remove(owner); }
-        if (backgrounds != null) {
-            for (View view : new ArrayList<View>(backgrounds.keySet())) {
-                Drawable drawable = backgrounds.get(view);
-                if (view != null && drawable != null) {
-                    try { view.setBackground(drawable); } catch (Throwable ignored) { }
-                }
-            }
+        restoreSurfaceMap(STRIPPED_BACKGROUNDS, owner, false);
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            restoreSurfaceMap(STRIPPED_FOREGROUNDS, owner, true);
         }
-        WeakHashMap<View, Drawable> foregrounds;
-        synchronized (STRIPPED_FOREGROUNDS) { foregrounds = STRIPPED_FOREGROUNDS.remove(owner); }
-        if (foregrounds != null && android.os.Build.VERSION.SDK_INT >= 23) {
-            for (View view : new ArrayList<View>(foregrounds.keySet())) {
-                Drawable drawable = foregrounds.get(view);
-                if (view != null && drawable != null) {
-                    try { view.setForeground(drawable); } catch (Throwable ignored) { }
+    }
+
+    private static void restoreSurfaceMap(
+            WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>> outer,
+            Activity owner, boolean foreground) {
+        WeakHashMap<View, BackgroundSnapshot> states;
+        synchronized (outer) { states = outer.remove(owner); }
+        if (states == null) return;
+        for (View view : new ArrayList<View>(states.keySet())) {
+            BackgroundSnapshot state = states.get(view);
+            if (view == null || state == null) continue;
+            try {
+                Drawable current = foreground ? view.getForeground() : view.getBackground();
+                // Do not overwrite a host update that happened after the last monitor frame.
+                if (current == state.applied) {
+                    if (foreground) view.setForeground(state.original);
+                    else view.setBackground(state.original);
                 }
-            }
+            } catch (Throwable ignored) { }
+        }
+    }
+
+    private static final class BackgroundSnapshot {
+        Drawable original;
+        Drawable applied;
+        BackgroundSnapshot(Drawable original) {
+            this.original = original;
+            this.applied = original;
         }
     }
 
