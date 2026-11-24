@@ -626,7 +626,7 @@ final class DockController {
         }
     }
 
-class filters    private static void attempt(final Activity act, final int n) {
+    private static void attempt(final Activity act, final int n) {
         MAIN.postDelayed(new Runnable() {
             @Override
             public void run() {
