@@ -101,6 +101,9 @@ public final class SettingsSync {
                     DockPrefs.DEF_BOTTOM_GAP));
             changed = true;
         }
+        if (intent.hasExtra("native_top_alpha")) { DockPrefs.setNativeTopAlpha(context, intent.getIntExtra("native_top_alpha", 100)); changed = true; }
+        if (intent.hasExtra("native_controls_alpha")) { DockPrefs.setNativeControlsAlpha(context, intent.getIntExtra("native_controls_alpha", 100)); changed = true; }
+        if (intent.hasExtra("native_bottom_alpha")) { DockPrefs.setNativeBottomAlpha(context, intent.getIntExtra("native_bottom_alpha", 100)); changed = true; }
         if (intent.hasExtra("native_top_enabled")) { DockPrefs.setNativeTopEnabled(context, intent.getBooleanExtra("native_top_enabled", false)); changed = true; }
         if (intent.hasExtra("native_top_play_alpha")) { DockPrefs.setNativeTopPlayAlpha(context, intent.getIntExtra("native_top_play_alpha", 100)); changed = true; }
         if (intent.hasExtra("native_top_pause_alpha")) { DockPrefs.setNativeTopPauseAlpha(context, intent.getIntExtra("native_top_pause_alpha", 100)); changed = true; }
@@ -125,9 +128,9 @@ public final class SettingsSync {
     /** 设置界面每改一项就调一次：广播出去 + （兜底）把 prefs 文件设成可读。 */
     static void push(Context context, boolean enabled, boolean showPlus, boolean showLabels,
                      boolean verboseLog, int height, int tabWidth, int sideMargin, int bottomGap,
-                     boolean nativeTopEnabled, int nativeTopPlayAlpha, int nativeTopPauseAlpha,
-                     boolean nativeControlsEnabled, int nativeControlsPlayAlpha, int nativeControlsPauseAlpha,
-                     boolean nativeBottomEnabled, int nativeBottomPlayAlpha, int nativeBottomPauseAlpha,
+                     boolean nativeTopEnabled, int nativeTopAlpha,
+                     boolean nativeControlsEnabled, int nativeControlsAlpha,
+                     boolean nativeBottomEnabled, int nativeBottomAlpha,
                      boolean homeTopTransparent, boolean homeBottomTransparent,
                      boolean navigationTransparent, boolean hideNavigationBar, boolean hideStatusBar) {
         if (context == null) return;
@@ -143,14 +146,11 @@ public final class SettingsSync {
             intent.putExtra("side_margin", sideMargin);
             intent.putExtra("bottom_gap", bottomGap);
             intent.putExtra("native_top_enabled", nativeTopEnabled);
-            intent.putExtra("native_top_play_alpha", nativeTopPlayAlpha);
-            intent.putExtra("native_top_pause_alpha", nativeTopPauseAlpha);
+            intent.putExtra("native_top_alpha", nativeTopAlpha);
             intent.putExtra("native_controls_enabled", nativeControlsEnabled);
-            intent.putExtra("native_controls_play_alpha", nativeControlsPlayAlpha);
-            intent.putExtra("native_controls_pause_alpha", nativeControlsPauseAlpha);
+            intent.putExtra("native_controls_alpha", nativeControlsAlpha);
             intent.putExtra("native_bottom_enabled", nativeBottomEnabled);
-            intent.putExtra("native_bottom_play_alpha", nativeBottomPlayAlpha);
-            intent.putExtra("native_bottom_pause_alpha", nativeBottomPauseAlpha);
+            intent.putExtra("native_bottom_alpha", nativeBottomAlpha);
             intent.putExtra("home_top_transparent", homeTopTransparent);
             intent.putExtra("home_bottom_transparent", homeBottomTransparent);
             intent.putExtra("navigation_transparent", navigationTransparent);
