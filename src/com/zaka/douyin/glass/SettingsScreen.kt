@@ -153,6 +153,37 @@ internal class SettingsState(context: Context) : SettingsModel {
         push()
     }
 
+    override fun setNativeTopEnabled(value: Boolean) {
+        nativeTopEnabled.value = value
+        DockPrefs.setNativeTopEnabled(ctx, value)
+        push()
+    }
+    override fun setNativeTopPlayAlpha(value: Int) {
+        nativeTopPlayAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeTopPlayAlpha(ctx, value)
+        push()
+    }
+    override fun setNativeTopPauseAlpha(value: Int) {
+        nativeTopPauseAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeTopPauseAlpha(ctx, value)
+        push()
+    }
+    override fun setNativeControlsEnabled(value: Boolean) {
+        nativeControlsEnabled.value = value
+        DockPrefs.setNativeControlsEnabled(ctx, value)
+        push()
+    }
+    override fun setNativeControlsPlayAlpha(value: Int) {
+        nativeControlsPlayAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeControlsPlayAlpha(ctx, value)
+        push()
+    }
+    override fun setNativeControlsPauseAlpha(value: Int) {
+        nativeControlsPauseAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeControlsPauseAlpha(ctx, value)
+        push()
+    }
+
     /**
      * 把当前这一份配置推给抖音进程。
      *
@@ -170,6 +201,12 @@ internal class SettingsState(context: Context) : SettingsModel {
             tabWidth.value,
             sideMargin.value,
             bottomGap.value,
+            nativeTopEnabled.value,
+            nativeTopPlayAlpha.value,
+            nativeTopPauseAlpha.value,
+            nativeControlsEnabled.value,
+            nativeControlsPlayAlpha.value,
+            nativeControlsPauseAlpha.value,
         )
     }
 
@@ -181,6 +218,12 @@ internal class SettingsState(context: Context) : SettingsModel {
         setTabWidth(DockPrefs.DEF_TAB_WIDTH)
         setSideMargin(DockPrefs.DEF_SIDE_MARGIN)
         setBottomGap(DockPrefs.DEF_BOTTOM_GAP)
+        setNativeTopEnabled(false)
+        setNativeTopPlayAlpha(100)
+        setNativeTopPauseAlpha(100)
+        setNativeControlsEnabled(false)
+        setNativeControlsPlayAlpha(100)
+        setNativeControlsPauseAlpha(100)
     }
 }
 
@@ -305,6 +348,36 @@ internal fun SettingsScreen(
                 Divider()
                 SliderRow("离底部距离", state.bottomGap.value,
                     0, 28, 1, state::setBottomGap)
+            }
+
+            Spacer(Modifier.height(18.dp))
+            SectionTitle("原生界面透明度")
+            GlassCard(scene) {
+                SwitchRow(
+                    title = "顶部原生菜单透明",
+                    subtitle = "只处理抖音顶部原生控件，不影响 dyDock",
+                    checked = state.nativeTopEnabled.value,
+                    onChange = state::setNativeTopEnabled,
+                )
+                Divider()
+                SliderRow("播放时顶部透明度", state.nativeTopPlayAlpha.value,
+                    0, 100, 5, state::setNativeTopPlayAlpha, "%")
+                Divider()
+                SliderRow("暂停时顶部透明度", state.nativeTopPauseAlpha.value,
+                    0, 100, 5, state::setNativeTopPauseAlpha, "%")
+                Divider()
+                SwitchRow(
+                    title = "原生视频控件透明",
+                    subtitle = "只处理视频页原生控制层，不处理底部 Dock",
+                    checked = state.nativeControlsEnabled.value,
+                    onChange = state::setNativeControlsEnabled,
+                )
+                Divider()
+                SliderRow("播放时视频控件透明度", state.nativeControlsPlayAlpha.value,
+                    0, 100, 5, state::setNativeControlsPlayAlpha, "%")
+                Divider()
+                SliderRow("暂停时视频控件透明度", state.nativeControlsPauseAlpha.value,
+                    0, 100, 5, state::setNativeControlsPauseAlpha, "%")
             }
 
             Spacer(Modifier.height(18.dp))
