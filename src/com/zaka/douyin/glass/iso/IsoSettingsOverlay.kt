@@ -134,14 +134,11 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override val sideMargin = mutableStateOf(prefs.getInt("side_margin_dp", 24).coerceIn(12, 40))
     override val bottomGap = mutableStateOf(prefs.getInt("bottom_gap_dp", 8).coerceIn(0, 28))
     override val nativeTopEnabled = mutableStateOf(prefs.getBoolean("native_top_transparency_enabled", false))
-    override val nativeTopPlayAlpha = mutableStateOf(prefs.getInt("native_top_play_alpha", 100).coerceIn(0, 100))
-    override val nativeTopPauseAlpha = mutableStateOf(prefs.getInt("native_top_pause_alpha", 100).coerceIn(0, 100))
+    override val nativeTopAlpha = mutableStateOf(prefs.getInt("native_top_alpha", 100).coerceIn(0, 100))
     override val nativeControlsEnabled = mutableStateOf(prefs.getBoolean("native_controls_transparency_enabled", false))
-    override val nativeControlsPlayAlpha = mutableStateOf(prefs.getInt("native_controls_play_alpha", 100).coerceIn(0, 100))
-    override val nativeControlsPauseAlpha = mutableStateOf(prefs.getInt("native_controls_pause_alpha", 100).coerceIn(0, 100))
+    override val nativeControlsAlpha = mutableStateOf(prefs.getInt("native_controls_alpha", 100).coerceIn(0, 100))
     override val nativeBottomEnabled = mutableStateOf(prefs.getBoolean("native_bottom_transparency_enabled", false))
-    override val nativeBottomPlayAlpha = mutableStateOf(prefs.getInt("native_bottom_play_alpha", 100).coerceIn(0, 100))
-    override val nativeBottomPauseAlpha = mutableStateOf(prefs.getInt("native_bottom_pause_alpha", 100).coerceIn(0, 100))
+    override val nativeBottomAlpha = mutableStateOf(prefs.getInt("native_bottom_alpha", 100).coerceIn(0, 100))
     override val homeTopTransparent = mutableStateOf(prefs.getBoolean("home_top_transparent_enabled", false))
     override val homeBottomTransparent = mutableStateOf(prefs.getBoolean("home_bottom_transparent_enabled", false))
     override val navigationTransparent = mutableStateOf(prefs.getBoolean("navigation_bar_transparent_enabled", true))
@@ -157,14 +154,11 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override fun setSideMargin(value: Int) { sideMargin.value = value.coerceIn(12, 40); persistAndPush() }
     override fun setBottomGap(value: Int) { bottomGap.value = value.coerceIn(0, 28); persistAndPush() }
     override fun setNativeTopEnabled(value: Boolean) { nativeTopEnabled.value = value; persistAndPush() }
-    override fun setNativeTopPlayAlpha(value: Int) { nativeTopPlayAlpha.value = value.coerceIn(0, 100); persistAndPush() }
-    override fun setNativeTopPauseAlpha(value: Int) { nativeTopPauseAlpha.value = value.coerceIn(0, 100); persistAndPush() }
+    override fun setNativeTopAlpha(value: Int) { nativeTopAlpha.value = value.coerceIn(0, 100); persistAndPush() }
     override fun setNativeControlsEnabled(value: Boolean) { nativeControlsEnabled.value = value; persistAndPush() }
-    override fun setNativeControlsPlayAlpha(value: Int) { nativeControlsPlayAlpha.value = value.coerceIn(0, 100); persistAndPush() }
-    override fun setNativeControlsPauseAlpha(value: Int) { nativeControlsPauseAlpha.value = value.coerceIn(0, 100); persistAndPush() }
+    override fun setNativeControlsAlpha(value: Int) { nativeControlsAlpha.value = value.coerceIn(0, 100); persistAndPush() }
     override fun setNativeBottomEnabled(value: Boolean) { nativeBottomEnabled.value = value; persistAndPush() }
-    override fun setNativeBottomPlayAlpha(value: Int) { nativeBottomPlayAlpha.value = value.coerceIn(0, 100); persistAndPush() }
-    override fun setNativeBottomPauseAlpha(value: Int) { nativeBottomPauseAlpha.value = value.coerceIn(0, 100); persistAndPush() }
+    override fun setNativeBottomAlpha(value: Int) { nativeBottomAlpha.value = value.coerceIn(0, 100); persistAndPush() }
     override fun setHomeTopTransparent(value: Boolean) { homeTopTransparent.value = value; persistAndPush() }
     override fun setHomeBottomTransparent(value: Boolean) { homeBottomTransparent.value = value; persistAndPush() }
     override fun setNavigationTransparent(value: Boolean) { navigationTransparent.value = value; persistAndPush() }
@@ -186,14 +180,11 @@ private class IsoSettingsState(context: Context) : SettingsModel {
         sideMargin.value = 24
         bottomGap.value = 8
         nativeTopEnabled.value = false
-        nativeTopPlayAlpha.value = 100
-        nativeTopPauseAlpha.value = 100
+        nativeTopAlpha.value = 100
         nativeControlsEnabled.value = false
-        nativeControlsPlayAlpha.value = 100
-        nativeControlsPauseAlpha.value = 100
+        nativeControlsAlpha.value = 100
         nativeBottomEnabled.value = false
-        nativeBottomPlayAlpha.value = 100
-        nativeBottomPauseAlpha.value = 100
+        nativeBottomAlpha.value = 100
         homeTopTransparent.value = false
         homeBottomTransparent.value = false
         navigationTransparent.value = true
@@ -214,14 +205,11 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putInt("bottom_gap_dp", bottomGap.value)
             .putInt("theme_mode", themeMode.value)
             .putBoolean("native_top_transparency_enabled", nativeTopEnabled.value)
-            .putInt("native_top_play_alpha", nativeTopPlayAlpha.value)
-            .putInt("native_top_pause_alpha", nativeTopPauseAlpha.value)
+            .putInt("native_top_alpha", nativeTopAlpha.value)
             .putBoolean("native_controls_transparency_enabled", nativeControlsEnabled.value)
-            .putInt("native_controls_play_alpha", nativeControlsPlayAlpha.value)
-            .putInt("native_controls_pause_alpha", nativeControlsPauseAlpha.value)
+            .putInt("native_controls_alpha", nativeControlsAlpha.value)
             .putBoolean("native_bottom_transparency_enabled", nativeBottomEnabled.value)
-            .putInt("native_bottom_play_alpha", nativeBottomPlayAlpha.value)
-            .putInt("native_bottom_pause_alpha", nativeBottomPauseAlpha.value)
+            .putInt("native_bottom_alpha", nativeBottomAlpha.value)
             .putBoolean("home_top_transparent_enabled", homeTopTransparent.value)
             .putBoolean("home_bottom_transparent_enabled", homeBottomTransparent.value)
             .putBoolean("navigation_bar_transparent_enabled", navigationTransparent.value)
@@ -241,14 +229,11 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putExtra("side_margin", sideMargin.value)
             .putExtra("bottom_gap", bottomGap.value)
             .putExtra("native_top_enabled", nativeTopEnabled.value)
-            .putExtra("native_top_play_alpha", nativeTopPlayAlpha.value)
-            .putExtra("native_top_pause_alpha", nativeTopPauseAlpha.value)
+            .putExtra("native_top_alpha", nativeTopAlpha.value)
             .putExtra("native_controls_enabled", nativeControlsEnabled.value)
-            .putExtra("native_controls_play_alpha", nativeControlsPlayAlpha.value)
-            .putExtra("native_controls_pause_alpha", nativeControlsPauseAlpha.value)
+            .putExtra("native_controls_alpha", nativeControlsAlpha.value)
             .putExtra("native_bottom_enabled", nativeBottomEnabled.value)
-            .putExtra("native_bottom_play_alpha", nativeBottomPlayAlpha.value)
-            .putExtra("native_bottom_pause_alpha", nativeBottomPauseAlpha.value)
+            .putExtra("native_bottom_alpha", nativeBottomAlpha.value)
             .putExtra("home_top_transparent", homeTopTransparent.value)
             .putExtra("home_bottom_transparent", homeBottomTransparent.value)
             .putExtra("navigation_transparent", navigationTransparent.value)
