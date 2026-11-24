@@ -3,12 +3,15 @@ package com.zaka.douyin.glass.iso
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.compose.runtime.Recomposer
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -20,9 +23,8 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.zaka.douyin.glass.Dydock
 import com.zaka.douyin.glass.SettingsScreen
-import com.zaka.douyin.glass.SettingsState
+import com.zaka.douyin.glass.iso.SettingsModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -33,12 +35,12 @@ import kotlinx.coroutines.launch
  * Compose 由模块 APK 的隔离类加载器运行；Dialog 不创建新 Activity，
  * 窗口背景透明且不设置 dim，底下抖音页面保持原亮度。
  */
-class IsoSettingsOverlay private constructor(activity: Activity) : Dialog(activity) {
+class IsoSettingsOverlay private constructor(activity: Activity, version: String) : Dialog(activity) {
     private val host = SettingsDialogHost(activity)
 
     init {
-        val state = SettingsState(activity)
-        host.compose { SettingsScreen(state, Dydock.VER, { dismiss() }, overlay = true) }
+        val state = IsoSettingsState(activity)
+        host.compose { SettingsScreen(state, version, { dismiss() }, overlay = true) }
         setContentView(host)
         setCanceledOnTouchOutside(true)
         setOnDismissListener { host.destroyOwner() }
@@ -58,9 +60,9 @@ class IsoSettingsOverlay private constructor(activity: Activity) : Dialog(activi
 
     companion object {
         @JvmStatic
-        fun show(activity: Activity) {
+        fun show(activity: Activity, version: String) {
             if (activity.isFinishing || activity.isDestroyed) return
-            IsoSettingsOverlay(activity).show()
+            IsoSettingsOverlay(activity, version).show()
         }
     }
 }
@@ -93,7 +95,7 @@ private class SettingsDialogHost(context: Context) : FrameLayout(context),
             field.set(inner, recomposer)
             scope.launch { recomposer.runRecomposeAndApplyChanges() }
         } catch (t: Throwable) {
-            Dydock.warnOnce("settings-recomposer", "设置面板 Recomposer 初始化失败: $t")
+            android.util.Log.w("dydock", "设置面板 Recomposer 初始化失败", t)
             try { recomposer.cancel() } catch (_: Throwable) {}
             try { scope.cancel() } catch (_: Throwable) {}
         }
@@ -111,4 +113,79 @@ private class SettingsDialogHost(context: Context) : FrameLayout(context),
         try { scope.cancel() } catch (_: Throwable) {}
         registry.currentState = Lifecycle.State.DESTROYED
     }
+
+/**
+ * 隔离类加载器中的轻量配置模型。
+ * 只依赖 Android SharedPreferences / Intent，不加载宿主的 Xposed 配置类。
+ */
+private class IsoSettingsState(context: Context) : SettingsModel {
+    private val app = context.applicationContext
+    private val prefs: SharedPreferences =
+        app.getSharedPreferences("dydock_settings", Context.MODE_PRIVATE)
+
+    override val enabled = mutableStateOf(prefs.getBoolean("enabled", true))
+    override val showPlus = mutableStateOf(prefs.getBoolean("show_plus", true))
+    override val showLabels = mutableStateOf(prefs.getBoolean("show_labels", true))
+    override val logEnabled = mutableStateOf(prefs.getBoolean("verbose_log", true))
+    override val themeMode = mutableStateOf(prefs.getInt("theme_mode", 0).coerceIn(0, 2))
+    override val height = mutableStateOf(prefs.getInt("dock_height_dp", 64).coerceIn(52, 88))
+    override val tabWidth = mutableStateOf(prefs.getInt("tab_width_dp", 76).coerceIn(60, 100))
+    override val sideMargin = mutableStateOf(prefs.getInt("side_margin_dp", 24).coerceIn(12, 40))
+    override val bottomGap = mutableStateOf(prefs.getInt("bottom_gap_dp", 8).coerceIn(0, 28))
+
+    override fun setEnabled(value: Boolean) { enabled.value = value; persistAndPush() }
+    override fun setShowPlus(value: Boolean) { showPlus.value = value; persistAndPush() }
+    override fun setShowLabels(value: Boolean) { showLabels.value = value; persistAndPush() }
+    override fun setLogEnabled(value: Boolean) { logEnabled.value = value; persistAndPush() }
+    override fun setHeight(value: Int) { height.value = value.coerceIn(52, 88); persistAndPush() }
+    override fun setTabWidth(value: Int) { tabWidth.value = value.coerceIn(60, 100); persistAndPush() }
+    override fun setSideMargin(value: Int) { sideMargin.value = value.coerceIn(12, 40); persistAndPush() }
+    override fun setBottomGap(value: Int) { bottomGap.value = value.coerceIn(0, 28); persistAndPush() }
+
+    override fun setThemeMode(value: Int) {
+        themeMode.value = value.coerceIn(0, 2)
+        prefs.edit().putInt("theme_mode", themeMode.value)
+            .putLong("settings_rev", System.currentTimeMillis()).commit()
+    }
+
+    override fun reset() {
+        enabled.value = true
+        showPlus.value = true
+        showLabels.value = true
+        height.value = 64
+        tabWidth.value = 76
+        sideMargin.value = 24
+        bottomGap.value = 8
+        persistAndPush()
+    }
+
+    private fun persistAndPush() {
+        prefs.edit()
+            .putBoolean("enabled", enabled.value)
+            .putBoolean("show_plus", showPlus.value)
+            .putBoolean("show_labels", showLabels.value)
+            .putBoolean("verbose_log", logEnabled.value)
+            .putInt("dock_height_dp", height.value)
+            .putInt("tab_width_dp", tabWidth.value)
+            .putInt("side_margin_dp", sideMargin.value)
+            .putInt("bottom_gap_dp", bottomGap.value)
+            .putInt("theme_mode", themeMode.value)
+            .putLong("settings_rev", System.currentTimeMillis())
+            .commit()
+
+        val intent = Intent("com.zaka.douyin.glass.SETTINGS_CHANGED")
+            .setPackage("com.ss.android.ugc.aweme")
+            .putExtra("enabled", enabled.value)
+            .putExtra("show_plus", showPlus.value)
+            .putExtra("show_labels", showLabels.value)
+            .putExtra("verbose_log", logEnabled.value)
+            .putExtra("height", height.value)
+            .putExtra("tab_width", tabWidth.value)
+            .putExtra("side_margin", sideMargin.value)
+            .putExtra("bottom_gap", bottomGap.value)
+        app.sendBroadcast(intent)
+    }
+}
+
+
 }
