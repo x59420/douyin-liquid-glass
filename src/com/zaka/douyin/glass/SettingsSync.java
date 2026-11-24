@@ -107,6 +107,14 @@ public final class SettingsSync {
         if (intent.hasExtra("native_controls_enabled")) { DockPrefs.setNativeControlsEnabled(context, intent.getBooleanExtra("native_controls_enabled", false)); changed = true; }
         if (intent.hasExtra("native_controls_play_alpha")) { DockPrefs.setNativeControlsPlayAlpha(context, intent.getIntExtra("native_controls_play_alpha", 100)); changed = true; }
         if (intent.hasExtra("native_controls_pause_alpha")) { DockPrefs.setNativeControlsPauseAlpha(context, intent.getIntExtra("native_controls_pause_alpha", 100)); changed = true; }
+        if (intent.hasExtra("native_bottom_enabled")) { DockPrefs.setNativeBottomEnabled(context, intent.getBooleanExtra("native_bottom_enabled", false)); changed = true; }
+        if (intent.hasExtra("native_bottom_play_alpha")) { DockPrefs.setNativeBottomPlayAlpha(context, intent.getIntExtra("native_bottom_play_alpha", 100)); changed = true; }
+        if (intent.hasExtra("native_bottom_pause_alpha")) { DockPrefs.setNativeBottomPauseAlpha(context, intent.getIntExtra("native_bottom_pause_alpha", 100)); changed = true; }
+        if (intent.hasExtra("home_top_transparent")) { DockPrefs.setHomeTopTransparent(context, intent.getBooleanExtra("home_top_transparent", false)); changed = true; }
+        if (intent.hasExtra("home_bottom_transparent")) { DockPrefs.setHomeBottomTransparent(context, intent.getBooleanExtra("home_bottom_transparent", false)); changed = true; }
+        if (intent.hasExtra("navigation_transparent")) { DockPrefs.setNavigationTransparent(context, intent.getBooleanExtra("navigation_transparent", true)); changed = true; }
+        if (intent.hasExtra("hide_navigation_bar")) { DockPrefs.setHideNavigationBar(context, intent.getBooleanExtra("hide_navigation_bar", false)); changed = true; }
+        if (intent.hasExtra("hide_status_bar")) { DockPrefs.setHideStatusBar(context, intent.getBooleanExtra("hide_status_bar", false)); changed = true; }
         if (!changed) return;
         Dydock.log("设置:收到设置界面的改动，立刻应用");
         DockController.applySettingsToAll();
@@ -118,7 +126,10 @@ public final class SettingsSync {
     static void push(Context context, boolean enabled, boolean showPlus, boolean showLabels,
                      boolean verboseLog, int height, int tabWidth, int sideMargin, int bottomGap,
                      boolean nativeTopEnabled, int nativeTopPlayAlpha, int nativeTopPauseAlpha,
-                     boolean nativeControlsEnabled, int nativeControlsPlayAlpha, int nativeControlsPauseAlpha) {
+                     boolean nativeControlsEnabled, int nativeControlsPlayAlpha, int nativeControlsPauseAlpha,
+                     boolean nativeBottomEnabled, int nativeBottomPlayAlpha, int nativeBottomPauseAlpha,
+                     boolean homeTopTransparent, boolean homeBottomTransparent,
+                     boolean navigationTransparent, boolean hideNavigationBar, boolean hideStatusBar) {
         if (context == null) return;
         try {
             Intent intent = new Intent(ACTION);
@@ -137,6 +148,14 @@ public final class SettingsSync {
             intent.putExtra("native_controls_enabled", nativeControlsEnabled);
             intent.putExtra("native_controls_play_alpha", nativeControlsPlayAlpha);
             intent.putExtra("native_controls_pause_alpha", nativeControlsPauseAlpha);
+            intent.putExtra("native_bottom_enabled", nativeBottomEnabled);
+            intent.putExtra("native_bottom_play_alpha", nativeBottomPlayAlpha);
+            intent.putExtra("native_bottom_pause_alpha", nativeBottomPauseAlpha);
+            intent.putExtra("home_top_transparent", homeTopTransparent);
+            intent.putExtra("home_bottom_transparent", homeBottomTransparent);
+            intent.putExtra("navigation_transparent", navigationTransparent);
+            intent.putExtra("hide_navigation_bar", hideNavigationBar);
+            intent.putExtra("hide_status_bar", hideStatusBar);
             context.sendBroadcast(intent);
         } catch (Throwable t) {
             Dydock.warnOnce("settings-push", "发送设置广播失败: " + t);
