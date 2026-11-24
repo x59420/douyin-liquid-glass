@@ -31,6 +31,14 @@ final class DockPrefs {
     private static final String KEY_NATIVE_CONTROLS_ENABLED = "native_controls_transparency_enabled";
     private static final String KEY_NATIVE_CONTROLS_PLAY_ALPHA = "native_controls_play_alpha";
     private static final String KEY_NATIVE_CONTROLS_PAUSE_ALPHA = "native_controls_pause_alpha";
+    private static final String KEY_NATIVE_BOTTOM_ENABLED = "native_bottom_transparency_enabled";
+    private static final String KEY_NATIVE_BOTTOM_PLAY_ALPHA = "native_bottom_play_alpha";
+    private static final String KEY_NATIVE_BOTTOM_PAUSE_ALPHA = "native_bottom_pause_alpha";
+    private static final String KEY_HOME_TOP_TRANSPARENT = "home_top_transparent_enabled";
+    private static final String KEY_HOME_BOTTOM_TRANSPARENT = "home_bottom_transparent_enabled";
+    private static final String KEY_NAVIGATION_TRANSPARENT = "navigation_bar_transparent_enabled";
+    private static final String KEY_HIDE_NAVIGATION = "hide_navigation_bar_enabled";
+    private static final String KEY_HIDE_STATUS = "hide_status_bar_enabled";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -143,6 +151,22 @@ final class DockPrefs {
     static void setNativeControlsPlayAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_CONTROLS_PLAY_ALPHA, clamp(v, 0, 100)); }
     static int nativeControlsPauseAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_CONTROLS_PAUSE_ALPHA, 100), 0, 100); }
     static void setNativeControlsPauseAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_CONTROLS_PAUSE_ALPHA, clamp(v, 0, 100)); }
+    static boolean nativeBottomEnabled(Context c) { return readBool(c, KEY_NATIVE_BOTTOM_ENABLED, false); }
+    static void setNativeBottomEnabled(Context c, boolean v) { writeBool(c, KEY_NATIVE_BOTTOM_ENABLED, v); }
+    static int nativeBottomPlayAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_BOTTOM_PLAY_ALPHA, 100), 0, 100); }
+    static void setNativeBottomPlayAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_BOTTOM_PLAY_ALPHA, clamp(v, 0, 100)); }
+    static int nativeBottomPauseAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_BOTTOM_PAUSE_ALPHA, 100), 0, 100); }
+    static void setNativeBottomPauseAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_BOTTOM_PAUSE_ALPHA, clamp(v, 0, 100)); }
+    static boolean homeTopTransparent(Context c) { return readBool(c, KEY_HOME_TOP_TRANSPARENT, false); }
+    static void setHomeTopTransparent(Context c, boolean v) { writeBool(c, KEY_HOME_TOP_TRANSPARENT, v); }
+    static boolean homeBottomTransparent(Context c) { return readBool(c, KEY_HOME_BOTTOM_TRANSPARENT, false); }
+    static void setHomeBottomTransparent(Context c, boolean v) { writeBool(c, KEY_HOME_BOTTOM_TRANSPARENT, v); }
+    static boolean navigationTransparent(Context c) { return readBool(c, KEY_NAVIGATION_TRANSPARENT, true); }
+    static void setNavigationTransparent(Context c, boolean v) { writeBool(c, KEY_NAVIGATION_TRANSPARENT, v); }
+    static boolean hideNavigationBar(Context c) { return readBool(c, KEY_HIDE_NAVIGATION, false); }
+    static void setHideNavigationBar(Context c, boolean v) { writeBool(c, KEY_HIDE_NAVIGATION, v); }
+    static boolean hideStatusBar(Context c) { return readBool(c, KEY_HIDE_STATUS, false); }
+    static void setHideStatusBar(Context c, boolean v) { writeBool(c, KEY_HIDE_STATUS, v); }
 
     static void setThemeMode(Context context, int value) {
         writeInt(context, KEY_THEME_MODE, clamp(value, 0, 2));
@@ -223,6 +247,14 @@ final class DockPrefs {
             editor.putBoolean(KEY_NATIVE_CONTROLS_ENABLED, remote.getBoolean(KEY_NATIVE_CONTROLS_ENABLED, false));
             editor.putInt(KEY_NATIVE_CONTROLS_PLAY_ALPHA, remote.getInt(KEY_NATIVE_CONTROLS_PLAY_ALPHA, 100));
             editor.putInt(KEY_NATIVE_CONTROLS_PAUSE_ALPHA, remote.getInt(KEY_NATIVE_CONTROLS_PAUSE_ALPHA, 100));
+            editor.putBoolean(KEY_NATIVE_BOTTOM_ENABLED, remote.getBoolean(KEY_NATIVE_BOTTOM_ENABLED, false));
+            editor.putInt(KEY_NATIVE_BOTTOM_PLAY_ALPHA, remote.getInt(KEY_NATIVE_BOTTOM_PLAY_ALPHA, 100));
+            editor.putInt(KEY_NATIVE_BOTTOM_PAUSE_ALPHA, remote.getInt(KEY_NATIVE_BOTTOM_PAUSE_ALPHA, 100));
+            editor.putBoolean(KEY_HOME_TOP_TRANSPARENT, remote.getBoolean(KEY_HOME_TOP_TRANSPARENT, false));
+            editor.putBoolean(KEY_HOME_BOTTOM_TRANSPARENT, remote.getBoolean(KEY_HOME_BOTTOM_TRANSPARENT, false));
+            editor.putBoolean(KEY_NAVIGATION_TRANSPARENT, remote.getBoolean(KEY_NAVIGATION_TRANSPARENT, true));
+            editor.putBoolean(KEY_HIDE_NAVIGATION, remote.getBoolean(KEY_HIDE_NAVIGATION, false));
+            editor.putBoolean(KEY_HIDE_STATUS, remote.getBoolean(KEY_HIDE_STATUS, false));
             editor.putLong(KEY_REV, remoteRev);
             editor.apply();
             Dydock.setVerbose(remote.getBoolean(KEY_LOG, true));
