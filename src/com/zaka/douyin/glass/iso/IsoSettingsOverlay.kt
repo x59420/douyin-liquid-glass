@@ -113,6 +113,7 @@ private class SettingsDialogHost(context: Context) : FrameLayout(context),
         try { scope.cancel() } catch (_: Throwable) {}
         registry.currentState = Lifecycle.State.DESTROYED
     }
+}
 
 /**
  * 隔离类加载器中的轻量配置模型。
@@ -188,4 +189,3 @@ private class IsoSettingsState(context: Context) : SettingsModel {
 }
 
 
-}
