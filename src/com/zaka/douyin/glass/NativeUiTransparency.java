@@ -69,10 +69,9 @@ final class NativeUiTransparency {
         View root = activity.findViewById(android.R.id.content);
         if (!(root instanceof ViewGroup)) return;
 
-        restore(activity);
         boolean topEnabled = DockPrefs.nativeTopEnabled(activity);
         boolean controlsEnabled = DockPrefs.nativeControlsEnabled(activity);
-        if (!topEnabled && !controlsEnabled) return;
+        if (!topEnabled && !controlsEnabled) { restore(activity); return; }
 
         boolean paused = isPaused((ViewGroup) root);
         int topPercent = paused ? DockPrefs.nativeTopPauseAlpha(activity)
@@ -85,10 +84,12 @@ final class NativeUiTransparency {
         Candidate top = topEnabled ? chooseTop(nodes) : null;
         Candidate controls = controlsEnabled ? chooseControls(nodes, top) : null;
 
-        if (top != null) setAlpha(activity, top.view, topPercent);
+        WeakHashMap<View, Integer> desired = new WeakHashMap<View, Integer>();
+        if (top != null) desired.put(top.view, topPercent);
         if (controls != null && (top == null || !isAncestor(top.view, controls.view))) {
-            setAlpha(activity, controls.view, controlsPercent);
+            desired.put(controls.view, controlsPercent);
         }
+        applyDesired(activity, desired);
     }
 
     static void restore(Activity activity) {
@@ -103,21 +104,39 @@ final class NativeUiTransparency {
         }
     }
 
-    private static void setAlpha(Activity activity, View view, int percent) {
-        if (view == null || percent >= 100) return;
-        try {
-            WeakHashMap<View, Float> values;
-            synchronized (ORIGINAL) {
-                values = ORIGINAL.get(activity);
-                if (values == null) {
-                    values = new WeakHashMap<View, Float>();
-                    ORIGINAL.put(activity, values);
-                }
-                if (!values.containsKey(view)) values.put(view, view.getAlpha());
+    private static void applyDesired(Activity activity, WeakHashMap<View, Integer> desired) {
+        WeakHashMap<View, Float> old;
+        synchronized (ORIGINAL) {
+            old = ORIGINAL.get(activity);
+            if (old == null) {
+                old = new WeakHashMap<View, Float>();
+                ORIGINAL.put(activity, old);
             }
-            Float original = values.get(view);
-            if (original != null) view.setAlpha(original * (percent / 100f));
-        } catch (Throwable ignored) {}
+        }
+        // Restore views that stopped matching, without flashing current candidates.
+        for (View previous : new ArrayList<View>(old.keySet())) {
+            if (!desired.containsKey(previous)) {
+                Float original = old.remove(previous);
+                if (previous != null && original != null) {
+                    try { previous.setAlpha(original); } catch (Throwable ignored) {}
+                }
+            }
+        }
+        for (View view : desired.keySet()) {
+            if (view == null) continue;
+            try {
+                Float original = old.get(view);
+                if (original == null) {
+                    original = view.getAlpha();
+                    old.put(view, original);
+                }
+                int percent = desired.get(view);
+                view.setAlpha(original * (percent / 100f));
+            } catch (Throwable ignored) {}
+        }
+        if (old.isEmpty()) {
+            synchronized (ORIGINAL) { ORIGINAL.remove(activity); }
+        }
     }
 
     private static void collect(View view, View root, int depth, int[] budget,
