@@ -689,7 +689,9 @@ public final class Backdrop {
 
             if (!(l.view instanceof SurfaceView)) return;
             SurfaceView sv = (SurfaceView) l.view;
-            if (!sv.getHolder().getSurface().isValid()) return;
+            if (!sv.getHolder().getSurface().isValid() || l.pending) return;
+            long nowMs = SystemClock.uptimeMillis();
+            if (inflight > 0 || nowMs - lastRequestAt < 8L) return;
 
             int w = Math.max(4, l.dst.width());
             int h = Math.max(4, l.dst.height());
@@ -713,13 +715,10 @@ public final class Backdrop {
                 return;
             }
 
-            long nowMs = SystemClock.uptimeMillis();
-            if (inflight > 0 || nowMs - lastRequestAt < 8L) return;
             lastRequestAt = nowMs;
             inflight++;
             l.pending = true;
             final Bitmap requestedFrame = l.pendingFrame;
-            l.pending = true;
             PixelCopy.request(sv, inter, requestedFrame, new PixelCopy.OnPixelCopyFinishedListener() {
                 @Override
                 public void onPixelCopyFinished(int result) {
