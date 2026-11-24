@@ -144,6 +144,8 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override val navigationTransparent = mutableStateOf(prefs.getBoolean("navigation_bar_transparent_enabled", true))
     override val hideNavigationBar = mutableStateOf(prefs.getBoolean("hide_navigation_bar_enabled", false))
     override val hideStatusBar = mutableStateOf(prefs.getBoolean("hide_status_bar_enabled", false))
+    override val followNativeDockVisibility =
+        mutableStateOf(prefs.getBoolean("follow_native_dock_visibility", true))
 
     override fun setEnabled(value: Boolean) { enabled.value = value; persistAndPush() }
     override fun setShowPlus(value: Boolean) { showPlus.value = value; persistAndPush() }
@@ -164,6 +166,10 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override fun setNavigationTransparent(value: Boolean) { navigationTransparent.value = value; persistAndPush() }
     override fun setHideNavigationBar(value: Boolean) { hideNavigationBar.value = value; persistAndPush() }
     override fun setHideStatusBar(value: Boolean) { hideStatusBar.value = value; persistAndPush() }
+    override fun setFollowNativeDockVisibility(value: Boolean) {
+        followNativeDockVisibility.value = value
+        persistAndPush()
+    }
 
     override fun setThemeMode(value: Int) {
         themeMode.value = value.coerceIn(0, 2)
@@ -190,6 +196,7 @@ private class IsoSettingsState(context: Context) : SettingsModel {
         navigationTransparent.value = true
         hideNavigationBar.value = false
         hideStatusBar.value = false
+        followNativeDockVisibility.value = true
         persistAndPush()
     }
 
@@ -215,6 +222,7 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putBoolean("navigation_bar_transparent_enabled", navigationTransparent.value)
             .putBoolean("hide_navigation_bar_enabled", hideNavigationBar.value)
             .putBoolean("hide_status_bar_enabled", hideStatusBar.value)
+            .putBoolean("follow_native_dock_visibility", followNativeDockVisibility.value)
             .putLong("settings_rev", System.currentTimeMillis())
             .commit()
 
@@ -239,6 +247,7 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putExtra("navigation_transparent", navigationTransparent.value)
             .putExtra("hide_navigation_bar", hideNavigationBar.value)
             .putExtra("hide_status_bar", hideStatusBar.value)
+            .putExtra("follow_native_dock_visibility", followNativeDockVisibility.value)
         app.sendBroadcast(intent)
     }
 }
