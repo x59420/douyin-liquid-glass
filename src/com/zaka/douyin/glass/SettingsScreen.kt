@@ -62,6 +62,7 @@ import top.yukonga.miuix.kmp.blur.drawBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import com.zaka.douyin.glass.ksu.liquid.vibrancy
+import com.zaka.douyin.glass.iso.SettingsModel
 
 /**
  * dydock 设置界面。
@@ -73,70 +74,70 @@ import com.zaka.douyin.glass.ksu.liquid.vibrancy
  * （模糊 + vibrancy + 一层很淡的表面色）。没有 RuntimeShader 的机器（API < 33）
  * 自动退回半透明卡片，不会出现「卡片里什么都没有」。
  */
-internal class SettingsState(context: Context) {
+internal class SettingsState(context: Context) : SettingsModel {
 
     private val ctx = context.applicationContext
 
-    val enabled = mutableStateOf(DockPrefs.enabled(ctx))
-    val showPlus = mutableStateOf(DockPrefs.showPlusButton(ctx))
-    val showLabels = mutableStateOf(DockPrefs.showLabels(ctx))
-    val logEnabled = mutableStateOf(DockPrefs.logEnabled(ctx))
-    val themeMode = mutableStateOf(DockPrefs.themeMode(ctx))
+    override val enabled = mutableStateOf(DockPrefs.enabled(ctx))
+    override val showPlus = mutableStateOf(DockPrefs.showPlusButton(ctx))
+    override val showLabels = mutableStateOf(DockPrefs.showLabels(ctx))
+    override val logEnabled = mutableStateOf(DockPrefs.logEnabled(ctx))
+    override val themeMode = mutableStateOf(DockPrefs.themeMode(ctx))
 
-    val height = mutableStateOf(DockPrefs.heightDp(ctx))
-    val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
-    val sideMargin = mutableStateOf(DockPrefs.sideMarginDp(ctx))
-    val bottomGap = mutableStateOf(DockPrefs.bottomGapDp(ctx))
+    override val height = mutableStateOf(DockPrefs.heightDp(ctx))
+    override val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
+    override val sideMargin = mutableStateOf(DockPrefs.sideMarginDp(ctx))
+    override val bottomGap = mutableStateOf(DockPrefs.bottomGapDp(ctx))
 
-    fun setEnabled(value: Boolean) {
+    override fun setEnabled(value: Boolean) {
         enabled.value = value
         DockPrefs.setEnabled(ctx, value)
         push()
     }
 
-    fun setShowPlus(value: Boolean) {
+    override fun setShowPlus(value: Boolean) {
         showPlus.value = value
         DockPrefs.setShowPlusButton(ctx, value)
         push()
     }
 
-    fun setShowLabels(value: Boolean) {
+    override fun setShowLabels(value: Boolean) {
         showLabels.value = value
         DockPrefs.setShowLabels(ctx, value)
         push()
     }
 
-    fun setLogEnabled(value: Boolean) {
+    override fun setLogEnabled(value: Boolean) {
         logEnabled.value = value
         DockPrefs.setLogEnabled(ctx, value)
         push()
     }
 
-    fun setThemeMode(value: Int) {
+    override fun setThemeMode(value: Int) {
         val mode = value.coerceIn(0, 2)
         themeMode.value = mode
         DockPrefs.setThemeMode(ctx, mode)
     }
 
-    fun setHeight(value: Int) {
+    override fun setHeight(value: Int) {
         height.value = value
         DockPrefs.setHeightDp(ctx, value)
         push()
     }
 
-    fun setTabWidth(value: Int) {
+    override fun setTabWidth(value: Int) {
         tabWidth.value = value
         DockPrefs.setTabWidthDp(ctx, value)
         push()
     }
 
-    fun setSideMargin(value: Int) {
+    override fun setSideMargin(value: Int) {
         sideMargin.value = value
         DockPrefs.setSideMarginDp(ctx, value)
         push()
     }
 
-    fun setBottomGap(value: Int) {
+    override fun setBottomGap(value: Int) {
         bottomGap.value = value
         DockPrefs.setBottomGapDp(ctx, value)
         push()
@@ -162,7 +163,7 @@ internal class SettingsState(context: Context) {
         )
     }
 
-    fun reset() {
+    override fun reset() {
         setEnabled(true)
         setShowPlus(true)
         setShowLabels(true)
@@ -219,7 +220,7 @@ private fun Label(
 
 @Composable
 internal fun SettingsScreen(
-    state: SettingsState,
+    state: SettingsModel,
     version: String,
     onBack: () -> Unit,
     overlay: Boolean = false,
