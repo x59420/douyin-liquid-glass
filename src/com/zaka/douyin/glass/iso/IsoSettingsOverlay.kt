@@ -133,6 +133,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override val tabWidth = mutableStateOf(prefs.getInt("tab_width_dp", 76).coerceIn(60, 100))
     override val sideMargin = mutableStateOf(prefs.getInt("side_margin_dp", 24).coerceIn(12, 40))
     override val bottomGap = mutableStateOf(prefs.getInt("bottom_gap_dp", 8).coerceIn(0, 28))
+    override val nativeTopEnabled = mutableStateOf(prefs.getBoolean("native_top_transparency_enabled", false))
+    override val nativeTopPlayAlpha = mutableStateOf(prefs.getInt("native_top_play_alpha", 100).coerceIn(0, 100))
+    override val nativeTopPauseAlpha = mutableStateOf(prefs.getInt("native_top_pause_alpha", 100).coerceIn(0, 100))
+    override val nativeControlsEnabled = mutableStateOf(prefs.getBoolean("native_controls_transparency_enabled", false))
+    override val nativeControlsPlayAlpha = mutableStateOf(prefs.getInt("native_controls_play_alpha", 100).coerceIn(0, 100))
+    override val nativeControlsPauseAlpha = mutableStateOf(prefs.getInt("native_controls_pause_alpha", 100).coerceIn(0, 100))
 
     override fun setEnabled(value: Boolean) { enabled.value = value; persistAndPush() }
     override fun setShowPlus(value: Boolean) { showPlus.value = value; persistAndPush() }
@@ -142,6 +148,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override fun setTabWidth(value: Int) { tabWidth.value = value.coerceIn(60, 100); persistAndPush() }
     override fun setSideMargin(value: Int) { sideMargin.value = value.coerceIn(12, 40); persistAndPush() }
     override fun setBottomGap(value: Int) { bottomGap.value = value.coerceIn(0, 28); persistAndPush() }
+    override fun setNativeTopEnabled(value: Boolean) { nativeTopEnabled.value = value; persistAndPush() }
+    override fun setNativeTopPlayAlpha(value: Int) { nativeTopPlayAlpha.value = value.coerceIn(0, 100); persistAndPush() }
+    override fun setNativeTopPauseAlpha(value: Int) { nativeTopPauseAlpha.value = value.coerceIn(0, 100); persistAndPush() }
+    override fun setNativeControlsEnabled(value: Boolean) { nativeControlsEnabled.value = value; persistAndPush() }
+    override fun setNativeControlsPlayAlpha(value: Int) { nativeControlsPlayAlpha.value = value.coerceIn(0, 100); persistAndPush() }
+    override fun setNativeControlsPauseAlpha(value: Int) { nativeControlsPauseAlpha.value = value.coerceIn(0, 100); persistAndPush() }
 
     override fun setThemeMode(value: Int) {
         themeMode.value = value.coerceIn(0, 2)
@@ -157,6 +169,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
         tabWidth.value = 76
         sideMargin.value = 24
         bottomGap.value = 8
+        nativeTopEnabled.value = false
+        nativeTopPlayAlpha.value = 100
+        nativeTopPauseAlpha.value = 100
+        nativeControlsEnabled.value = false
+        nativeControlsPlayAlpha.value = 100
+        nativeControlsPauseAlpha.value = 100
         persistAndPush()
     }
 
@@ -171,6 +189,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putInt("side_margin_dp", sideMargin.value)
             .putInt("bottom_gap_dp", bottomGap.value)
             .putInt("theme_mode", themeMode.value)
+            .putBoolean("native_top_transparency_enabled", nativeTopEnabled.value)
+            .putInt("native_top_play_alpha", nativeTopPlayAlpha.value)
+            .putInt("native_top_pause_alpha", nativeTopPauseAlpha.value)
+            .putBoolean("native_controls_transparency_enabled", nativeControlsEnabled.value)
+            .putInt("native_controls_play_alpha", nativeControlsPlayAlpha.value)
+            .putInt("native_controls_pause_alpha", nativeControlsPauseAlpha.value)
             .putLong("settings_rev", System.currentTimeMillis())
             .commit()
 
@@ -184,6 +208,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putExtra("tab_width", tabWidth.value)
             .putExtra("side_margin", sideMargin.value)
             .putExtra("bottom_gap", bottomGap.value)
+            .putExtra("native_top_enabled", nativeTopEnabled.value)
+            .putExtra("native_top_play_alpha", nativeTopPlayAlpha.value)
+            .putExtra("native_top_pause_alpha", nativeTopPauseAlpha.value)
+            .putExtra("native_controls_enabled", nativeControlsEnabled.value)
+            .putExtra("native_controls_play_alpha", nativeControlsPlayAlpha.value)
+            .putExtra("native_controls_pause_alpha", nativeControlsPauseAlpha.value)
         app.sendBroadcast(intent)
     }
 }
