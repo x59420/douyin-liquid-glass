@@ -55,6 +55,9 @@ final class DockController {
 
     private static final WeakHashMap<Activity, Boolean> DONE =
             new WeakHashMap<Activity, Boolean>();
+    /** True only while Douyin's actual MainActivity is resumed. */
+    private static final WeakHashMap<Activity, Boolean> HOME_RESUMED =
+            new WeakHashMap<Activity, Boolean>();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     /** 只弹一次的提示文案，避免每个页面都提示一遍。 */
     private static final java.util.HashSet<String> TOASTED = new java.util.HashSet<String>();
@@ -479,14 +482,34 @@ final class DockController {
         return held >= PRESS_SPEED_DELAY_MS;
     }
 
-    /** 宿主 Activity 回到前台：抖掉转场的影响，按当前底栏重新贴一次位置。 */
+    /** MainActivity pause/resume owns Dock visibility, matching DouAi's lifecycle boundary. */
+    static void onHostPause(Activity act) {
+        if (!isHomeActivity(act)) return;
+        synchronized (HOME_RESUMED) { HOME_RESUMED.put(act, Boolean.FALSE); }
+        final Runnable poller;
+        synchronized (POLLERS) { poller = POLLERS.get(act); }
+        if (poller != null) {
+            MAIN.removeCallbacks(poller);
+            MAIN.post(poller);
+        }
+    }
+
+    /** Re-entering MainActivity resumes the existing Dock and refreshes its geometry. */
     static void onHostResume(Activity act) {
-        if (act == null) return;
+        if (!isHomeActivity(act)) return;
+        synchronized (HOME_RESUMED) { HOME_RESUMED.put(act, Boolean.TRUE); }
+        final Runnable poller;
+        synchronized (POLLERS) { poller = POLLERS.get(act); }
+        if (poller != null) {
+            MAIN.removeCallbacks(poller);
+            MAIN.post(poller);
+        }
         final Runnable refresh;
         synchronized (REFRESHERS) { refresh = REFRESHERS.get(act); }
-        if (refresh == null) return;
-        MAIN.postDelayed(refresh, 80L);
-        MAIN.postDelayed(refresh, 360L);
+        if (refresh != null) {
+            MAIN.postDelayed(refresh, 80L);
+            MAIN.postDelayed(refresh, 360L);
+        }
     }
 
     /**
@@ -543,6 +566,7 @@ final class DockController {
         synchronized (CLEAR_MODE) { CLEAR_MODE.remove(act); }
         synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
         synchronized (CLEAR_TOUCH) { CLEAR_TOUCH.remove(act); }
+        synchronized (HOME_RESUMED) { HOME_RESUMED.remove(act); }
         View dock;
         IsoDock iso;
         synchronized (DOCKS) {
@@ -578,8 +602,20 @@ final class DockController {
         }
     }
 
+    static boolean isHomeActivity(Activity act) {
+        for (Class<?> type = act == null ? null : act.getClass(); type != null; type = type.getSuperclass()) {
+            if ("com.ss.android.ugc.aweme.main.MainActivity".equals(type.getName())) return true;
+        }
+        return false;
+    }
+
+    private static boolean isHomeResumed(Activity act) {
+        synchronized (HOME_RESUMED) { return Boolean.TRUE.equals(HOME_RESUMED.get(act)); }
+    }
+
     static void onActivity(final Activity act) {
-        if (act == null) return;
+        if (!isHomeActivity(act)) return;
+        synchronized (HOME_RESUMED) { HOME_RESUMED.put(act, Boolean.TRUE); }
         synchronized (KNOWN) { KNOWN.put(act, Boolean.TRUE); }
         try {
             if (DONE.containsKey(act)) return;
@@ -590,26 +626,14 @@ final class DockController {
         }
     }
 
-    /** 设置页这类页面里根本没有 Dock，不必反复去认，免得误伤列表里的一排按钮。 */
-    private static boolean looksLikeSettings(Activity act) {
-        String n = act.getClass().getName().toLowerCase();
-        return n.contains("setting");
-    }
-
-    private static boolean looksLikeChat(Activity act) {
-        String n = act.getClass().getName().toLowerCase();
-        return n.contains(".chat") || n.contains("chatroom") || n.contains(".im.")
-                || n.endsWith("detailactivity") || n.contains("webviewactivity");
-    }
-
-    private static void attempt(final Activity act, final int n) {
+class filters    private static void attempt(final Activity act, final int n) {
         MAIN.postDelayed(new Runnable() {
             @Override
             public void run() {
                 try {
-                    if (act.isFinishing()) return;
-                    if (looksLikeChat(act) || looksLikeSettings(act)) {
-                        Dydock.log("底栏:这不是主界面（" + act.getClass().getSimpleName() + "），跳过");
+                    if (act.isFinishing() || act.isDestroyed()) return;
+                    if (!isHomeResumed(act)) {
+                        synchronized (DONE) { DONE.remove(act); }
                         return;
                     }
                     if (install(act)) return;
@@ -766,26 +790,17 @@ final class DockController {
             Dydock.warnOnce("native-dock-hide", "移除原生底栏占位失败: " + t);
         }
 
-        final int[] expandedTicks = new int[]{0};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
         final long[] lastClearScanAt = new long[]{0L};
         final long[] lastTabRefreshAt = new long[]{0L};
         final boolean[] clearScreenState = new boolean[]{false};
         final boolean[] speedPlaybackState = new boolean[]{false};
-        final boolean[] expandedState = new boolean[]{false};
-        final long[] lastExpandedAt = new long[]{0L};
-        final boolean[] otherProfileState = new boolean[]{false};
-        final long[] lastProfileScanAt = new long[]{0L};
         final int[] lastBandSig = new int[]{0};
         final long[] lastGeomAt = new long[]{0L};
         /** 当前这一页有没有视频层：长按倍速只在这类页面上成立，遍历成本高，240ms 采一次。 */
         final boolean[] pageHasVideo = new boolean[]{false};
         final long[] lastVideoScanAt = new long[]{0L};
-        /** 「整屏页面盖住 Dock」的判定结果与连续命中帧数。 */
-        final boolean[] coveredState = new boolean[]{false};
-        final int[] coveredTicks = new int[]{0};
-        final long[] lastCoveredAt = new long[]{0L};
         /** Dock 这一条的窗口坐标，applyGeometry 时存下来（原生 Dock 已被设成 GONE）。 */
         final Rect[] bandRect = new Rect[]{null};
         /**
@@ -817,9 +832,6 @@ final class DockController {
         final int[] dockMissingTicks = new int[]{0};
         /** 宿主把底栏容器真正隐藏了：持续约 400ms 才认，滚动动画那一小段不算。 */
         final int[] hostHiddenTicks = new int[]{0};
-        /** 评论区是不是开着；开着的时候不参与「结构类」隐藏（抖音原生在评论区里不收底栏）。 */
-        final boolean[] commentOpen = new boolean[]{false};
-        final long[] lastCommentScanAt = new long[]{0L};
         /** 评论节点在发送后可能被宿主短暂重建，保留最近一次确认，避免结构判据抢先收 Dock。 */
         /** 这条隐藏理由第一次成立的时刻，用来做误报兜底。 */
         final long[] hostHiddenSince = new long[]{0L};
@@ -889,6 +901,15 @@ final class DockController {
                         synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                         return;
                     }
+                    if (!isHomeResumed(act)) {
+                        if (overlayTargetVisible[0]) {
+                            overlayTargetVisible[0] = false;
+                            animateDock(iso.view, false, 6f * densityPx);
+                        }
+                        MAIN.postDelayed(this, 250L);
+                        return;
+                    }
+
                     // 转场可能让覆盖层还挂在父容器上但已经脱离窗口。
                     if (!iso.view.isAttachedToWindow() && decor.isAttachedToWindow()) {
                         ViewParent parent = iso.view.getParent();
@@ -969,43 +990,13 @@ final class DockController {
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
                         lastClearScanAt[0] = now;
                     }
-                    // 评论面板状态直接跟随当前视图树；不保留退出后的 1200ms 旧状态，
-                    // 否则关闭评论区/按返回后 Dock 会继续消失一段时间。
-                    if (now - lastCommentScanAt[0] >= 40L) {
-                        lastCommentScanAt[0] = now;
-                        commentOpen[0] = Shield.commentSheetOpen(content);
-                    }
-                    if (now - lastProfileScanAt[0] >= 240L) {
-                        lastProfileScanAt[0] = now;
-                        otherProfileState[0] = Shield.isOtherProfilePage(content);
-                    }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
                             || updateGestureClearMode(act, d, clearScreenState[0]);
 
-                    // 浮层扫描要遍历几百个节点，跟着 16ms 轮询跑会拖帧；60ms 一次足够。
-                    if (now - lastExpandedAt[0] >= 60L) {
-                        lastExpandedAt[0] = now;
-                        expandedState[0] = d != null
-                                && Shield.hasExpandedOverlay(d, content, decor);
-                        // 整屏覆盖页（会话页、聊天框里点开的视频、详情页）：它必须真的把
-                        // Dock 这一条整个盖住才算，只盖住上面一部分的信息流不参与。
-                        coveredState[0] = d != null
-                                && Shield.pageCoversDock(d, bandRect[0], content);
-                    }
-                    expandedTicks[0] = expandedState[0]
-                            ? Math.min(4, expandedTicks[0] + 1) : 0;
-                    coveredTicks[0] = coveredState[0]
-                            ? Math.min(4, coveredTicks[0] + 1) : 0;
-
-                    // 一个隐藏理由成立就收，不等其它理由结束；反过来，所有理由都结束之后
-                    // 还要再连续干净几帧才露出来 —— 隐藏和显示用的是同一组判据，只是方向相反。
-                    //
-                    // 这里刻意不再把「宿主自己把底栏藏起来」当隐藏理由：抖音在消息列表、
-                    // 我的页上下滚动时会让原生底栏跟着位移/隐藏，跟着它走就是一路闪。
-                    //
-                    // 原生底栏整个脱离窗口 = 当前不是主 tab 页（会话页、覆盖页、转场中）。
-                    // 要连续十几帧（约 190ms）都找不到才认，转场那一瞬间的游离不算。
+                    // DouAi-style page handling: MainActivity lifecycle is authoritative.
+                    // Within the home Activity, only the native bottom-navigation host's
+                    // attachment/ancestor visibility can change structural Dock visibility.
                     boolean dockAttached = d != null && d.isAttachedToWindow();
                     dockMissingTicks[0] = dockAttached
                             ? 0 : Math.min(60, dockMissingTicks[0] + 1);
@@ -1017,31 +1008,16 @@ final class DockController {
                     }
                     hostHiddenTicks[0] = hostHidden
                             ? Math.min(60, hostHiddenTicks[0] + 1) : 0;
-                    // 误报兜底：宿主那条底栏还好端端挂在窗口里、页面也没被整屏盖住、
-                    // 既不在清屏也不在倍速，只是某个祖先报了不可见 —— 这不是「进会话页」。
-                    // 撑过 3.5 秒还是这样，就把这条理由在本 Activity 里彻底关掉，
-                    // 保证玻璃不会因为一条判据错到底而永远出不来。
-                    if (hostHidden && dockAttached
-                            && !coveredState[0] && !clearScreen && !speedPlayback
+                    if (hostHidden && dockAttached && !clearScreen && !speedPlayback
                             && now - hostHiddenSince[0] > 3500L) {
                         chromeUntrusted[0] = true;
                         hostHiddenTicks[0] = 0;
                         hostHiddenSince[0] = 0L;
-                        Dydock.warn("底栏:祖先层报不可见但底栏仍在窗口内，判定为误报，"
-                                + "本次运行不再用这条理由隐藏 Dock");
+                        Dydock.warn("底栏:宿主祖先可见性持续异常，停止使用该隐藏判据");
                     }
-                    // 评论区开着时，结构类理由（覆盖 / 浮层 / 底栏脱离 / 宿主隐藏）一律不算：
-                    // 评论面板弹上来会让宿主重新排布底栏，跟着判就是「收起又冒出」。
-                    // 手势类（倍速 / 清屏）不受影响，该收还是收。
-                    // 评论区本身就是需要隐藏 Dock 的页面状态；不要再用 commentOpen
-                    // 去屏蔽结构隐藏判据，否则评论区会一直保留 Dock。
-                    boolean structuralHidden = commentOpen[0]
-                            || coveredTicks[0] >= COVER_CONFIRM_TICKS
-                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
-                            || dockMissingTicks[0] >= 12
+                    boolean structuralHidden = dockMissingTicks[0] >= 12
                             || hostHiddenTicks[0] >= 25;
-                    boolean hidden = speedPlayback || longPress || clearScreen
-                            || structuralHidden || otherProfileState[0];
+                    boolean hidden = speedPlayback || longPress || clearScreen || structuralHidden;
                     if (hidden) {
                         revealTicks[0] = 0;
                         // 手势类（倍速 / 清屏）抬手就恢复；结构类（覆盖页 / 浮层 / 底栏脱离）
