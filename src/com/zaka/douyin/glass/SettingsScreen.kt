@@ -176,17 +176,17 @@ internal class SettingsState(context: Context) {
 private val GlassCardShape = RoundedCornerShape(26.dp)
 private data class SettingsPalette(
     val background: Color, val panel: Color, val card: Color, val primary: Color,
-    val secondary: Color, val accent: Color, val trackOn: Color, val trackOff: Color,
-    val border: Color, val divider: Color,
+    val secondary: Color, val accent: Color, val selectedText: Color,
+    val trackOn: Color, val trackOff: Color, val border: Color, val divider: Color,
 )
 private val DarkSettingsPalette = SettingsPalette(
     Color(0xFF070A12), Color(0xF0161B25), Color(0xCC202735), Color(0xFFF7F8FA),
-    Color(0xFFA6ABB4), Color(0xFFD8DDE6), Color(0xFFD8DDE6), Color(0x33FFFFFF),
+    Color(0xFFA6ABB4), Color(0xFFD8DDE6), Color(0xFF171A20), Color(0xFFD8DDE6), Color(0x33FFFFFF),
     Color(0x24FFFFFF), Color(0x18FFFFFF),
 )
 private val LightSettingsPalette = SettingsPalette(
     Color(0xFFF2F4F8), Color(0xF7FFFFFF), Color(0xDDE8ECF2), Color(0xFF171A20),
-    Color(0xFF666D78), Color(0xFF424B59), Color(0xFF424B59), Color(0x22000000),
+    Color(0xFF666D78), Color(0xFF424B59), Color.White, Color(0xFF424B59), Color(0x22000000),
     Color(0x1F000000), Color(0x16000000),
 )
 private val LocalSettingsPalette = staticCompositionLocalOf { DarkSettingsPalette }
@@ -355,7 +355,7 @@ private fun TopBar(version: String, onBack: () -> Unit) {
             Canvas(Modifier.size(17.dp)) {
                 val w = size.minDimension * 0.13f
                 drawLine(
-                    color = Color.White,
+                    color = iconColor,
                     start = Offset(size.width * 0.62f, size.height * 0.12f),
                     end = Offset(size.width * 0.28f, size.height * 0.5f),
                     strokeWidth = w,
@@ -391,12 +391,13 @@ private fun SectionTitle(text: String) {
 @Composable
 private fun GlassCard(backdrop: Backdrop, content: @Composable () -> Unit) {
     val shape: Shape = GlassCardShape
+    val palette = LocalSettingsPalette.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
             .glassSurface(backdrop, shape)
-            .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
+            .border(1.dp, palette.border, shape)
             .padding(horizontal = 16.dp, vertical = 4.dp)
     ) {
         Column(Modifier.fillMaxWidth()) { content() }
@@ -441,7 +442,7 @@ private fun ThemeModeRow(mode: Int, onChange: (Int) -> Unit) {
                     .clickable(interactionSource = remember { MutableInteractionSource() },
                         indication = null) { onChange(index) }
                     .padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                    Label(label, if (mode == index) Color.White else palette.secondary, 12.sp,
+                    Label(label, if (mode == index) palette.selectedText else palette.secondary, 12.sp,
                         weight = if (mode == index) FontWeight.SemiBold else FontWeight.Normal)
                 }
             }
@@ -519,9 +520,10 @@ private fun SliderRow(
     step: Int,
     onChange: (Int) -> Unit,
 ) {
+    val palette = LocalSettingsPalette.current
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Label(title, Color.White, 15.sp, modifier = Modifier.weight(1f))
+            Label(title, palette.primary, 15.sp, modifier = Modifier.weight(1f))
             Label("$value dp", LocalSettingsPalette.current.secondary, 12.5.sp)
         }
         Spacer(Modifier.height(10.dp))
