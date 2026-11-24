@@ -212,15 +212,23 @@ final class NativeUiTransparency {
     private static boolean contains(String s,String... words){for(String w:words)if(s.contains(w.toLowerCase()))return true;return false;}
     private static boolean hasAny(String s,String... words){return contains(s,words);}
 
-    private static boolean isPaused(View root) { return findPaused(root,0,new int[]{900}); }
-    private static boolean findPaused(View v,int depth,int[] budget) {
-        if(v==null || depth>18 || budget[0]--<=0 || v.getVisibility()!=View.VISIBLE)return false;
-        String s=label(v), id=identity(v);
-        if(v.isClickable() || v.hasOnClickListeners() || hasAny(id,"player","playback","control")) {
-            if(s.contains("播放")||s.contains("play"))return true;
-            if(s.contains("暂停")||s.contains("pause"))return false;
+    private static boolean isPaused(View root) {
+        return findPaused(root, 0, new int[]{900}, new boolean[]{false});
+    }
+    private static boolean findPaused(View v, int depth, int[] budget, boolean[] found) {
+        if (v == null || depth > 18 || budget[0]-- <= 0 || v.getVisibility() != View.VISIBLE) return false;
+        String s = label(v), id = identity(v);
+        if (v.isClickable() || v.hasOnClickListeners() || hasAny(id, "player", "playback", "control")) {
+            if (s.contains("播放") || s.contains("play")) { found[0] = true; return true; }
+            if (s.contains("暂停") || s.contains("pause")) { found[0] = true; return false; }
         }
-        if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount()&&budget[0]>0;i++)if(findPaused(g.getChildAt(i),depth+1,budget))return true;}
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount() && budget[0] > 0; i++) {
+                boolean paused = findPaused(g.getChildAt(i), depth + 1, budget, found);
+                if (found[0]) return paused;
+            }
+        }
         return false;
     }
 
