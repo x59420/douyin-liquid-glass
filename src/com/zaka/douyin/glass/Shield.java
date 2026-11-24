@@ -703,7 +703,7 @@ final class Shield {
         for (int i = 0; i < markers.length; i++) {
             if (value.contains(markers[i])) markerMatch = true;
         }
-        if (markerMatch && isVisibleInWindow(view)) {
+        if (markerMatch) {
             for (int i = 0; i < markers.length; i++) {
                 if (value.contains(markers[i])) found[i] = true;
             }
@@ -759,6 +759,40 @@ final class Shield {
     /** 只认「真的显示出来」的输入框：搜索页顶上那个搜索框就是这种 */
     static boolean hasVisibleInput(View v) {
         return hasVisibleInput(v, 0);
+    }
+
+    /**
+     * 聊天会话页的输入区固定在页面底部。消息列表/搜索页的搜索框通常在顶部，
+     * 因此用「可见输入框 + 底部位置」识别会话页，避免只靠 Activity 类名漏掉内嵌聊天框。
+     * 评论区底部输入框也会命中，但评论区本来就需要隐藏 Dock。
+     */
+    static boolean hasBottomInputComposer(View root) {
+        if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return false;
+        Rect page = new Rect();
+        if (!root.getGlobalVisibleRect(page) || page.isEmpty()) return false;
+        return hasBottomInputComposer(root, page, 0, new int[]{2400});
+    }
+
+    private static boolean hasBottomInputComposer(View view, Rect page, int depth, int[] budget) {
+        if (view == null || depth > 20 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f
+                || !view.isShown()) return false;
+        String name = view.getClass().getName();
+        if (view instanceof EditText || name.contains("EditText") || name.contains("EditTextProxy")) {
+            Rect bounds = new Rect();
+            if (view.getGlobalVisibleRect(bounds) && !bounds.isEmpty()
+                    && bounds.centerY() >= page.top + page.height() * 0.62f
+                    && bounds.bottom >= page.bottom - page.height() * 0.38f) {
+                return true;
+            }
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                if (hasBottomInputComposer(group.getChildAt(i), page, depth + 1, budget)) return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasVisibleInput(View v, int depth) {
