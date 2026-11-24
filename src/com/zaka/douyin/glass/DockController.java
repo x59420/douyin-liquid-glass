@@ -687,6 +687,8 @@ final class DockController {
         // Miuix 自己在 GPU 上做 4dp 模糊，这里只决定采样分辨率。
         backdrop.setSampleScale();
 
+        // 点击「消息」主 Tab 后，给抖音切页动画留出稳定窗口，避免底栏暂时脱树时 Dock 闪一下。
+        final long[] messagesClickUntil = new long[]{0L};
         // 宿主节点被换掉时，点击回调里取到的永远是最新那批导航项。
         final List<View>[] tabTargets = new List[]{initialTabs};
         final View[] plusTarget = new View[]{plus};
@@ -703,7 +705,12 @@ final class DockController {
                         try {
                             List<View> targets = tabTargets[0];
                             View target = latestTab(act, targets, plusTarget[0], index);
-                            if (target != null) clickHostView(target);
+                            if (target != null) {
+                                if (index == 2) {
+                                    messagesClickUntil[0] = android.os.SystemClock.uptimeMillis() + 750L;
+                                }
+                                clickHostView(target);
+                            }
                         } catch (Throwable t) {
                             Dydock.warnOnce("iso-tab-click", "转发导航点击失败: " + t);
                         }
@@ -1078,8 +1085,9 @@ final class DockController {
                     boolean messagesTabSelected = Finder.isMessagesTabSelected(tabTargets[0]);
                     boolean commentReturnGrace = commentClosedAt[0] != 0L
                             && now - commentClosedAt[0] < 700L;
+                    boolean messagesClickGrace = now < messagesClickUntil[0];
                     boolean structuralHidden = commentOpen[0]
-                            || (!messagesTabSelected && !commentReturnGrace
+                            || (!messagesTabSelected && !messagesClickGrace && !commentReturnGrace
                             && (dockMissingTicks[0] >= 12
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
