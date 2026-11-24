@@ -133,7 +133,7 @@ class IsoOverlay private constructor(
     private var labels by mutableStateOf<List<String>>(emptyList())
     private var icons by mutableStateOf<List<ImageBitmap?>>(emptyList())
     private var selectedIndex by mutableIntStateOf(0)
-    private var dockVisible by mutableStateOf(true)
+    private var dockVisibleState by mutableStateOf(true)
 
     @Volatile
     private var disposed = false
@@ -197,7 +197,7 @@ class IsoOverlay private constructor(
                     labels = labels,
                     icons = icons,
                     selectedIndex = selectedIndex,
-                    dockVisible = dockVisible,
+                    dockVisible = dockVisibleState,
                     onTabClick = { index -> onTabClick.accept(index) },
                     onPlusClick = { onPlusClick.run() },
                     onLongPress = { onLongPress.run() },
@@ -231,13 +231,13 @@ class IsoOverlay private constructor(
     /** 只驱动底部胶囊组的显隐，不移动全屏覆盖层或背景采样区域。 */
     fun setDockVisible(visible: Boolean) {
         if (disposed) return
-        dockVisible = visible
+        dockVisibleState = visible
     }
 
     // 隐藏过渡结束后胶囊透明，但全屏 Compose 容器仍然存在；隐藏状态必须把触摸
     // 原样交还抖音，不能让透明覆盖层挡住底下页面。
     override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
-        if (!dockVisible) return false
+        if (!dockVisibleState) return false
         return super.dispatchTouchEvent(event)
     }
 
