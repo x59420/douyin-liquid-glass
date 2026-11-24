@@ -834,6 +834,8 @@ final class DockController {
         /** 评论区是不是开着；开着的时候不参与「结构类」隐藏（抖音原生在评论区里不收底栏）。 */
         final boolean[] commentOpen = new boolean[]{false};
         final long[] lastCommentScanAt = new long[]{0L};
+        final boolean[] chatComposerState = new boolean[]{false};
+        final long[] lastChatScanAt = new long[]{0L};
         final int[] commentCloseMisses = new int[]{0};
         final long[] commentClosedAt = new long[]{0L};
         /** 评论节点在发送后可能被宿主短暂重建，保留最近一次确认，避免结构判据抢先收 Dock。 */
@@ -1011,6 +1013,10 @@ final class DockController {
                             }
                         }
                     }
+                    if (now - lastChatScanAt[0] >= 120L) {
+                        lastChatScanAt[0] = now;
+                        chatComposerState[0] = Shield.hasBottomInputComposer(content);
+                    }
                     if (now - lastProfileScanAt[0] >= 240L) {
                         lastProfileScanAt[0] = now;
                         if (Shield.isOtherProfilePage(content)) {
@@ -1083,15 +1089,20 @@ final class DockController {
                     // 不能把这几帧误判成覆盖页/浮层，否则 Dock 会闪一下。
                     boolean ownProfileTabSelected = Finder.isOwnProfileTabSelected(tabTargets[0]);
                     boolean messagesTabSelected = Finder.isMessagesTabSelected(tabTargets[0]);
+                    boolean homeTabSelected = Finder.isHomeTabSelected(tabTargets[0]);
+                    boolean friendsTabSelected = Finder.isFriendsTabSelected(tabTargets[0]);
+                    boolean mainTabSelected = ownProfileTabSelected || messagesTabSelected
+                            || homeTabSelected || friendsTabSelected;
                     boolean commentReturnGrace = commentClosedAt[0] != 0L
                             && now - commentClosedAt[0] < 700L;
                     boolean messagesClickGrace = now < messagesClickUntil[0];
-                    boolean structuralHidden = commentOpen[0]
-                            || (!messagesTabSelected && !messagesClickGrace && !commentReturnGrace
+                    // 一级导航页切换时宿主会短暂重排覆盖层/底栏；这些结构信号不能让 Dock 闪烁。
+                    // 会话输入框和评论面板是明确的二级页面，仍然优先隐藏。
+                    boolean structuralHidden = commentOpen[0] || chatComposerState[0]
+                            || (!mainTabSelected && !messagesClickGrace && !commentReturnGrace
                             && (dockMissingTicks[0] >= 12
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
-                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
-                            || hostHiddenTicks[0] >= 25));
+                            || expandedTicks[0] >= COVER_CONFIRM_TICKS));
                     boolean otherProfile = otherProfileState[0] && !ownProfileTabSelected;
                     boolean hidden = speedPlayback || longPress || clearScreen
                             || structuralHidden || otherProfile;
@@ -2219,6 +2230,27 @@ final class DockController {
             for (View item : items) {
                 if (item != null && "消息".equals(navigationLabel(item, 0))
                         && selectedDeep(item, 0)) return true;
+            }
+            return false;
+        }
+
+        static boolean isHomeTabSelected(List<View> items) {
+            if (items == null || items.isEmpty()) return false;
+            for (View item : items) {
+                if (item != null && "首页".equals(navigationLabel(item, 0))
+                        && selectedDeep(item, 0)) return true;
+            }
+            return false;
+        }
+
+        static boolean isFriendsTabSelected(List<View> items) {
+            if (items == null || items.isEmpty()) return false;
+            for (View item : items) {
+                if (item != null) {
+                    String label = navigationLabel(item, 0);
+                    if (("朋友".equals(label) || "好友".equals(label))
+                            && selectedDeep(item, 0)) return true;
+                }
             }
             return false;
         }
