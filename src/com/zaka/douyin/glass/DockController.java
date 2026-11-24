@@ -499,6 +499,11 @@ final class DockController {
         if (!isHomeActivity(act)) return;
         synchronized (HOME_RESUMED) { HOME_RESUMED.put(act, Boolean.FALSE); }
         pauseHostMonitor(act);
+        // DouAi restores host-owned navigation properties when MainActivity pauses.
+        NativeDockState nativeState;
+        synchronized (NATIVE_DOCK_STATES) { nativeState = NATIVE_DOCK_STATES.get(act); }
+        if (nativeState != null) nativeState.restore(dockOf(act));
+        restoreStrippedBackgrounds(act);
         final Runnable poller;
         synchronized (POLLERS) { poller = POLLERS.get(act); }
         if (poller != null) {
@@ -512,6 +517,13 @@ final class DockController {
         if (!isHomeActivity(act)) return;
         synchronized (HOME_RESUMED) { HOME_RESUMED.put(act, Boolean.TRUE); }
         resumeHostMonitor(act);
+        NativeDockState nativeState;
+        View nativeDock = dockOf(act);
+        synchronized (NATIVE_DOCK_STATES) { nativeState = NATIVE_DOCK_STATES.get(act); }
+        if (nativeState != null && nativeDock != null) {
+            nativeState.suppress(nativeDock);
+            stripDockBackground(act, nativeDock);
+        }
         final Runnable poller;
         synchronized (POLLERS) { poller = POLLERS.get(act); }
         if (poller != null) {

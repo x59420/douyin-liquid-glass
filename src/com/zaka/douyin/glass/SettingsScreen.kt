@@ -412,7 +412,7 @@ internal fun SettingsScreen(
                 SwitchRow("主页顶部背景透明", "移除主页顶部原生菜单背景，不改变文字和点击区域",
                     state.homeTopTransparent.value, state::setHomeTopTransparent)
                 Divider()
-                SwitchRow("主页底部背景透明", "持续清理原生底栏背景层；不改变抖音导航点击逻辑",
+                SwitchRow("主页底部背景透明", "Dock 开启时为玻璃采样清理背景；关闭 Dock 后按此开关控制原生底栏",
                     state.homeBottomTransparent.value, state::setHomeBottomTransparent)
                 Divider()
                 SwitchRow(
