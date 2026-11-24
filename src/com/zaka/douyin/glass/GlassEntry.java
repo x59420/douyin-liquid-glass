@@ -155,7 +155,10 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                     if (DockController.isHomeActivity(activity)) installDock(activity);
                 }
                 @Override public void onActivityPaused(Activity activity) {
-                    DockController.onHostPause(activity);
+                    if (DockController.isHomeActivity(activity)) {
+                        NativeUiTransparency.stop(activity);
+                        DockController.onHostPause(activity);
+                    }
                 }
                 @Override public void onActivityStopped(Activity activity) { }
                 @Override public void onActivitySaveInstanceState(Activity activity, android.os.Bundle state) { }
