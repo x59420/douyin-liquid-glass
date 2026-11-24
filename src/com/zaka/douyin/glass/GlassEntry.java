@@ -171,6 +171,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                     try {
                         Object a = param.thisObject;
                         if (a instanceof Activity) {
+                            NativeUiTransparency.stop((Activity) a);
                             DockController.release((Activity) a);
                             DockSettingsUi.release((Activity) a);
                         }
