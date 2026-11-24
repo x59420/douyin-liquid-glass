@@ -23,7 +23,7 @@ import java.util.WeakHashMap;
 final class NativeUiTransparency {
     private static final WeakHashMap<Activity, WeakHashMap<View, Float>> ORIGINAL =
             new WeakHashMap<Activity, WeakHashMap<View, Float>>();
-    private static final int NODE_BUDGET = 2200;
+    private static final int NODE_BUDGET = 1000;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final WeakHashMap<Activity, Runnable> POLLERS = new WeakHashMap<Activity, Runnable>();
 
@@ -40,7 +40,7 @@ final class NativeUiTransparency {
                         return;
                     }
                     try { apply(activity); } catch (Throwable ignored) {}
-                    MAIN.postDelayed(this, 650L);
+                    MAIN.postDelayed(this, 850L);
                 }
             };
             POLLERS.put(activity, poller);
@@ -137,14 +137,14 @@ final class NativeUiTransparency {
                         && bounds.height() >= 24f * density && bounds.height() <= 132f * density
                         && bounds.width() >= page.width() * 0.48f
                         && (hasAny(identity, "toolbar", "topbar", "titlebar", "header", "top_bar")
-                            || hasTopLabels(view, 0, new int[]{180}));
+                            || hasTopLabels(view, 0, new int[]{64}));
                 boolean controls = bounds.height() >= 24f * density
                         && bounds.height() <= page.height() * 0.70f
                         && bounds.width() >= page.width() * 0.16f
                         && bounds.bottom <= page.bottom - page.height() * 0.16f
                         && (hasAny(identity, "playercontrol", "video_control", "videocontrol",
                                     "playbackcontrol", "player_toolbar", "action_panel")
-                            || hasVideoControlLabels(view, 0, new int[]{220}));
+                            || hasVideoControlLabels(view, 0, new int[]{72}));
                 if (top || controls) out.add(new Candidate(view, bounds, top, controls, depth));
             }
         }
@@ -231,7 +231,9 @@ final class NativeUiTransparency {
                 || view.getVisibility() != View.VISIBLE) return false;
         String identity = identity(view);
         String value = label(view).toLowerCase();
-        if (hasAny(identity, "player", "playback", "control", "play_button", "pause_button")) {
+        boolean buttonLike = view.isClickable() || view.hasOnClickListeners()
+                || hasAny(identity, "player", "playback", "control", "play_button", "pause_button");
+        if (buttonLike) {
             if (value.contains("播放") || value.contains("play")) return true;
             if (value.contains("暂停") || value.contains("pause")) return false;
         }
