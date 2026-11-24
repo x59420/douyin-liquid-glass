@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
@@ -249,13 +250,16 @@ internal fun SettingsScreen(
             Column(panel.verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp)
                 .padding(top = 8.dp, bottom = if (overlay) 24.dp else 36.dp)) {
-            TopBar(version = version, onBack = onBack)
+            TopBar(
+                version = version,
+                onBack = onBack,
+                themeMode = state.themeMode.value,
+                onThemeChange = state::setThemeMode,
+            )
             Spacer(Modifier.height(16.dp))
 
             SectionTitle("外观")
             GlassCard(scene) {
-                ThemeModeRow(state.themeMode.value, state::setThemeMode)
-                Divider()
                 SwitchRow(
                     title = "启用玻璃 Dock",
                     subtitle = "关掉就完全用抖音原生底栏",
@@ -337,9 +341,14 @@ internal fun SettingsScreen(
     }
 }
 @Composable
-private fun TopBar(version: String, onBack: () -> Unit) {
-    val iconColor = LocalSettingsPalette.current.primary
-    // 顶上不放任何底色 / 玻璃层，只有返回箭头 + 标题 + 版本号。
+private fun TopBar(
+    version: String,
+    onBack: () -> Unit,
+    themeMode: Int,
+    onThemeChange: (Int) -> Unit,
+) {
+    val palette = LocalSettingsPalette.current
+    var themeMenuOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(56.dp)
@@ -356,14 +365,14 @@ private fun TopBar(version: String, onBack: () -> Unit) {
             Canvas(Modifier.size(17.dp)) {
                 val w = size.minDimension * 0.13f
                 drawLine(
-                    color = iconColor,
+                    color = palette.primary,
                     start = Offset(size.width * 0.62f, size.height * 0.12f),
                     end = Offset(size.width * 0.28f, size.height * 0.5f),
                     strokeWidth = w,
                     cap = StrokeCap.Round,
                 )
                 drawLine(
-                    color = iconColor,
+                    color = palette.primary,
                     start = Offset(size.width * 0.28f, size.height * 0.5f),
                     end = Offset(size.width * 0.62f, size.height * 0.88f),
                     strokeWidth = w,
@@ -372,9 +381,60 @@ private fun TopBar(version: String, onBack: () -> Unit) {
             }
         }
         Spacer(Modifier.width(6.dp))
-        Label("dydock 设置", LocalSettingsPalette.current.primary, 19.sp, weight = FontWeight.SemiBold)
+        Label("dydock 设置", palette.primary, 19.sp, weight = FontWeight.SemiBold)
         Spacer(Modifier.width(10.dp))
-        Label(version, LocalSettingsPalette.current.secondary, 12.sp)
+        Label(version, palette.secondary, 12.sp)
+        Spacer(Modifier.weight(1f))
+        Box(Modifier.size(42.dp).zIndex(5f)) {
+            Box(
+                Modifier.fillMaxSize()
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(palette.card.copy(alpha = 0.72f))
+                    .border(1.dp, palette.border, RoundedCornerShape(13.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { themeMenuOpen = !themeMenuOpen },
+                contentAlignment = Alignment.Center,
+            ) {
+                Label("◐", palette.primary, 19.sp, weight = FontWeight.SemiBold)
+            }
+            if (themeMenuOpen) {
+                Column(
+                    Modifier.align(Alignment.TopEnd)
+                        .offset(y = 48.dp)
+                        .width(148.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(palette.panel.copy(alpha = 0.97f))
+                        .border(1.dp, palette.border, RoundedCornerShape(20.dp))
+                        .padding(6.dp)
+                ) {
+                    listOf("跟随系统", "浅色", "深色").forEachIndexed { index, label ->
+                        val selected = themeMode == index
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) {
+                                    onThemeChange(index)
+                                    themeMenuOpen = false
+                                }
+                                .padding(horizontal = 13.dp, vertical = 11.dp)
+                        ) {
+                            Label(
+                                label,
+                                if (selected) palette.selectedText else palette.primary,
+                                13.sp,
+                                weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -425,29 +485,6 @@ private fun Modifier.glassSurface(backdrop: Backdrop, shape: Shape): Modifier {
         )
     } else {
         this.background(LocalSettingsPalette.current.card, shape)
-    }
-}
-
-@Composable
-private fun ThemeModeRow(mode: Int, onChange: (Int) -> Unit) {
-    val palette = LocalSettingsPalette.current
-    val options = listOf("跟随系统", "浅色", "深色")
-    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
-        Label("设置界面主题", palette.primary, 15.sp)
-        Spacer(Modifier.height(9.dp))
-        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(palette.trackOff).padding(3.dp)) {
-            options.forEachIndexed { index, label ->
-                Box(Modifier.weight(1f).clip(RoundedCornerShape(13.dp))
-                    .background(if (mode == index) palette.accent else Color.Transparent)
-                    .clickable(interactionSource = remember { MutableInteractionSource() },
-                        indication = null) { onChange(index) }
-                    .padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-                    Label(label, if (mode == index) palette.selectedText else palette.secondary, 12.sp,
-                        weight = if (mode == index) FontWeight.SemiBold else FontWeight.Normal)
-                }
-            }
-        }
     }
 }
 
