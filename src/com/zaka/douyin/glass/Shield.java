@@ -236,20 +236,15 @@ final class Shield {
 
     /**
      * 识别他人个人主页。自己的「我」页面通常带有「编辑资料」，必须明确排除。
-     * 他人主页同时具备粉丝、关注和私信等资料页操作特征，避免把普通信息流误判。
+     *
+     * 不再强制要求「粉丝 + 抖音号/获赞 + 私信」三组文案同时出现：
+     * 抖音不同版本/主页布局可能把私信入口改成图标，或暂时不把它暴露为 TextView，
+     * 这会让真实他人主页漏判。复用资料页签名：至少有一个身份字段（抖音号/获赞）
+     * 且同时具备另一项资料页特征；「编辑资料」仍然优先排除本人主页。
      */
     static boolean isOtherProfilePage(View root) {
         if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return false;
-        // 单独优先扫描本人主页标记，避免深层视图树超过普通扫描预算后漏掉「编辑资料」。
-        if (containsVisibleMarker(root, "编辑资料", 0, new int[]{6000})) return false;
-        String[] markers = {"编辑资料", "粉丝", "关注", "私信", "发消息", "抖音号", "获赞"};
-        boolean[] found = new boolean[markers.length];
-        collectProfileMarkers(root, 0, markers, found, new int[]{6000});
-        // 本人主页的「编辑资料」优先级最高，避免误隐藏「我」主 Tab。
-        if (found[0]) return false;
-        // 他人主页必须同时出现资料页的粉丝/关注关系和私信操作。
-        return found[1] && (found[5] || found[6])
-                && (found[2] || found[3] || found[4]);
+        return hasProfileSignature(root);
     }
 
     /**
