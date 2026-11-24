@@ -2101,7 +2101,8 @@ final class DockController {
 
     private static boolean isDescendantOf(View view, View root) {
         if (view == null || root == null) return false;
-        ViewParent parent = view;
+        if (view == root) return true;
+        ViewParent parent = view.getParent();
         for (int depth = 0; depth < 64 && parent != null; depth++) {
             if (parent == root) return true;
             parent = parent.getParent();
