@@ -360,8 +360,11 @@ public final class Backdrop {
         // 4. UI 层里视频所在的那块挖空，否则视频会被容器自己的深色底盖住 —— 就是黑块
         try {
             Canvas uc = new Canvas(ui);
+            long eraseNow = SystemClock.uptimeMillis();
             for (Layer l : layers) {
-                if (l.dst.isEmpty() || !l.usable) continue;
+                if (l.dst.isEmpty() || !l.usable || !l.valid
+                        || l.frame == null || l.frame.isRecycled()
+                        || eraseNow - l.stamp > LAYER_MAX_AGE_MS) continue;
                 uc.drawRect(l.dst.left, l.dst.top, l.dst.right, l.dst.bottom, clear);
             }
         } catch (Throwable t) {
