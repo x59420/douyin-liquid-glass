@@ -545,13 +545,15 @@ final class DockController {
         synchronized (CLEAR_TOUCH) { CLEAR_TOUCH.remove(act); }
         View dock;
         IsoDock iso;
+        Backdrop backdrop;
         synchronized (DOCKS) {
             dock = DOCKS.remove(act);
         }
         synchronized (OVERLAYS) {
             iso = OVERLAYS.remove(act);
         }
-        synchronized (BACKDROPS) { BACKDROPS.remove(act); }
+        synchronized (BACKDROPS) { backdrop = BACKDROPS.remove(act); }
+        if (backdrop != null) backdrop.release();
         synchronized (BANDS) { BANDS.remove(act); }
         synchronized (REFRESHERS) { REFRESHERS.remove(act); }
         Runnable poller;
@@ -877,6 +879,7 @@ final class DockController {
                         synchronized (POLLERS) { POLLERS.remove(act); }
                         synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                         detachOverlay(iso);
+                        backdrop.release();
                         restoreNative(dockRef[0]);
                         Dydock.warn("底栏:玻璃渲染出错，已恢复官方 Dock");
                         toast(act, "Dydock " + Dydock.VER + "：玻璃渲染出错，已恢复官方底栏");
@@ -1041,8 +1044,8 @@ final class DockController {
                     boolean ownProfileTabSelected = Finder.isOwnProfileTabSelected(tabTargets[0]);
                     boolean messagesTabSelected = Finder.isMessagesTabSelected(tabTargets[0]);
                     boolean structuralHidden = commentOpen[0]
-                            || dockMissingTicks[0] >= 12
-                            || (!messagesTabSelected && (coveredTicks[0] >= COVER_CONFIRM_TICKS
+                            || (!messagesTabSelected && (dockMissingTicks[0] >= 12
+                            || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
                             || hostHiddenTicks[0] >= 25));
                     boolean otherProfile = otherProfileState[0] && !ownProfileTabSelected;
@@ -1147,7 +1150,7 @@ final class DockController {
                     if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
-                        animateDock(iso.view, show, 6f * densityPx);
+                        iso.setDockVisible(show);
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
@@ -1175,6 +1178,7 @@ final class DockController {
                 synchronized (POLLERS) { POLLERS.remove(act); }
                 synchronized (POLL_STATES) { POLL_STATES.remove(act); }
                 detachOverlay(iso);
+                backdrop.release();
                 restoreNative(dockRef[0]);
                 Dydock.warn("底栏:玻璃 5 秒内没有画出第一帧，已恢复原生 Dock");
                 toast(act, "Dydock " + Dydock.VER + "：玻璃没画出来，已恢复原生底栏");
@@ -1409,7 +1413,9 @@ final class DockController {
             }
         }
         restoreNative(dock);
-        synchronized (BACKDROPS) { BACKDROPS.remove(act); }
+        Backdrop backdrop;
+        synchronized (BACKDROPS) { backdrop = BACKDROPS.remove(act); }
+        if (backdrop != null) backdrop.release();
         synchronized (BANDS) { BANDS.remove(act); }
         synchronized (DONE) { DONE.put(act, Boolean.TRUE); }
         Dydock.log("底栏:已按设置关闭玻璃 Dock，恢复原生底栏");
