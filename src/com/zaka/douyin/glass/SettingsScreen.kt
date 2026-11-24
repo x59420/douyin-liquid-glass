@@ -252,7 +252,7 @@ internal fun SettingsScreen(
             TopBar(
                 version = version,
                 onBack = onBack,
-TopBar call theme args            )
+            )
             Spacer(Modifier.height(16.dp))
 
             SectionTitle("外观")
