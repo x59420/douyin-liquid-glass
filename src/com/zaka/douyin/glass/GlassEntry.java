@@ -152,13 +152,11 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                 @Override public void onActivityCreated(Activity activity, android.os.Bundle state) { }
                 @Override public void onActivityStarted(Activity activity) { }
                 @Override public void onActivityResumed(Activity activity) {
-                    if (DockController.isHomeActivity(activity)) installDock(activity);
+                    installDock(activity);
                 }
                 @Override public void onActivityPaused(Activity activity) {
-                    if (DockController.isHomeActivity(activity)) {
-                        NativeUiTransparency.stop(activity);
-                        DockController.onHostPause(activity);
-                    }
+                    NativeUiTransparency.stop(activity);
+                    DockController.onHostPause(activity);
                 }
                 @Override public void onActivityStopped(Activity activity) { }
                 @Override public void onActivitySaveInstanceState(Activity activity, android.os.Bundle state) { }
@@ -182,7 +180,6 @@ public final class GlassEntry implements IXposedHookLoadPackage {
 
     /** 只安装底部 Dock，其他区域不再添加液态玻璃。 */
     private static void installDock(Activity act) {
-        if (!DockController.isHomeActivity(act)) return;
         try {
             makeNavigationAreaTransparent(act);
             NativeUiTransparency.start(act);
