@@ -2,7 +2,6 @@ package com.zaka.douyin.glass;
 
 import android.app.Activity;
 import android.app.Application;
-import android.app.Instrumentation;
 import android.graphics.Color;
 import android.view.View;
 import android.view.MotionEvent;
@@ -126,70 +125,12 @@ public final class GlassEntry implements IXposedHookLoadPackage {
         }
 
         try {
-            XposedHelpers.findAndHookMethod(Instrumentation.class, "callActivityOnResume",
-                    Activity.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                Object a = param.args[0];
-                                if (a instanceof Activity) {
-                                    installDock((Activity) a);
-                                }
-                            } catch (Throwable t) {
-                                Dydock.error("resume 钩子", t);
-                            }
-                        }
-                    });
-        } catch (Throwable t) {
-            Dydock.error("挂 callActivityOnResume", t);
-        }
-
-        // 兜底：部分机型上 callActivityOnResume 的签名可能被改过。
-        try {
-            XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
-                @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    try {
-                        Object a = param.thisObject;
-                        if (a instanceof Activity) {
-                            installDock((Activity) a);
-                        }
-                    } catch (Throwable t) {
-                        Dydock.error("onResume 钩子", t);
-                    }
-                }
-            });
-        } catch (Throwable t) {
-            Dydock.warn("挂 Activity.onResume 失败: " + t);
-        }
-
-        // 页面销毁时只清理 Dock，不再管理顶栏或聊天区域的玻璃。
-        try {
-            XposedHelpers.findAndHookMethod(Activity.class, "onDestroy", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) {
-                    try {
-                        Object a = param.thisObject;
-                        if (a instanceof Activity) {
-                            NativeUiTransparency.stop((Activity) a);
-                            DockController.release((Activity) a);
-                            DockSettingsUi.release((Activity) a);
-                        }
-                    } catch (Throwable t) {
-                        Dydock.error("Dock 销毁收尾", t);
-                    }
-                }
-            });
-        } catch (Throwable t) {
-            Dydock.warn("挂 Activity.onDestroy 失败: " + t);
-        }
-
-        try {
             XposedHelpers.findAndHookMethod(Application.class, "onCreate", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     Application app = (Application) param.thisObject;
                     Dydock.attach(app);
+                    registerLifecycleCallbacks(app);
                     Dydock.installCrashHandler();
                     // 设置界面的改动走广播即时同步进来（不依赖 prefs 文件权限）。
                     SettingsSync.register(app);
@@ -197,6 +138,34 @@ public final class GlassEntry implements IXposedHookLoadPackage {
                 }
             });
         } catch (Throwable ignored) {
+        }
+    }
+
+    private static boolean lifecycleCallbacksRegistered;
+
+    /** Use the same Activity lifecycle boundary as DouAi: only the real home Activity owns the Dock. */
+    private static void registerLifecycleCallbacks(Application app) {
+        if (app == null || lifecycleCallbacksRegistered) return;
+        synchronized (GlassEntry.class) {
+            if (lifecycleCallbacksRegistered) return;
+            app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
+                @Override public void onActivityCreated(Activity activity, android.os.Bundle state) { }
+                @Override public void onActivityStarted(Activity activity) { }
+                @Override public void onActivityResumed(Activity activity) {
+                    if (DockController.isHomeActivity(activity)) installDock(activity);
+                }
+                @Override public void onActivityPaused(Activity activity) {
+                    DockController.onHostPause(activity);
+                }
+                @Override public void onActivityStopped(Activity activity) { }
+                @Override public void onActivitySaveInstanceState(Activity activity, android.os.Bundle state) { }
+                @Override public void onActivityDestroyed(Activity activity) {
+                    NativeUiTransparency.stop(activity);
+                    DockController.release(activity);
+                    DockSettingsUi.release(activity);
+                }
+            });
+            lifecycleCallbacksRegistered = true;
         }
     }
 
@@ -210,6 +179,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
 
     /** 只安装底部 Dock，其他区域不再添加液态玻璃。 */
     private static void installDock(Activity act) {
+        if (!DockController.isHomeActivity(act)) return;
         try {
             makeNavigationAreaTransparent(act);
             NativeUiTransparency.start(act);
