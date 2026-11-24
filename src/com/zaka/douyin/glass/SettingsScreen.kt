@@ -394,8 +394,8 @@ internal fun SettingsScreen(
             Spacer(Modifier.height(18.dp))
             GlassCard(scene) {
                 TextRow(
-                    title = "恢复默认尺寸",
-                    subtitle = "只重置尺寸和开关，不动别的",
+                    title = "恢复默认设置",
+                    subtitle = "恢复 Dock 外观、尺寸和原生透明度选项",
                     onClick = state::reset,
                 )
             }
