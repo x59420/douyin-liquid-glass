@@ -235,6 +235,20 @@ final class Shield {
     }
 
     /**
+     * 识别他人个人主页。自己的「我」页面通常带有「编辑资料」，必须明确排除。
+     * 他人主页同时具备粉丝、关注和私信等资料页操作特征，避免把普通信息流误判。
+     */
+    static boolean isOtherProfilePage(View root) {
+        if (root == null) return false;
+        String[] markers = {"编辑资料", "粉丝", "关注", "私信", "作品", "抖音号", "获赞"};
+        boolean[] found = new boolean[markers.length];
+        collectProfileMarkers(root, 0, markers, found);
+        // 「编辑资料」是本人主页的强特征，不能隐藏自己的「我」主 Tab。
+        if (found[0]) return false;
+        return found[1] && found[2] && found[3];
+    }
+
+    /**
      * 页面里有没有正在显示的、够大的视频层。
      *
      * 长按倍速只在这些页面上有意义；消息列表、我的页这类页面没有视频层，
