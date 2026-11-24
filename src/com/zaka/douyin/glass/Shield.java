@@ -239,13 +239,14 @@ final class Shield {
      * 他人主页同时具备粉丝、关注和私信等资料页操作特征，避免把普通信息流误判。
      */
     static boolean isOtherProfilePage(View root) {
-        if (root == null) return false;
-        String[] markers = {"编辑资料", "粉丝", "关注", "私信", "作品", "抖音号", "获赞"};
+        if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return false;
+        String[] markers = {"编辑资料", "粉丝", "关注", "私信", "发消息", "抖音号", "获赞"};
         boolean[] found = new boolean[markers.length];
-        collectProfileMarkers(root, 0, markers, found);
-        // 「编辑资料」是本人主页的强特征，不能隐藏自己的「我」主 Tab。
+        collectProfileMarkers(root, 0, markers, found, new int[]{1800});
+        // 本人主页的「编辑资料」优先级最高，避免误隐藏「我」主 Tab。
         if (found[0]) return false;
-        return found[1] && found[2] && found[3];
+        // 他人主页必须同时出现资料页的粉丝/关注关系和私信操作。
+        return found[1] && found[2] && (found[3] || found[4]);
     }
 
     /**
@@ -537,10 +538,18 @@ final class Shield {
         }
         CharSequence desc = view.getContentDescription();
         if (desc != null) value += " " + desc;
-        if (value.contains("写评论") || value.contains("说点什么")
-                || value.contains("善语结善缘") || value.contains("条评论")
-                || value.contains("留下你的精彩评论")) {
-            return true;
+        // 「条评论」常驻在视频页的评论按钮上，不能作为评论面板已打开的证据。
+        // 只认评论输入框提示或面板内的明确输入文案。
+        boolean inputHint = view instanceof EditText
+                && (value.contains("写评论") || value.contains("说点什么")
+                || value.contains("留下你的精彩评论"));
+        boolean panelInputText = value.contains("留下你的精彩评论")
+                || value.contains("善语结善缘");
+        if (inputHint || panelInputText) {
+            Rect bounds = rectOf(view);
+            Rect page = rectOf(view.getRootView());
+            if (page.height() > 0 && bounds.bottom >= page.bottom - page.height() * 0.45f
+                    && bounds.width() >= page.width() * 0.20f) return true;
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
@@ -613,7 +622,7 @@ final class Shield {
         // to identify a profile page and could keep the Dock hidden after returning.
         String[] markers = {"编辑资料", "抖音号", "获赞", "粉丝", "关注", "作品", "私信"};
         boolean[] found = new boolean[markers.length];
-        collectProfileMarkers(root, 0, markers, found);
+        collectProfileMarkers(root, 0, markers, found, new int[]{1800});
         int count = 0;
         for (boolean hit : found) if (hit) count++;
         boolean strongIdentity = found[0] || found[1] || found[2];
@@ -621,8 +630,9 @@ final class Shield {
     }
 
     private static void collectProfileMarkers(View view, int depth,
-                                              String[] markers, boolean[] found) {
-        if (view == null || depth > 8 || view.getVisibility() != View.VISIBLE) return;
+                                              String[] markers, boolean[] found, int[] budget) {
+        if (view == null || depth > 22 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return;
         String value = "";
         if (view instanceof TextView) {
             CharSequence text = ((TextView) view).getText();
@@ -635,8 +645,8 @@ final class Shield {
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                collectProfileMarkers(group.getChildAt(i), depth + 1, markers, found);
+            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                collectProfileMarkers(group.getChildAt(i), depth + 1, markers, found, budget);
             }
         }
     }
