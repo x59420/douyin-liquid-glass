@@ -134,9 +134,10 @@ final class NativeUiTransparency {
     }
 
     private static void collect(View v, View root, int depth, int[] budget, List<Candidate> out) {
+        // Do not filter on alpha: 0% is a valid user setting and must remain applied
+        // across scans. Visibility and host-owned surface exclusions are sufficient here.
         if (v == null || depth > 22 || budget[0]-- <= 0 || v.getVisibility() != View.VISIBLE
-                || v.getAlpha() < 0.03f || v instanceof android.view.SurfaceView
-                || v instanceof android.view.TextureView) return;
+                || v instanceof android.view.SurfaceView || v instanceof android.view.TextureView) return;
         String cls = v.getClass().getName();
         if (cls.startsWith("com.zaka.douyin.glass")) return;
         if (v instanceof ViewGroup && v != root && v.getWidth() > 0 && v.getHeight() > 0) {
