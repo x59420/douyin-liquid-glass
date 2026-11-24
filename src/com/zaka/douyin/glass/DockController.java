@@ -781,6 +781,9 @@ final class DockController {
         final long[] lastExpandedAt = new long[]{0L};
         final boolean[] otherProfileState = new boolean[]{false};
         final long[] lastProfileScanAt = new long[]{0L};
+        // 他人主页滚动时，资料文字可能短暂离开可见区；保留最近一次确认，
+        // 避免每次滚动扫描漏掉一帧就把 Dock 闪出来。
+        final long[] lastOtherProfileHitAt = new long[]{0L};
         final int[] lastBandSig = new int[]{0};
         final long[] lastGeomAt = new long[]{0L};
         /** 当前这一页有没有视频层：长按倍速只在这类页面上成立，遍历成本高，240ms 采一次。 */
@@ -824,6 +827,8 @@ final class DockController {
         /** 评论区是不是开着；开着的时候不参与「结构类」隐藏（抖音原生在评论区里不收底栏）。 */
         final boolean[] commentOpen = new boolean[]{false};
         final long[] lastCommentScanAt = new long[]{0L};
+        final int[] commentCloseMisses = new int[]{0};
+        final long[] commentClosedAt = new long[]{0L};
         /** 评论节点在发送后可能被宿主短暂重建，保留最近一次确认，避免结构判据抢先收 Dock。 */
         /** 这条隐藏理由第一次成立的时刻，用来做误报兜底。 */
         final long[] hostHiddenSince = new long[]{0L};
@@ -978,11 +983,37 @@ final class DockController {
                     // 否则关闭评论区/按返回后 Dock 会继续消失一段时间。
                     if (now - lastCommentScanAt[0] >= 40L) {
                         lastCommentScanAt[0] = now;
-                        commentOpen[0] = Shield.commentSheetOpen(content);
+                        boolean commentDetected = Shield.commentSheetOpen(content);
+                        if (commentDetected) {
+                            commentOpen[0] = true;
+                            commentCloseMisses[0] = 0;
+                            commentClosedAt[0] = 0L;
+                        } else if (commentOpen[0]) {
+                            // 评论面板退出动画/节点重建时允许短暂漏检；连续三次确认关闭再恢复 Dock。
+                            commentCloseMisses[0] = Math.min(3, commentCloseMisses[0] + 1);
+                            if (commentCloseMisses[0] >= 3) {
+                                commentOpen[0] = false;
+                                commentCloseMisses[0] = 0;
+                                commentClosedAt[0] = now;
+                                // 清掉评论面板期间累积的结构隐藏计数，避免返回后被旧计数卡住。
+                                dockMissingTicks[0] = 0;
+                                coveredTicks[0] = 0;
+                                expandedTicks[0] = 0;
+                                hostHiddenTicks[0] = 0;
+                                revealTicks[0] = 0;
+                            }
+                        }
                     }
                     if (now - lastProfileScanAt[0] >= 240L) {
                         lastProfileScanAt[0] = now;
-                        otherProfileState[0] = Shield.isOtherProfilePage(content);
+                        if (Shield.isOtherProfilePage(content)) {
+                            otherProfileState[0] = true;
+                            lastOtherProfileHitAt[0] = now;
+                        } else if (otherProfileState[0]
+                                && now - lastOtherProfileHitAt[0] > 900L) {
+                            // 离开他人主页后给页面切换留一点缓冲；滚动时的短暂漏检不再闪 Dock。
+                            otherProfileState[0] = false;
+                        }
                     }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
@@ -1045,8 +1076,11 @@ final class DockController {
                     // 不能把这几帧误判成覆盖页/浮层，否则 Dock 会闪一下。
                     boolean ownProfileTabSelected = Finder.isOwnProfileTabSelected(tabTargets[0]);
                     boolean messagesTabSelected = Finder.isMessagesTabSelected(tabTargets[0]);
+                    boolean commentReturnGrace = commentClosedAt[0] != 0L
+                            && now - commentClosedAt[0] < 700L;
                     boolean structuralHidden = commentOpen[0]
-                            || (!messagesTabSelected && (dockMissingTicks[0] >= 12
+                            || (!messagesTabSelected && !commentReturnGrace
+                            && (dockMissingTicks[0] >= 12
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
                             || hostHiddenTicks[0] >= 25));
