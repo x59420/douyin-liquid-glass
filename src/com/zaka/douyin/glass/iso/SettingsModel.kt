@@ -17,14 +17,11 @@ internal interface SettingsModel {
     val sideMargin: MutableState<Int>
     val bottomGap: MutableState<Int>
     val nativeTopEnabled: MutableState<Boolean>
-    val nativeTopPlayAlpha: MutableState<Int>
-    val nativeTopPauseAlpha: MutableState<Int>
+    val nativeTopAlpha: MutableState<Int>
     val nativeControlsEnabled: MutableState<Boolean>
-    val nativeControlsPlayAlpha: MutableState<Int>
-    val nativeControlsPauseAlpha: MutableState<Int>
+    val nativeControlsAlpha: MutableState<Int>
     val nativeBottomEnabled: MutableState<Boolean>
-    val nativeBottomPlayAlpha: MutableState<Int>
-    val nativeBottomPauseAlpha: MutableState<Int>
+    val nativeBottomAlpha: MutableState<Int>
     val homeTopTransparent: MutableState<Boolean>
     val homeBottomTransparent: MutableState<Boolean>
     val navigationTransparent: MutableState<Boolean>
@@ -41,14 +38,11 @@ internal interface SettingsModel {
     fun setSideMargin(value: Int)
     fun setBottomGap(value: Int)
     fun setNativeTopEnabled(value: Boolean)
-    fun setNativeTopPlayAlpha(value: Int)
-    fun setNativeTopPauseAlpha(value: Int)
+    fun setNativeTopAlpha(value: Int)
     fun setNativeControlsEnabled(value: Boolean)
-    fun setNativeControlsPlayAlpha(value: Int)
-    fun setNativeControlsPauseAlpha(value: Int)
+    fun setNativeControlsAlpha(value: Int)
     fun setNativeBottomEnabled(value: Boolean)
-    fun setNativeBottomPlayAlpha(value: Int)
-    fun setNativeBottomPauseAlpha(value: Int)
+    fun setNativeBottomAlpha(value: Int)
     fun setHomeTopTransparent(value: Boolean)
     fun setHomeBottomTransparent(value: Boolean)
     fun setNavigationTransparent(value: Boolean)
