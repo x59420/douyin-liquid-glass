@@ -10,6 +10,7 @@ import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewParent;
+import android.view.ViewTreeObserver;
 import android.widget.EditText;
 import android.widget.Checkable;
 import android.widget.FrameLayout;
@@ -79,6 +80,10 @@ final class DockController {
             new WeakHashMap<Activity, Runnable>();
     private static final WeakHashMap<Activity, boolean[]> POLL_STATES =
             new WeakHashMap<Activity, boolean[]>();
+    private static final WeakHashMap<Activity, ViewTreeObserver> HOST_OBSERVERS =
+            new WeakHashMap<Activity, ViewTreeObserver>();
+    private static final WeakHashMap<Activity, ViewTreeObserver.OnPreDrawListener> HOST_PRE_DRAWS =
+            new WeakHashMap<Activity, ViewTreeObserver.OnPreDrawListener>();
     private static final WeakHashMap<Activity, WeakHashMap<View, Drawable>> STRIPPED_BACKGROUNDS =
             new WeakHashMap<Activity, WeakHashMap<View, Drawable>>();
     private static final WeakHashMap<Activity, WeakHashMap<View, Drawable>> STRIPPED_FOREGROUNDS =
@@ -572,6 +577,7 @@ final class DockController {
         synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.remove(act); }
         synchronized (CLEAR_TOUCH) { CLEAR_TOUCH.remove(act); }
         synchronized (HOME_RESUMED) { HOME_RESUMED.remove(act); }
+        removeHostMonitor(act);
         View dock;
         IsoDock iso;
         synchronized (DOCKS) {
@@ -696,7 +702,7 @@ final class DockController {
         if (plus != null) initialTabs.remove(plus);
 
         // 必须在把原生底栏设成 GONE 之前拍：之后父链的可见性变化才算「宿主把底栏藏了」。
-        final ChromeSnapshot chrome = new ChromeSnapshot(dock, content, decor);
+        final ChromeSnapshot[] chrome = new ChromeSnapshot[]{new ChromeSnapshot(dock, content, decor)};
 
         // 原生底栏那一带的深色底/渐变是「玻璃一片黑」的来源：我们的采样是隔着它采的。
         // 把它拿掉之后，视频画面才能真正透到 Dock 后面来。
@@ -836,10 +842,6 @@ final class DockController {
         /** 宿主把底栏容器真正隐藏了：持续约 400ms 才认，滚动动画那一小段不算。 */
         final int[] hostHiddenTicks = new int[]{0};
         /** 评论节点在发送后可能被宿主短暂重建，保留最近一次确认，避免结构判据抢先收 Dock。 */
-        /** 这条隐藏理由第一次成立的时刻，用来做误报兜底。 */
-        final long[] hostHiddenSince = new long[]{0L};
-        /** 这条理由被认定成误报之后，本 Activity 内不再参与判断（否则底栏再也回不来）。 */
-        final boolean[] chromeUntrusted = new boolean[]{false};
         /** 上一次隐藏是什么原因，只在变化时记一条日志，方便对着日志定位。 */
         final String[] lastHideReason = new String[]{""};
         final float densityPx = act.getResources().getDisplayMetrics().density;
@@ -891,6 +893,7 @@ final class DockController {
                         MAIN.removeCallbacks(this);
                         synchronized (POLLERS) { POLLERS.remove(act); }
                         synchronized (POLL_STATES) { POLL_STATES.remove(act); }
+                        removeHostMonitor(act);
                         detachOverlay(iso);
                         restoreNative(dockRef[0]);
                         Dydock.warn("底栏:玻璃渲染出错，已恢复官方 Dock");
@@ -943,6 +946,7 @@ final class DockController {
                                     View p = Finder.pickPlus(its);
                                     List<View> lf = new ArrayList<View>(its);
                                     if (p != null) lf.remove(p);
+                                    chrome[0] = new ChromeSnapshot(fresh, content, decor);
                                     fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
                                     backdrop.setExcluded(fresh);
@@ -1000,24 +1004,8 @@ final class DockController {
                     // DouAi-style page handling: MainActivity lifecycle is authoritative.
                     // Within the home Activity, only the native bottom-navigation host's
                     // attachment/ancestor visibility can change structural Dock visibility.
-                    boolean dockAttached = d != null && d.isAttachedToWindow();
-                    dockMissingTicks[0] = dockAttached
-                            ? 0 : Math.min(60, dockMissingTicks[0] + 1);
-                    boolean hostHidden = !chromeUntrusted[0] && chrome.isHiddenNow(d);
-                    if (hostHidden) {
-                        if (hostHiddenSince[0] == 0L) hostHiddenSince[0] = now;
-                    } else {
-                        hostHiddenSince[0] = 0L;
-                    }
-                    hostHiddenTicks[0] = hostHidden
-                            ? Math.min(60, hostHiddenTicks[0] + 1) : 0;
-                    if (hostHidden && dockAttached && !clearScreen && !speedPlayback
-                            && now - hostHiddenSince[0] > 3500L) {
-                        chromeUntrusted[0] = true;
-                        hostHiddenTicks[0] = 0;
-                        hostHiddenSince[0] = 0L;
-                        Dydock.warn("底栏:宿主祖先可见性持续异常，停止使用该隐藏判据");
-                    }
+                    // Structural visibility is driven by the host's native pre-draw monitor.
+                    // This loop remains for gesture state, settings synchronization and backdrop work.
                     boolean structuralHidden = dockMissingTicks[0] >= 12
                             || hostHiddenTicks[0] >= 25;
                     boolean hidden = speedPlayback || longPress || clearScreen || structuralHidden;
@@ -1123,16 +1111,50 @@ final class DockController {
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
                 }
-                MAIN.postDelayed(this, 16L);
+                MAIN.postDelayed(this, 50L);
             }
         };
+        // DouAi-style native state monitoring: observe the actual host View tree at draw time.
+        final int[] missingDraws = new int[]{0};
+        final int[] hiddenDraws = new int[]{0};
+        final ViewTreeObserver.OnPreDrawListener hostStateMonitor =
+                new ViewTreeObserver.OnPreDrawListener() {
+            @Override public boolean onPreDraw() {
+                if (!live[0]) return true;
+                View nativeDock = dockRef[0];
+                boolean attached = nativeDock != null && nativeDock.isAttachedToWindow();
+                missingDraws[0] = attached ? 0 : Math.min(3, missingDraws[0] + 1);
+                boolean hostHidden = attached && chrome[0] != null
+                        && chrome[0].isHiddenNow(nativeDock);
+                hiddenDraws[0] = hostHidden ? Math.min(3, hiddenDraws[0] + 1) : 0;
+                int nextMissing = missingDraws[0] >= 2 ? 12 : 0;
+                int nextHidden = hiddenDraws[0] >= 2 ? 25 : 0;
+                boolean changed = nextMissing != dockMissingTicks[0]
+                        || nextHidden != hostHiddenTicks[0];
+                dockMissingTicks[0] = nextMissing;
+                hostHiddenTicks[0] = nextHidden;
+                if (changed) {
+                    MAIN.removeCallbacks(visibilityPoll);
+                    MAIN.post(visibilityPoll);
+                }
+                return true;
+            }
+        };
+        ViewTreeObserver hostObserver = decor.getViewTreeObserver();
+        if (hostObserver.isAlive()) {
+            hostObserver.addOnPreDrawListener(hostStateMonitor);
+            synchronized (HOST_OBSERVERS) { HOST_OBSERVERS.put(act, hostObserver); }
+            synchronized (HOST_PRE_DRAWS) { HOST_PRE_DRAWS.put(act, hostStateMonitor); }
+        }
+
         // 原生底栏绝不能被画进玻璃的背景里。它平时已经被藏起来了，
         // 这里再兜一层：万一宿主把它设回可见，Backdrop 会跳过这一帧的内容树。
         backdrop.setExcluded(dockRef[0]);
 
         synchronized (POLLERS) { POLLERS.put(act, visibilityPoll); }
         synchronized (POLL_STATES) { POLL_STATES.put(act, live); }
-        MAIN.postDelayed(visibilityPoll, 16L);
+        // Native navigation state is event-driven; this loop only maintains gestures and backdrop.
+        MAIN.postDelayed(visibilityPoll, 50L);
 
         // 看门狗：玻璃**可见却迟迟没画出来**才把官方底栏还回去，绝不留一条空白。
         // 5 秒：首次进抖音要现场解 dex、建 Recomposer、跑第一帧，2.5 秒在高负载机型上
@@ -1140,6 +1162,7 @@ final class DockController {
         MAIN.postDelayed(new Runnable() {
             @Override public void run() {
                 if (!live[0] || iso.hasDrawn()) return;
+                removeHostMonitor(act);
                 // 先把轮询停掉：否则它下一帧又会把刚还回去的原生底栏设成 GONE。
                 live[0] = false;
                 MAIN.removeCallbacks(visibilityPoll);
@@ -1371,6 +1394,7 @@ final class DockController {
         synchronized (POLL_STATES) {
             state = POLL_STATES.remove(act);
         }
+        removeHostMonitor(act);
         if (state != null) state[0] = false;
         if (poller != null) MAIN.removeCallbacks(poller);
         if (iso != null) {
@@ -1388,6 +1412,17 @@ final class DockController {
     }
 
     /** 把玻璃层从窗口上摘掉（不销毁，dispose 由 release 负责）。 */
+    private static void removeHostMonitor(Activity activity) {
+        if (activity == null) return;
+        ViewTreeObserver observer;
+        synchronized (HOST_OBSERVERS) { observer = HOST_OBSERVERS.remove(activity); }
+        ViewTreeObserver.OnPreDrawListener listener;
+        synchronized (HOST_PRE_DRAWS) { listener = HOST_PRE_DRAWS.remove(activity); }
+        if (observer != null && observer.isAlive() && listener != null) {
+            try { observer.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
+        }
+    }
+
     private static void detachOverlay(IsoDock iso) {
         if (iso == null) return;
         try {
