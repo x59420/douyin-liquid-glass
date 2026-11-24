@@ -42,14 +42,14 @@ final class DockController {
      * 显隐过渡：所有页面、所有理由（倍速 / 清屏 / 覆盖页 / 浮层 / 宿主隐藏）共用这一套，
      * 不再有的地方硬切、有的地方慢半拍。显示 150ms、隐藏 110ms，先快后缓，手感轻。
      */
-    private static final long SHOW_MS = 110L;
-    private static final long HIDE_MS = 110L;
+    private static final long SHOW_MS = 60L;
+    private static final long HIDE_MS = 60L;
     private static final android.view.animation.Interpolator TRANSITION =
             new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f);
     /** 手势类隐藏（倍速/清屏）恢复要快：抬手就该回来。 */
-    private static final int FAST_REVEAL_TICKS = 2;
+    private static final int FAST_REVEAL_TICKS = 1;
     /** 结构类隐藏（覆盖页/浮层/底栏脱离）恢复要多等几帧，防止转场里闪一下。 */
-    private static final int STRUCTURAL_REVEAL_TICKS = 10;
+    private static final int STRUCTURAL_REVEAL_TICKS = 2;
     /** 「整屏页面盖住 Dock」需要连续命中的帧数（60ms 采一次，两帧约 120ms）。 */
     private static final int COVER_CONFIRM_TICKS = 2;
 
@@ -821,7 +821,6 @@ final class DockController {
         final boolean[] commentOpen = new boolean[]{false};
         final long[] lastCommentScanAt = new long[]{0L};
         /** 评论节点在发送后可能被宿主短暂重建，保留最近一次确认，避免结构判据抢先收 Dock。 */
-        final long[] lastCommentSeenAt = new long[]{0L};
         /** 这条隐藏理由第一次成立的时刻，用来做误报兜底。 */
         final long[] hostHiddenSince = new long[]{0L};
         /** 这条理由被认定成误报之后，本 Activity 内不再参与判断（否则底栏再也回不来）。 */
@@ -970,15 +969,11 @@ final class DockController {
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
                         lastClearScanAt[0] = now;
                     }
-                    // 评论区开着：抖音原生不收底栏，这里也不收（否则评论一开一合 Dock 会闪）。
-                    if (now - lastCommentScanAt[0] >= 200L) {
+                    // 评论面板状态直接跟随当前视图树；不保留退出后的 1200ms 旧状态，
+                    // 否则关闭评论区/按返回后 Dock 会继续消失一段时间。
+                    if (now - lastCommentScanAt[0] >= 40L) {
                         lastCommentScanAt[0] = now;
-                        if (Shield.commentSheetOpen(content)) {
-                            commentOpen[0] = true;
-                            lastCommentSeenAt[0] = now;
-                        } else if (now - lastCommentSeenAt[0] > 1200L) {
-                            commentOpen[0] = false;
-                        }
+                        commentOpen[0] = Shield.commentSheetOpen(content);
                     }
                     if (now - lastProfileScanAt[0] >= 240L) {
                         lastProfileScanAt[0] = now;
