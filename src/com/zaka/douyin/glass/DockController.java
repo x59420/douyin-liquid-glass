@@ -86,6 +86,8 @@ final class DockController {
             new WeakHashMap<Activity, ViewTreeObserver>();
     private static final WeakHashMap<Activity, ViewTreeObserver.OnPreDrawListener> HOST_PRE_DRAWS =
             new WeakHashMap<Activity, ViewTreeObserver.OnPreDrawListener>();
+    private static final WeakHashMap<Activity, ViewTreeObserver.OnGlobalLayoutListener> HOST_GLOBAL_LAYOUTS =
+            new WeakHashMap<Activity, ViewTreeObserver.OnGlobalLayoutListener>();
     private static final WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>> STRIPPED_BACKGROUNDS =
             new WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>>();
     private static final WeakHashMap<Activity, WeakHashMap<View, BackgroundSnapshot>> STRIPPED_FOREGROUNDS =
@@ -359,16 +361,22 @@ final class DockController {
      * 常驻隐藏的层、我们自己的玻璃层、content / decor 这两个根节点都不参与判断。
      */
     private static final class ChromeSnapshot {
-        private static final int DEPTH = 5;
+        private static final int DEPTH = 12;
 
         private final View content;
         private final View decor;
         private final int[] baseVis = new int[DEPTH];
         private final float[] baseAlpha = new float[DEPTH];
+        private final int[] baseWidth = new int[DEPTH];
+        private final int[] baseHeight = new int[DEPTH];
+        private final int dockWidth;
+        private final int dockHeight;
 
         ChromeSnapshot(View dock, View content, View decor) {
             this.content = content;
             this.decor = decor;
+            dockWidth = dock == null ? 0 : dock.getWidth();
+            dockHeight = dock == null ? 0 : dock.getHeight();
             View v = dock;
             for (int i = 0; i < DEPTH; i++) {
                 ViewParent parent = v == null ? null : v.getParent();
@@ -379,23 +387,45 @@ final class DockController {
                 v = (View) parent;
                 baseVis[i] = v.getVisibility();
                 baseAlpha[i] = v.getAlpha();
+                baseWidth[i] = v.getWidth();
+                baseHeight[i] = v.getHeight();
             }
         }
 
-        /** 接管后有没有哪一层祖先从「可见」变成了「不可见」。 */
+        /** Observe host-owned visibility and geometry, including clipping and off-screen translations. */
         boolean isHiddenNow(View dock) {
-            if (dock == null) return false;
+            if (dock == null) return true;
+            if (dockWidth > 0 && dock.getWidth() <= 0) return true;
+            if (dockHeight > 0 && dock.getHeight() <= 0) return true;
+
+            // getGlobalVisibleRect accounts for ancestor clipping and translated/scaled bounds.
+            // Alpha suppression on the native dock does not change its geometric visible rect.
+            if (dockWidth > 0 && dockHeight > 0) {
+                Rect visible = new Rect();
+                if (!dock.getGlobalVisibleRect(visible) || visible.isEmpty()) return true;
+            }
+
             View v = dock;
+            boolean reachedContent = false;
             for (int i = 0; i < DEPTH; i++) {
                 ViewParent parent = v.getParent();
-                if (!(parent instanceof View) || baseVis[i] < 0) return false;
+                if (!(parent instanceof View)) break;
                 v = (View) parent;
-                if (v == content || v == decor || isOursGlass(v)) continue;
-                // 接管前它就是隐藏/透明的，这层没有参考价值。
-                if (baseVis[i] != View.VISIBLE || baseAlpha[i] < 0.05f) continue;
-                if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) return true;
+                if (v == content) {
+                    reachedContent = true;
+                    break;
+                }
+                if (v == decor || isOursGlass(v)) continue;
+                // Only compare ancestors that were usable when we took the baseline.
+                if (baseVis[i] == View.VISIBLE && baseAlpha[i] >= 0.05f) {
+                    if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) return true;
+                    if (baseHeight[i] > 0 && v.getHeight() <= 0) return true;
+                    if (baseWidth[i] > 0 && v.getWidth() <= 0) return true;
+                }
             }
-            return false;
+            // A view that is still attached to a window but has been reparented outside
+            // the activity content is no longer the active home navigation host.
+            return !reachedContent;
         }
 
         private static boolean isOursGlass(View v) {
@@ -978,7 +1008,7 @@ final class DockController {
 
                     View d = dockRef[0];
                     long now = SystemClock.uptimeMillis();
-                    if (d == null || !d.isAttachedToWindow()) {
+                    if (d == null || !d.isAttachedToWindow() || !isDescendantOf(d, content)) {
                         // 原生节点不可用时才重新搜索：底栏刚被重建时要在 150ms 内接上，
                         // 否则「接不上 → 判成不在主页面 → 收起」会变成一次闪烁。
                         if (now - lastFindAt[0] >= 150L) {
@@ -1200,11 +1230,23 @@ final class DockController {
                 return true;
             }
         };
+        ViewTreeObserver.OnGlobalLayoutListener hostLayoutMonitor =
+                new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override public void onGlobalLayout() {
+                if (!live[0]) return;
+                // Layout/visibility changes wake the state loop immediately; PreDraw still
+                // samples frame-by-frame animations and translations.
+                MAIN.removeCallbacks(visibilityPoll);
+                MAIN.post(visibilityPoll);
+            }
+        };
         ViewTreeObserver hostObserver = decor.getViewTreeObserver();
         if (hostObserver.isAlive()) {
             hostObserver.addOnPreDrawListener(hostStateMonitor);
+            hostObserver.addOnGlobalLayoutListener(hostLayoutMonitor);
             synchronized (HOST_OBSERVERS) { HOST_OBSERVERS.put(act, hostObserver); }
             synchronized (HOST_PRE_DRAWS) { HOST_PRE_DRAWS.put(act, hostStateMonitor); }
+            synchronized (HOST_GLOBAL_LAYOUTS) { HOST_GLOBAL_LAYOUTS.put(act, hostLayoutMonitor); }
         }
 
         // 原生底栏绝不能被画进玻璃的背景里。它平时已经被藏起来了，
@@ -1481,23 +1523,37 @@ final class DockController {
         if (observer != null && observer.isAlive() && listener != null) {
             try { observer.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
         }
+        ViewTreeObserver.OnGlobalLayoutListener global;
+        synchronized (HOST_GLOBAL_LAYOUTS) { global = HOST_GLOBAL_LAYOUTS.get(activity); }
+        if (observer != null && observer.isAlive() && global != null) {
+            try { observer.removeOnGlobalLayoutListener(global); } catch (Throwable ignored) { }
+        }
     }
 
     private static void resumeHostMonitor(Activity activity) {
         if (activity == null || activity.getWindow() == null) return;
         ViewTreeObserver.OnPreDrawListener listener;
         synchronized (HOST_PRE_DRAWS) { listener = HOST_PRE_DRAWS.get(activity); }
-        if (listener == null) return;
+        ViewTreeObserver.OnGlobalLayoutListener global;
+        synchronized (HOST_GLOBAL_LAYOUTS) { global = HOST_GLOBAL_LAYOUTS.get(activity); }
+        if (listener == null && global == null) return;
         ViewTreeObserver next = activity.getWindow().getDecorView().getViewTreeObserver();
         if (!next.isAlive()) return;
         ViewTreeObserver previous;
         synchronized (HOST_OBSERVERS) { previous = HOST_OBSERVERS.put(activity, next); }
         if (previous != null && previous != next && previous.isAlive()) {
-            try { previous.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
+            if (listener != null) try { previous.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
+            if (global != null) try { previous.removeOnGlobalLayoutListener(global); } catch (Throwable ignored) { }
         }
         try {
-            next.removeOnPreDrawListener(listener);
-            next.addOnPreDrawListener(listener);
+            if (listener != null) {
+                next.removeOnPreDrawListener(listener);
+                next.addOnPreDrawListener(listener);
+            }
+            if (global != null) {
+                next.removeOnGlobalLayoutListener(global);
+                next.addOnGlobalLayoutListener(global);
+            }
         } catch (Throwable ignored) { }
     }
 
@@ -1507,8 +1563,11 @@ final class DockController {
         synchronized (HOST_OBSERVERS) { observer = HOST_OBSERVERS.remove(activity); }
         ViewTreeObserver.OnPreDrawListener listener;
         synchronized (HOST_PRE_DRAWS) { listener = HOST_PRE_DRAWS.remove(activity); }
-        if (observer != null && observer.isAlive() && listener != null) {
-            try { observer.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
+        ViewTreeObserver.OnGlobalLayoutListener global;
+        synchronized (HOST_GLOBAL_LAYOUTS) { global = HOST_GLOBAL_LAYOUTS.remove(activity); }
+        if (observer != null && observer.isAlive()) {
+            if (listener != null) try { observer.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
+            if (global != null) try { observer.removeOnGlobalLayoutListener(global); } catch (Throwable ignored) { }
         }
     }
 
@@ -2038,6 +2097,16 @@ final class DockController {
         int[] l = new int[2];
         v.getLocationInWindow(l);
         return new Rect(l[0], l[1], l[0] + v.getWidth(), l[1] + v.getHeight());
+    }
+
+    private static boolean isDescendantOf(View view, View root) {
+        if (view == null || root == null) return false;
+        ViewParent parent = view;
+        for (int depth = 0; depth < 64 && parent != null; depth++) {
+            if (parent == root) return true;
+            parent = parent.getParent();
+        }
+        return false;
     }
 
     // ------------------------------------------------------------------ 认底栏
