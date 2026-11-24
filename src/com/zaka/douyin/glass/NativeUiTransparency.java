@@ -68,8 +68,6 @@ final class NativeUiTransparency {
         boolean bottomOn = DockPrefs.nativeBottomEnabled(activity);
         boolean homeTopOn = DockPrefs.homeTopTransparent(activity);
         boolean homeBottomOn = DockPrefs.homeBottomTransparent(activity);
-        boolean paused = isPaused((ViewGroup) content);
-
         List<Candidate> found = new ArrayList<>();
         collect((ViewGroup) content, content, 0, new int[]{NODE_BUDGET}, found);
         Candidate top = (topOn || homeTopOn) ? choose(found, 1, null, null) : null;
@@ -79,17 +77,21 @@ final class NativeUiTransparency {
         WeakHashMap<View, Integer> alphaTargets = new WeakHashMap<>();
         WeakHashMap<View, Boolean> backgroundTargets = new WeakHashMap<>();
         if (topOn && top != null) alphaTargets.put(top.view,
-                paused ? DockPrefs.nativeTopPauseAlpha(activity) : DockPrefs.nativeTopPlayAlpha(activity));
+                DockPrefs.nativeTopAlpha(activity));
         if (controlsOn && controls != null) alphaTargets.put(controls.view,
-                paused ? DockPrefs.nativeControlsPauseAlpha(activity) : DockPrefs.nativeControlsPlayAlpha(activity));
+                DockPrefs.nativeControlsAlpha(activity));
         if (bottomOn && bottom != null) alphaTargets.put(bottom.view,
-                paused ? DockPrefs.nativeBottomPauseAlpha(activity) : DockPrefs.nativeBottomPlayAlpha(activity));
+                DockPrefs.nativeBottomAlpha(activity));
         if (homeTopOn && top != null) backgroundTargets.put(top.view, true);
         if (homeBottomOn && bottom != null) backgroundTargets.put(bottom.view, true);
         applyAlphas(activity, alphaTargets);
         applyBackgrounds(activity, backgroundTargets);
     }
 
+    /**
+     * Edge-to-Edge：内容布局延伸到状态栏和导航栏后方。
+     * 系统栏透明时由宿主内容绘制背景；隐藏系统栏只控制可见性，不改变布局模式。
+     */
     static void applySystemBars(Activity activity) {
         if (activity == null || activity.getWindow() == null) return;
         try {
@@ -98,26 +100,52 @@ final class NativeUiTransparency {
             Bars original;
             synchronized (BARS) {
                 original = BARS.get(activity);
-                if (original == null) { original = new Bars(window, decor); BARS.put(activity, original); }
+                if (original == null) {
+                    original = new Bars(window, decor);
+                    BARS.put(activity, original);
+                }
             }
-            int managed = View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+
+            int layoutFlags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            int visibilityFlags = View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                     | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-            int flags = (decor.getSystemUiVisibility() & ~managed) | (original.flags & managed);
-            if (DockPrefs.hideStatusBar(activity)) flags |= View.SYSTEM_UI_FLAG_FULLSCREEN;
+            int flags = (decor.getSystemUiVisibility()
+                    & ~(visibilityFlags | layoutFlags)) | layoutFlags;
+
+            if (DockPrefs.hideStatusBar(activity)) {
+                flags |= View.SYSTEM_UI_FLAG_FULLSCREEN;
+            }
             if (DockPrefs.hideNavigationBar(activity)) {
-                flags |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+                flags |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
             }
             decor.setSystemUiVisibility(flags);
+
+            // 状态栏透明，状态图标明暗继续交给宿主原有主题处理。
+            window.setStatusBarColor(Color.TRANSPARENT);
             if (DockPrefs.navigationTransparent(activity)) {
                 window.setNavigationBarColor(Color.TRANSPARENT);
-                if (android.os.Build.VERSION.SDK_INT >= 28) window.setNavigationBarDividerColor(Color.TRANSPARENT);
-                if (android.os.Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(false);
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    window.setNavigationBarDividerColor(Color.TRANSPARENT);
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    window.setNavigationBarContrastEnforced(false);
+                }
             } else {
                 window.setNavigationBarColor(original.navigationColor);
-                if (android.os.Build.VERSION.SDK_INT >= 28) window.setNavigationBarDividerColor(original.dividerColor);
-                if (android.os.Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(original.contrast);
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    window.setNavigationBarDividerColor(original.dividerColor);
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    window.setNavigationBarContrastEnforced(original.contrast);
+                }
             }
-        } catch (Throwable t) { Dydock.warnOnce("native-system-bars", "系统栏设置失败: " + t); }
+        } catch (Throwable t) {
+            Dydock.warnOnce("native-system-bars", "系统栏边到边布局设置失败: " + t);
+        }
     }
 
     private static void restoreBars(Activity activity) {
@@ -127,9 +155,14 @@ final class NativeUiTransparency {
         try {
             Window w = activity.getWindow();
             w.getDecorView().setSystemUiVisibility(original.flags);
+            w.setStatusBarColor(original.statusColor);
             w.setNavigationBarColor(original.navigationColor);
-            if (android.os.Build.VERSION.SDK_INT >= 28) w.setNavigationBarDividerColor(original.dividerColor);
-            if (android.os.Build.VERSION.SDK_INT >= 29) w.setNavigationBarContrastEnforced(original.contrast);
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                w.setNavigationBarDividerColor(original.dividerColor);
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                w.setNavigationBarContrastEnforced(original.contrast);
+            }
         } catch (Throwable ignored) {}
     }
 
@@ -213,26 +246,6 @@ final class NativeUiTransparency {
     private static boolean contains(String s,String... words){for(String w:words)if(s.contains(w.toLowerCase()))return true;return false;}
     private static boolean hasAny(String s,String... words){return contains(s,words);}
 
-    private static boolean isPaused(View root) {
-        return findPaused(root, 0, new int[]{900}, new boolean[]{false});
-    }
-    private static boolean findPaused(View v, int depth, int[] budget, boolean[] found) {
-        if (v == null || depth > 18 || budget[0]-- <= 0 || v.getVisibility() != View.VISIBLE) return false;
-        String s = label(v), id = identity(v);
-        if (v.isClickable() || v.hasOnClickListeners() || hasAny(id, "player", "playback", "control")) {
-            if (s.contains("播放") || s.contains("play")) { found[0] = true; return true; }
-            if (s.contains("暂停") || s.contains("pause")) { found[0] = true; return false; }
-        }
-        if (v instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) v;
-            for (int i = 0; i < g.getChildCount() && budget[0] > 0; i++) {
-                boolean paused = findPaused(g.getChildAt(i), depth + 1, budget, found);
-                if (found[0]) return paused;
-            }
-        }
-        return false;
-    }
-
     private static void applyAlphas(Activity a,WeakHashMap<View,Integer> wanted) {
         WeakHashMap<View,Float> old;
         synchronized(ALPHAS){old=ALPHAS.get(a);if(old==null){old=new WeakHashMap<>();ALPHAS.put(a,old);}}
@@ -260,8 +273,9 @@ final class NativeUiTransparency {
     }
     private static final class Background { final Drawable drawable; Background(Drawable d){drawable=d;} }
     private static final class Bars {
-        final int flags,navigationColor,dividerColor; final boolean contrast;
-        Bars(Window w,View d){flags=d.getSystemUiVisibility();navigationColor=w.getNavigationBarColor();
+        final int flags,statusColor,navigationColor,dividerColor; final boolean contrast;
+        Bars(Window w,View d){flags=d.getSystemUiVisibility();statusColor=w.getStatusBarColor();
+            navigationColor=w.getNavigationBarColor();
             dividerColor=android.os.Build.VERSION.SDK_INT>=28?w.getNavigationBarDividerColor():navigationColor;
             contrast=android.os.Build.VERSION.SDK_INT>=29 && w.isNavigationBarContrastEnforced();}
     }
