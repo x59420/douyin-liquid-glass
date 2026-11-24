@@ -234,6 +234,13 @@ class IsoOverlay private constructor(
         dockVisible = visible
     }
 
+    // 隐藏过渡结束后胶囊透明，但全屏 Compose 容器仍然存在；隐藏状态必须把触摸
+    // 原样交还抖音，不能让透明覆盖层挡住底下页面。
+    override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
+        if (!dockVisible) return false
+        return super.dispatchTouchEvent(event)
+    }
+
     /** 宿主采来的底栏那一条真实画面。所有权交给这里，宿主每帧给的都是新副本。 */
     fun setBackdrop(bitmap: Bitmap?) {
         if (disposed || bitmap == null || bitmap.isRecycled) return
