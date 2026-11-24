@@ -246,7 +246,8 @@ final class Shield {
         // 本人主页的「编辑资料」优先级最高，避免误隐藏「我」主 Tab。
         if (found[0]) return false;
         // 他人主页必须同时出现资料页的粉丝/关注关系和私信操作。
-        return found[1] && found[2] && (found[3] || found[4]);
+        return found[1] && (found[5] || found[6])
+                && (found[2] || found[3] || found[4]);
     }
 
     /**
@@ -432,7 +433,7 @@ final class Shield {
         // 旧版把评论面板当「压在 Dock 上的浮层」，展开时收一次、面板铺好后判据又不成立，
         // Dock 再冒出来 —— 用户看到的就是闪一下。
         // 注意只排除「半屏的评论面板」：整屏页面（别人主页、详情页）照旧要走下面的判据。
-        if (isCommentSheet(view, r, page, name)) return false;
+        if (isCommentSheet(view, r, page, name)) return true;
         // Do not classify arbitrary large background containers as menus.
         // The host's normal feed/page containers also have backgrounds and children;
         // treating them as expanded panels makes the Dock appear briefly, then vanish.
