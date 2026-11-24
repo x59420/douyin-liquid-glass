@@ -252,13 +252,16 @@ internal fun SettingsScreen(
             TopBar(
                 version = version,
                 onBack = onBack,
-                themeMode = state.themeMode.value,
-                onThemeChange = state::setThemeMode,
-            )
+TopBar call theme args            )
             Spacer(Modifier.height(16.dp))
 
             SectionTitle("外观")
             GlassCard(scene) {
+                ModeRow(
+                    themeMode = state.themeMode.value,
+                    onThemeChange = state::setThemeMode,
+                )
+                Divider()
                 SwitchRow(
                     title = "启用玻璃 Dock",
                     subtitle = "关掉就完全用抖音原生底栏",
@@ -343,11 +346,8 @@ internal fun SettingsScreen(
 private fun TopBar(
     version: String,
     onBack: () -> Unit,
-    themeMode: Int,
-    onThemeChange: (Int) -> Unit,
 ) {
     val palette = LocalSettingsPalette.current
-    var themeMenuOpen by remember { mutableStateOf(false) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(56.dp)
@@ -384,34 +384,54 @@ private fun TopBar(
         Spacer(Modifier.width(10.dp))
         Label(version, palette.secondary, 12.sp)
         Spacer(Modifier.weight(1f))
-        Box(Modifier.size(42.dp)) {
+    }
+}
+
+@Composable
+private fun ModeRow(
+    themeMode: Int,
+    onThemeChange: (Int) -> Unit,
+) {
+    val palette = LocalSettingsPalette.current
+    var menuOpen by remember { mutableStateOf(false) }
+    val modes = listOf("跟随系统", "浅色", "深色")
+    Column(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Label("模式", palette.primary, 15.sp, modifier = Modifier.weight(1f))
             Box(
-                Modifier.fillMaxSize()
-                    .clip(RoundedCornerShape(13.dp))
-                    .background(palette.card.copy(alpha = 0.72f))
-                    .border(1.dp, palette.border, RoundedCornerShape(13.dp))
+                Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(palette.card.copy(alpha = 0.78f))
+                    .border(1.dp, palette.border, RoundedCornerShape(12.dp))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                    ) { themeMenuOpen = !themeMenuOpen },
-                contentAlignment = Alignment.Center,
+                    ) { menuOpen = !menuOpen }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
             ) {
-                Label("◐", palette.primary, 19.sp, weight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Label(modes.getOrElse(themeMode) { modes[0] }, palette.primary, 12.5.sp)
+                    Spacer(Modifier.width(7.dp))
+                    Label(if (menuOpen) "⌃" else "⌄", palette.secondary, 13.sp)
+                }
             }
-            if (themeMenuOpen) {
-                // 使用同一 Compose 窗口内的锚定菜单，不再创建 Popup 独立 Window。
-                // 隔离类加载器下 Popup 的 Window/Owner 生命周期可能与宿主 Dialog 冲突，
-                // 主题菜单因此直接在右上角按钮下方绘制。
+        }
+        if (menuOpen) {
+            Column(
+                Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalAlignment = Alignment.End,
+            ) {
                 Column(
-                    Modifier.align(Alignment.TopEnd)
-                        .offset(y = 48.dp)
-                        .width(148.dp)
+                    Modifier.width(148.dp)
                         .clip(RoundedCornerShape(20.dp))
                         .background(palette.panel.copy(alpha = 0.97f))
                         .border(1.dp, palette.border, RoundedCornerShape(20.dp))
                         .padding(6.dp)
                 ) {
-                    listOf("跟随系统", "浅色", "深色").forEachIndexed { index, label ->
+                    modes.forEachIndexed { index, label ->
                         val selected = themeMode == index
                         Box(
                             Modifier.fillMaxWidth()
@@ -422,7 +442,7 @@ private fun TopBar(
                                     indication = null,
                                 ) {
                                     onThemeChange(index)
-                                    themeMenuOpen = false
+                                    menuOpen = false
                                 }
                                 .padding(horizontal = 13.dp, vertical = 11.dp)
                         ) {
