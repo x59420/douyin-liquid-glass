@@ -455,44 +455,40 @@ private fun GlassSurface(
 
         // 只动画胶囊本身与独立加号，不移动全屏覆盖层或背景采样区域。
         if (labels.isNotEmpty() && tabsRect.width() > 0 && tabsRect.height() > 0) {
-            Box(
+            CapsuleVisibilityLayer(
+                dockVisible = dockVisible,
                 modifier = Modifier
                     .offset(with(density) { tabsRect.left.toDp() }, with(density) { tabsRect.top.toDp() })
                     .width(with(density) { tabsRect.width().toDp() })
-                    .then(CapsuleVisibilityModifier(dockVisible)),
-                contentAlignment = Alignment.TopCenter
             ) {
-                FloatingBottomBar(
-                    modifier = Modifier,
-                    selectedIndex = selectedIndex.coerceIn(0, labels.lastIndex),
-                    onSelected = onTabClick,
-                    backdrop = backdrop,
-                    tabsCount = labels.size,
-                    isBlurEnabled = isBlurEnabled,
-                    barWidth = with(density) { tabsRect.width().toDp() },
-                    barHeight = with(density) { tabsRect.height().toDp() }
-                ) { activate ->
-                    labels.forEachIndexed { index, label ->
-                        FloatingBottomBarItem(
-                            selected = index == selectedIndex,
-                            onClick = { activate(index) },
-                            // KernelSU 的 BottomBarMiuix 就是给每个 item 定 76dp 最小宽度，
-                            // FloatingBottomBar 用的是 width(IntrinsicSize.Min)，没有这个下限
-                            // 胶囊会被内容挤到很窄，看起来像「玻璃没出来」。
-                            modifier = Modifier
-                        ) {
-                            LineTabIcon(index = index, color = LocalContentColor.current)
-                            // 关掉文字标签时不再塞一个空 Text —— 空 Text 照样占 14sp 的行高，
-                            // 图标会被顶在上面。没有这个兄弟节点，Column 自然把图标居中。
-                            if (label.isNotEmpty()) {
-                                Text(
-                                    text = label,
-                                    fontSize = 11.sp,
-                                    lineHeight = 14.sp,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Visible
-                                )
+                Box(contentAlignment = Alignment.TopCenter) {
+                    FloatingBottomBar(
+                        modifier = Modifier,
+                        selectedIndex = selectedIndex.coerceIn(0, labels.lastIndex),
+                        onSelected = onTabClick,
+                        backdrop = backdrop,
+                        tabsCount = labels.size,
+                        isBlurEnabled = isBlurEnabled,
+                        barWidth = with(density) { tabsRect.width().toDp() },
+                        barHeight = with(density) { tabsRect.height().toDp() }
+                    ) { activate ->
+                        labels.forEachIndexed { index, label ->
+                            FloatingBottomBarItem(
+                                selected = index == selectedIndex,
+                                onClick = { activate(index) },
+                                modifier = Modifier
+                            ) {
+                                LineTabIcon(index = index, color = LocalContentColor.current)
+                                if (label.isNotEmpty()) {
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        lineHeight = 14.sp,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Visible
+                                    )
+                                }
                             }
                         }
                     }
@@ -501,20 +497,25 @@ private fun GlassSurface(
         }
 
         if (plusRect.width() > 0 && plusRect.height() > 0) {
-            Box(
+            CapsuleVisibilityLayer(
+                dockVisible = dockVisible,
                 modifier = Modifier
                     .offset(with(density) { plusRect.left.toDp() }, with(density) { plusRect.top.toDp() })
                     .size(
                         with(density) { plusRect.width().toDp() },
                         with(density) { plusRect.height().toDp() }
                     )
-                    .then(CapsuleVisibilityModifier(dockVisible))
-                    .clip(CircleShape)
-                    .background(Color(0xFFFE2C55))
-                    .clickable(onClick = onPlusClick),
-                contentAlignment = Alignment.Center
             ) {
-                Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                        .background(Color(0xFFFE2C55))
+                        .clickable(onClick = onPlusClick),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
+                }
             }
         }
     }
@@ -526,18 +527,28 @@ private fun GlassSurface(
  * 避免整屏覆盖层在状态切换帧出现黑闪。
  */
 @Composable
-private fun CapsuleVisibilityModifier(dockVisible: State<Boolean>): Modifier {
+private fun CapsuleVisibilityLayer(
+    dockVisible: State<Boolean>,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    // State is read in this emitted child composable. A visibility change therefore
+    // invalidates only this capsule layer, never the full-screen GlassSurface/backdrop.
     val progress = animateFloatAsState(
         targetValue = if (dockVisible.value) 1f else 0f,
         animationSpec = tween(durationMillis = 60, easing = FastOutSlowInEasing),
         label = "dockCapsuleVisibility"
     ).value
     val density = LocalDensity.current
-    return Modifier.graphicsLayer {
-        alpha = progress
-        scaleX = 0.985f + 0.015f * progress
-        scaleY = 0.985f + 0.015f * progress
-        translationY = with(density) { 6.dp.toPx() } * (1f - progress)
+    Box(
+        modifier = modifier.graphicsLayer {
+            alpha = progress
+            scaleX = 0.985f + 0.015f * progress
+            scaleY = 0.985f + 0.015f * progress
+            translationY = with(density) { 6.dp.toPx() } * (1f - progress)
+        }
+    ) {
+        content()
     }
 }
 
