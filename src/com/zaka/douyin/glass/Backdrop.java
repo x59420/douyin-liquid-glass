@@ -45,6 +45,8 @@ public final class Backdrop {
     private static final long UI_GAP_MS = 80L;
     /** 视频层帧多久算过期。过期就不参与合成 —— 换页后残留的旧画面就是「别的界面」。 */
     private static final long LAYER_MAX_AGE_MS = 500L;
+    /** 最多采集的可见视频层数；仍只收集与 Dock 取景区域相交的层，避免无界占用位图。 */
+    private static final int MAX_VIDEO_LAYERS = 8;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -539,7 +541,7 @@ public final class Backdrop {
     }
 
     private void collect(View v, List<View> outList, int depth) {
-        if (v == null || depth > 40 || outList.size() >= 3) return;
+        if (v == null || depth > 40 || outList.size() >= MAX_VIDEO_LAYERS) return;
         if (v.getVisibility() != View.VISIBLE || !v.isShown()) return;
         if (v instanceof SurfaceView || v instanceof TextureView) {
             if (overlapsRegion(v)) outList.add(v);
