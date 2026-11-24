@@ -977,9 +977,7 @@ final class DockController {
                     }
                     if (now - lastProfileScanAt[0] >= 240L) {
                         lastProfileScanAt[0] = now;
-                        // 底部「我」Tab 已选中时属于本人主页，不能被资料页特征误判成他人主页。
-                        otherProfileState[0] = Shield.isOtherProfilePage(content)
-                                && !Finder.isOwnProfileTabSelected(tabTargets[0]);
+                        otherProfileState[0] = Shield.isOtherProfilePage(content);
                     }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
@@ -1042,8 +1040,11 @@ final class DockController {
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
                             || dockMissingTicks[0] >= 12
                             || hostHiddenTicks[0] >= 25;
+                    // 每帧读取当前选中的底部 Tab，避免资料页扫描缓存让本人「我」页误隐藏 Dock。
+                    boolean ownProfileTabSelected = Finder.isOwnProfileTabSelected(tabTargets[0]);
+                    boolean otherProfile = otherProfileState[0] && !ownProfileTabSelected;
                     boolean hidden = speedPlayback || longPress || clearScreen
-                            || structuralHidden || otherProfileState[0];
+                            || structuralHidden || otherProfile;
                     if (hidden) {
                         revealTicks[0] = 0;
                         // 手势类（倍速 / 清屏）抬手就恢复；结构类（覆盖页 / 浮层 / 底栏脱离）
@@ -1052,7 +1053,7 @@ final class DockController {
                         String why = hideReason(speedPlayback, longPress, clearScreen,
                                 commentOpen[0], coveredTicks[0], expandedTicks[0],
                                 dockMissingTicks[0], hostHiddenTicks[0]);
-                        if (otherProfileState[0]) why += " 他人主页";
+                        if (otherProfile) why += " 他人主页";
                         if (!why.equals(lastHideReason[0])) {
                             lastHideReason[0] = why;
                             Dydock.log("底栏隐藏：" + why);
