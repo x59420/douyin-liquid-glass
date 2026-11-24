@@ -474,13 +474,6 @@ final class Shield {
     }
 
     /**
-     * 这是不是「评论区面板」。
-     *
-     * 两个条件一起满足才算：高度是半屏左右（评论区最多铺到 78% 页高）＋ 里面确实有评论特征
-     * （类名带 comment，或者有「写评论 / 说点什么 / 条评论」这类文案 / 评论输入框）。
-     * 整屏页面一律不算，否则别人主页、详情页会被一起排掉。
-     */
-    /**
      * 判断评论面板是否仍有足够大的可见区域。
      *
      * rectOf() 只返回 View 的布局矩形；评论面板向下拖动关闭时，布局矩形可能仍在屏幕内，
@@ -508,6 +501,10 @@ final class Shield {
                 && panelVisible.bottom >= pageVisible.bottom - pageVisible.height() * 0.45f;
     }
 
+    /**
+     * 这是不是「评论区面板」：只接受评论容器，并且它当前仍有足够大的可见区域。
+     * 整屏页面一律不算，否则别人主页、详情页会被一起排掉。
+     */
     private static boolean isCommentSheet(View view, Rect bounds, Rect page, String className) {
         if (view == null || page.height() <= 0) return false;
         if (bounds.height() > page.height() * 0.78f) return false;
