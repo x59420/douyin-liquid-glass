@@ -231,6 +231,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
     private static void installDock(Activity act) {
         try {
             makeNavigationAreaTransparent(act);
+            NativeUiTransparency.start(act);
             DockController.onActivity(act);
             // 从聊天框 / 会话页退回来时重新量一次底栏位置，Dock 不会偏到左边。
             DockController.onHostResume(act);
