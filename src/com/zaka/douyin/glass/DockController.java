@@ -718,6 +718,8 @@ final class DockController {
 
         ViewGroup dock = Finder.findDock(content);
         if (dock == null) return false;
+        Dydock.log("底栏:已识别原生导航目标 " + dock.getClass().getName()
+                + "，直接子项=" + dock.getChildCount());
 
         List<View> items = Finder.tabItems(dock);
         if (items.size() < 4) {

@@ -293,6 +293,8 @@ final class DockPrefs {
             editor.putBoolean(KEY_NAVIGATION_TRANSPARENT, remote.getBoolean(KEY_NAVIGATION_TRANSPARENT, true));
             editor.putBoolean(KEY_HIDE_NAVIGATION, remote.getBoolean(KEY_HIDE_NAVIGATION, false));
             editor.putBoolean(KEY_HIDE_STATUS, remote.getBoolean(KEY_HIDE_STATUS, false));
+            editor.putBoolean(KEY_FOLLOW_NATIVE_DOCK_VISIBILITY,
+                    remote.getBoolean(KEY_FOLLOW_NATIVE_DOCK_VISIBILITY, true));
             editor.putLong(KEY_REV, remoteRev);
             editor.apply();
             Dydock.setVerbose(remote.getBoolean(KEY_LOG, true));
