@@ -660,10 +660,7 @@ final class Shield {
      * 忽略仍留在视图树、但已经被父容器裁出屏幕的旧页面节点。
      * 页面切换动画结束后，旧主页节点可能仍保持 VISIBLE，造成资料页特征残留。
      */
-    private static boolean isActuallyVisible(View view) {
-        if (view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f || !view.isShown()) {
-            return false;
-        }
+    private static boolean isVisibleInWindow(View view) {
         Rect visible = new Rect();
         return view.getGlobalVisibleRect(visible) && !visible.isEmpty();
     }
@@ -671,7 +668,8 @@ final class Shield {
     private static boolean containsVisibleMarker(View view, String marker,
                                                   int depth, int[] budget) {
         if (view == null || depth > 28 || budget[0]-- <= 0
-                || !isActuallyVisible(view)) return false;
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f
+                || !view.isShown()) return false;
         String value = "";
         if (view instanceof TextView) {
             CharSequence text = ((TextView) view).getText();
@@ -679,7 +677,7 @@ final class Shield {
         }
         CharSequence desc = view.getContentDescription();
         if (desc != null) value += " " + desc;
-        if (value.contains(marker)) return true;
+        if (value.contains(marker) && isVisibleInWindow(view)) return true;
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
@@ -692,7 +690,8 @@ final class Shield {
     private static void collectProfileMarkers(View view, int depth,
                                               String[] markers, boolean[] found, int[] budget) {
         if (view == null || depth > 22 || budget[0]-- <= 0
-                || !isActuallyVisible(view)) return;
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f
+                || !view.isShown()) return;
         String value = "";
         if (view instanceof TextView) {
             CharSequence text = ((TextView) view).getText();
@@ -700,8 +699,14 @@ final class Shield {
         }
         CharSequence desc = view.getContentDescription();
         if (desc != null) value += " " + desc;
+        boolean markerMatch = false;
         for (int i = 0; i < markers.length; i++) {
-            if (value.contains(markers[i])) found[i] = true;
+            if (value.contains(markers[i])) markerMatch = true;
+        }
+        if (markerMatch && isVisibleInWindow(view)) {
+            for (int i = 0; i < markers.length; i++) {
+                if (value.contains(markers[i])) found[i] = true;
+            }
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
