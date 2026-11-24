@@ -55,6 +55,8 @@ public final class Backdrop {
     private static final class Layer {
         View view;
         Bitmap frame;
+        /** PixelCopy 正在写入的独立缓冲，避免 compose 同时读取同一张 Bitmap。 */
+        Bitmap pendingFrame;
         Bitmap textureFull;
         Rect dst = new Rect();
         boolean pending;
@@ -639,8 +641,11 @@ public final class Backdrop {
             if (l.view instanceof TextureView) {
                 TextureView tv = (TextureView) l.view;
                 if (!tv.isAvailable()) return;
-                int fullW = Math.max(4, Math.round(tv.getWidth() / downscaleFactor));
-                int fullH = Math.max(4, Math.round(tv.getHeight() / downscaleFactor));
+                // TextureView 只能整幅 getBitmap；中间图降到最多 1/3 尺寸，
+                // 最终仍裁成 Dock 取景分辨率，避免 1:1 全屏中间图占用大量内存。
+                float textureScale = Math.max(3f, downscaleFactor);
+                int fullW = Math.max(4, Math.round(tv.getWidth() / textureScale));
+                int fullH = Math.max(4, Math.round(tv.getHeight() / textureScale));
                 if (l.textureFull == null || l.textureFull.isRecycled()
                         || l.textureFull.getWidth() != fullW
                         || l.textureFull.getHeight() != fullH) {
@@ -688,10 +693,10 @@ public final class Backdrop {
 
             int w = Math.max(4, l.dst.width());
             int h = Math.max(4, l.dst.height());
-            if (l.frame == null || l.frame.isRecycled()
-                    || l.frame.getWidth() != w || l.frame.getHeight() != h) {
-                l.frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-                l.valid = false;
+            if (l.pendingFrame == null || l.pendingFrame.isRecycled()
+                    || l.pendingFrame.getWidth() != w || l.pendingFrame.getHeight() != h) {
+                l.pendingFrame = recycle(l.pendingFrame);
+                l.pendingFrame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             }
 
             // 只抓「底栏那一条」在视频里的那一块
@@ -713,21 +718,31 @@ public final class Backdrop {
             lastRequestAt = nowMs;
             inflight++;
             l.pending = true;
-            PixelCopy.request(sv, inter, l.frame, new PixelCopy.OnPixelCopyFinishedListener() {
+            final Bitmap requestedFrame = l.pendingFrame;
+            l.pending = true;
+            PixelCopy.request(sv, inter, requestedFrame, new PixelCopy.OnPixelCopyFinishedListener() {
                 @Override
                 public void onPixelCopyFinished(int result) {
                     l.pending = false;
+                    if (l.pendingFrame == requestedFrame) l.pendingFrame = null;
                     synchronized (Backdrop.this) {
                         if (inflight > 0) inflight--;
                     }
                     // 页面切换/重扫后旧 Layer 可能已被释放；忽略迟到回调，避免旧帧刷新新页面。
-                    if (!isCurrentLayer(l)) return;
+                    if (!isCurrentLayer(l)) {
+                        recycle(requestedFrame);
+                        return;
+                    }
                     if (result == PixelCopy.SUCCESS) {
+                        Bitmap previous = l.frame;
+                        l.frame = requestedFrame;
                         l.valid = true;
                         l.stamp = SystemClock.uptimeMillis();
+                        recycle(previous);
                         noteFrameLuma(l);
                         onVideoFrame();
                     } else {
+                        recycle(requestedFrame);
                         l.valid = false;
                         Dydock.warnOnce("pixelcopy", "抓视频画面失败 code=" + result
                                 + "（画面受保护时玻璃退回内容树采样）");
@@ -741,6 +756,7 @@ public final class Backdrop {
                     if (inflight > 0) inflight--;
                 }
             }
+            l.pendingFrame = recycle(l.pendingFrame);
             l.valid = false;
             Dydock.warnOnce("pixelcopy-err", "抓视频画面异常: " + t);
         }
@@ -770,9 +786,16 @@ public final class Backdrop {
 
     private void releaseLayers() {
         for (Layer l : layers) {
-            if (l.frame != null && !l.frame.isRecycled() && !l.pending) {
+            if (l.frame != null && !l.frame.isRecycled()) {
                 try {
                     l.frame.recycle();
+                } catch (Throwable ignored) {
+                }
+            }
+            // pendingFrame 正被 PixelCopy 写入时不能 recycle；迟到回调会负责释放它。
+            if (!l.pending && l.pendingFrame != null && !l.pendingFrame.isRecycled()) {
+                try {
+                    l.pendingFrame.recycle();
                 } catch (Throwable ignored) {
                 }
             }
@@ -783,6 +806,7 @@ public final class Backdrop {
                 }
             }
             l.frame = null;
+            if (!l.pending) l.pendingFrame = null;
             l.textureFull = null;
         }
         layers.clear();
