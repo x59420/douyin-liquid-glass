@@ -727,8 +727,8 @@ final class DockController {
         // Miuix 自己在 GPU 上做 4dp 模糊，这里只决定采样分辨率。
         backdrop.setSampleScale();
 
-        // 点击「消息」主 Tab 后，给抖音切页动画留出稳定窗口，避免底栏暂时脱树时 Dock 闪一下。
-        final long[] messagesClickUntil = new long[]{0L};
+        // 点击任一一级 Tab 后，给抖音切页动画留出稳定窗口；二级页面进入不会触发这段宽限。
+        final long[] tabClickUntil = new long[]{0L};
         // 宿主节点被换掉时，点击回调里取到的永远是最新那批导航项。
         final List<View>[] tabTargets = new List[]{initialTabs};
         final View[] plusTarget = new View[]{plus};
@@ -746,8 +746,8 @@ final class DockController {
                             List<View> targets = tabTargets[0];
                             View target = latestTab(act, targets, plusTarget[0], index);
                             if (target != null) {
-                                if (index == 2) {
-                                    messagesClickUntil[0] = android.os.SystemClock.uptimeMillis() + 750L;
+                                if (index >= 0 && index < 4) {
+                                    tabClickUntil[0] = android.os.SystemClock.uptimeMillis() + 750L;
                                 }
                                 clickHostView(target);
                             }
@@ -1140,20 +1140,17 @@ final class DockController {
                     boolean friendsTabSelected = Finder.isFriendsTabSelected(tabTargets[0]);
                     boolean mainTabSelected = ownProfileTabSelected || messagesTabSelected
                             || homeTabSelected || friendsTabSelected;
-                    // 任一一级导航页已明确选中，说明已经离开他人主页。
-                    // 清掉旧的资料页状态，避免返回首页后仍被上一页的状态锁住。
-                    if (mainTabSelected && otherProfileState[0]) {
-                        otherProfileState[0] = false;
-                        lastOtherProfileHitAt[0] = 0L;
-                    }
                     boolean commentReturnGrace = commentClosedAt[0] != 0L
                             && now - commentClosedAt[0] < 1000L;
-                    boolean messagesClickGrace = now < messagesClickUntil[0];
-                    // 一级导航页切换时宿主会短暂重排覆盖层/底栏；这些结构信号不能让 Dock 闪烁。
-                    // 会话输入框和评论面板是明确的二级页面，仍然优先隐藏。
+                    boolean tabClickGrace = now < tabClickUntil[0];
+                    // Tab 选中只说明导航栏当前高亮哪一项，不代表仍处于一级页面：
+                    // 进入聊天详情/他人主页时，抖音通常仍保留原 Tab 的选中态。
+                    // 因此页面结构信号必须在所有 Tab 下生效；只有真实点击一级 Tab 后，
+                    // 才给 750ms 转场宽限，避免宿主重建底栏时出现短暂闪烁。
+                    // 评论面板关闭宽限只屏蔽结构信号，不屏蔽明确的评论打开状态。
                     boolean structuralHidden = commentOpen[0]
-                            || (chatComposerState[0] && !mainTabSelected && !commentReturnGrace)
-                            || (!mainTabSelected && !messagesClickGrace && !commentReturnGrace
+                            || (chatComposerState[0] && !commentReturnGrace)
+                            || (!tabClickGrace && !commentReturnGrace
                             && (dockMissingTicks[0] >= 12
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS));
