@@ -257,33 +257,20 @@ internal fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
 
             SectionTitle("外观")
-            GlassCard(scene) {
-                ModeRow(
-                    themeMode = state.themeMode.value,
-                    onThemeChange = state::setThemeMode,
-                )
-                Divider()
-                SwitchRow(
-                    title = "启用玻璃 Dock",
-                    subtitle = "关掉就完全用抖音原生底栏",
-                    checked = state.enabled.value,
-                    onChange = state::setEnabled,
-                )
-                Divider()
-                SwitchRow(
-                    title = "显示「＋」",
-                    subtitle = "右边那颗独立的小圆",
-                    checked = state.showPlus.value,
-                    onChange = state::setShowPlus,
-                )
-                Divider()
-                SwitchRow(
-                    title = "显示文字标签",
-                    subtitle = "关掉只留图标，图标会自动居中",
-                    checked = state.showLabels.value,
-                    onChange = state::setShowLabels,
-                )
-            }
+            var modeMenuOpen by remember { mutableStateOf(false) }
+            ModeCard(
+                scene = scene,
+                themeMode = state.themeMode.value,
+                onThemeChange = state::setThemeMode,
+                menuOpen = modeMenuOpen,
+                onMenuOpenChange = { modeMenuOpen = it },
+                enabled = state.enabled.value,
+                onEnabledChange = state::setEnabled,
+                showPlus = state.showPlus.value,
+                onShowPlusChange = state::setShowPlus,
+                showLabels = state.showLabels.value,
+                onShowLabelsChange = state::setShowLabels,
+            )
 
             Spacer(Modifier.height(18.dp))
             SectionTitle("尺寸")
@@ -389,24 +376,32 @@ private fun TopBar(
 }
 
 @Composable
-private fun ModeRow(
+private fun ModeCard(
+    scene: Backdrop,
     themeMode: Int,
     onThemeChange: (Int) -> Unit,
+    menuOpen: Boolean,
+    onMenuOpenChange: (Boolean) -> Unit,
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    showPlus: Boolean,
+    onShowPlusChange: (Boolean) -> Unit,
+    showLabels: Boolean,
+    onShowLabelsChange: (Boolean) -> Unit,
 ) {
+    val shape: Shape = GlassCardShape
     val palette = LocalSettingsPalette.current
-    var menuOpen by remember { mutableStateOf(false) }
     val modes = listOf("跟随系统", "浅色", "深色")
-    Column(
+    Box(
         Modifier.fillMaxWidth()
-            .padding(vertical = 9.dp)
-            .zIndex(if (menuOpen) 2f else 0f)
+            .clip(shape)
+            .glassSurface(scene, shape)
+            .border(1.dp, palette.border, shape)
     ) {
-        // 菜单放在 matchParentSize 的覆盖层里绘制，不创建独立 Popup 窗口，
-        // 也不参与 ModeRow 测量，因此不会推动后续设置项。
-        Box(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
             ) {
                 Label("模式", palette.primary, 15.sp, modifier = Modifier.weight(1f))
                 Box(
@@ -417,7 +412,7 @@ private fun ModeRow(
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
-                        ) { menuOpen = !menuOpen }
+                        ) { onMenuOpenChange(!menuOpen) }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -427,39 +422,69 @@ private fun ModeRow(
                     }
                 }
             }
-            if (menuOpen) {
-                Box(Modifier.matchParentSize()) {
-                    Column(
-                        Modifier.align(Alignment.TopEnd)
-                            .offset(y = 48.dp)
-                            .width(148.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(palette.panel.copy(alpha = 0.97f))
-                            .border(1.dp, palette.border, RoundedCornerShape(20.dp))
-                            .padding(6.dp)
-                    ) {
-                        modes.forEachIndexed { index, label ->
-                            val selected = themeMode == index
-                            Box(
-                                Modifier.fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) {
-                                        onThemeChange(index)
-                                        menuOpen = false
-                                    }
-                                    .padding(horizontal = 13.dp, vertical = 11.dp)
-                            ) {
-                                Label(
-                                    label,
-                                    if (selected) palette.selectedText else palette.primary,
-                                    13.sp,
-                                    weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                )
-                            }
+            Divider()
+            SwitchRow(
+                title = "启用玻璃 Dock",
+                subtitle = "关掉就完全用抖音原生底栏",
+                checked = enabled,
+                onChange = onEnabledChange,
+            )
+            Divider()
+            SwitchRow(
+                title = "显示「＋」",
+                subtitle = "右边那颗独立的小圆",
+                checked = showPlus,
+                onChange = onShowPlusChange,
+            )
+            Divider()
+            SwitchRow(
+                title = "显示文字标签",
+                subtitle = "关掉只留图标，图标会自动居中",
+                checked = showLabels,
+                onChange = onShowLabelsChange,
+            )
+        }
+        if (menuOpen) {
+            // 菜单挂在整张卡片的覆盖层中，父级命中区域足够大；
+            // 不使用独立 Popup，也不参与卡片内容测量。
+            Box(Modifier.matchParentSize()) {
+                Box(
+                    Modifier.matchParentSize().clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onMenuOpenChange(false) }
+                )
+                Column(
+                    Modifier.align(Alignment.TopEnd)
+                        .padding(end = 16.dp)
+                        .offset(y = 56.dp)
+                        .width(148.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(palette.panel.copy(alpha = 0.97f))
+                        .border(1.dp, palette.border, RoundedCornerShape(20.dp))
+                        .padding(6.dp)
+                ) {
+                    modes.forEachIndexed { index, label ->
+                        val selected = themeMode == index
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                ) {
+                                    onThemeChange(index)
+                                    onMenuOpenChange(false)
+                                }
+                                .padding(horizontal = 13.dp, vertical = 11.dp)
+                        ) {
+                            Label(
+                                label,
+                                if (selected) palette.selectedText else palette.primary,
+                                13.sp,
+                                weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                            )
                         }
                     }
                 }
