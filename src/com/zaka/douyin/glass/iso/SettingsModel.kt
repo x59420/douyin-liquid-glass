@@ -22,6 +22,14 @@ internal interface SettingsModel {
     val nativeControlsEnabled: MutableState<Boolean>
     val nativeControlsPlayAlpha: MutableState<Int>
     val nativeControlsPauseAlpha: MutableState<Int>
+    val nativeBottomEnabled: MutableState<Boolean>
+    val nativeBottomPlayAlpha: MutableState<Int>
+    val nativeBottomPauseAlpha: MutableState<Int>
+    val homeTopTransparent: MutableState<Boolean>
+    val homeBottomTransparent: MutableState<Boolean>
+    val navigationTransparent: MutableState<Boolean>
+    val hideNavigationBar: MutableState<Boolean>
+    val hideStatusBar: MutableState<Boolean>
 
     fun setEnabled(value: Boolean)
     fun setShowPlus(value: Boolean)
@@ -38,5 +46,13 @@ internal interface SettingsModel {
     fun setNativeControlsEnabled(value: Boolean)
     fun setNativeControlsPlayAlpha(value: Int)
     fun setNativeControlsPauseAlpha(value: Int)
+    fun setNativeBottomEnabled(value: Boolean)
+    fun setNativeBottomPlayAlpha(value: Int)
+    fun setNativeBottomPauseAlpha(value: Int)
+    fun setHomeTopTransparent(value: Boolean)
+    fun setHomeBottomTransparent(value: Boolean)
+    fun setNavigationTransparent(value: Boolean)
+    fun setHideNavigationBar(value: Boolean)
+    fun setHideStatusBar(value: Boolean)
     fun reset()
 }
