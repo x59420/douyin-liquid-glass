@@ -42,7 +42,7 @@ public final class Backdrop {
     /** 视频层重新扫描的间隔 */
     private static final long RESCAN_MS = 1500L;
     /** 两次内容树重绘之间的最小间隔（约 10fps）。玻璃后面还压着一层 4dp 模糊，够用且不抢帧。 */
-    private static final long UI_GAP_MS = 80L;
+    private static final long UI_GAP_MS = 33L;
     /** 视频层帧多久算过期。过期就不参与合成 —— 换页后残留的旧画面就是「别的界面」。 */
     private static final long LAYER_MAX_AGE_MS = 500L;
 
@@ -76,6 +76,11 @@ public final class Backdrop {
     /** 同一时刻只允许一个 PixelCopy 在飞：30fps 叠多层视频层会堆几十个请求，
      *  渲染线程被压住之后宿主会直接崩，这里统一收口。 */
     private int inflight;
+    /** PixelCopy 多层时轮转起点，避免固定顺序长期饿死后面的 SurfaceView。 */
+    private int nextLayerIndex;
+    /** releaseLayers 后使旧 PixelCopy 回调失效。 */
+    private long generation;
+    private boolean released;
     private long lastRequestAt;
     private long frameStamp;
     private int lastLoggedLayerCount = -1;
@@ -261,7 +266,7 @@ public final class Backdrop {
      * 静态页面（比如个人页）不会每秒画十遍树。
      */
     void pump() {
-        if (content == null || region.isEmpty()) return;
+        if (released || content == null || region.isEmpty()) return;
         attachPreDraw();
         int drawn = drawCount.get();
         boolean changed = drawn != lastPumpedDrawCount;
@@ -281,6 +286,7 @@ public final class Backdrop {
 
     /** 重采一帧：内容树 + 视频层。开销按区域算，别每帧都调（走 pump）。 */
     boolean capture() {
+        if (released) return false;
         View c = content;
         if (c == null || region.isEmpty()) {
             note = "没根视图或没区域";
@@ -351,8 +357,11 @@ public final class Backdrop {
         }
 
         // 3. 请求新帧
-        for (Layer l : layers) {
-            if (!l.pending) requestFrame(l);
+        int layerCount = layers.size();
+        for (int offset = 0; offset < layerCount; offset++) {
+            int index = (nextLayerIndex + offset) % layerCount;
+            Layer layer = layers.get(index);
+            if (!layer.pending) requestFrame(layer);
         }
 
         // 4. UI 层里视频所在的那块挖空，否则视频会被容器自己的深色底盖住 —— 就是黑块
@@ -588,8 +597,11 @@ public final class Backdrop {
             if (l.view instanceof TextureView) {
                 TextureView tv = (TextureView) l.view;
                 if (!tv.isAvailable()) return;
-                int fullW = Math.max(4, Math.round(tv.getWidth() / downscaleFactor));
-                int fullH = Math.max(4, Math.round(tv.getHeight() / downscaleFactor));
+                // TextureView.getBitmap() 会按目标 Bitmap 尺寸采样；先以半分辨率
+                // 获取整层，再裁 Dock 区域，避免为窄胶囊生成整屏 1:1 位图。
+                float textureScale = downscaleFactor * 2f;
+                int fullW = Math.max(4, Math.round(tv.getWidth() / textureScale));
+                int fullH = Math.max(4, Math.round(tv.getHeight() / textureScale));
                 if (l.textureFull == null || l.textureFull.isRecycled()
                         || l.textureFull.getWidth() != fullW
                         || l.textureFull.getHeight() != fullH) {
@@ -662,12 +674,22 @@ public final class Backdrop {
             lastRequestAt = nowMs;
             inflight++;
             l.pending = true;
-            PixelCopy.request(sv, inter, l.frame, new PixelCopy.OnPixelCopyFinishedListener() {
+            final long requestGeneration = generation;
+            final Bitmap targetFrame = l.frame;
+            int layerIndex = layers.indexOf(l);
+            if (layerIndex >= 0 && !layers.isEmpty()) {
+                nextLayerIndex = (layerIndex + 1) % layers.size();
+            }
+            PixelCopy.request(sv, inter, targetFrame, new PixelCopy.OnPixelCopyFinishedListener() {
                 @Override
                 public void onPixelCopyFinished(int result) {
                     l.pending = false;
                     synchronized (Backdrop.this) {
                         if (inflight > 0) inflight--;
+                    }
+                    if (released || requestGeneration != generation || !layers.contains(l)) {
+                        recycle(targetFrame);
+                        return;
                     }
                     if (result == PixelCopy.SUCCESS) {
                         l.valid = true;
@@ -675,9 +697,9 @@ public final class Backdrop {
                         noteFrameLuma(l);
                         onVideoFrame();
                     } else {
-                        l.valid = false;
+                        // 短暂失败保留上一张有效帧；超过 MAX_AGE 后由 compose() 淘汰。
                         Dydock.warnOnce("pixelcopy", "抓视频画面失败 code=" + result
-                                + "（画面受保护时玻璃退回内容树采样）");
+                                + "（短暂保留上一帧，过期后回退内容树）");
                     }
                 }
             }, main);
@@ -688,7 +710,7 @@ public final class Backdrop {
                     if (inflight > 0) inflight--;
                 }
             }
-            l.valid = false;
+            // 请求异常时保留上一张有效帧，让它按 LAYER_MAX_AGE_MS 自然过期。
             Dydock.warnOnce("pixelcopy-err", "抓视频画面异常: " + t);
         }
     }
@@ -716,6 +738,7 @@ public final class Backdrop {
     // ------------------------------------------------------------------ 释放
 
     private void releaseLayers() {
+        generation++;
         for (Layer l : layers) {
             if (l.frame != null && !l.frame.isRecycled() && !l.pending) {
                 try {
@@ -754,6 +777,9 @@ public final class Backdrop {
     }
 
     void release() {
+        if (released) return;
+        released = true;
+        generation++;
         main.removeCallbacksAndMessages(null);
         detachPreDraw();
         releaseLayers();
