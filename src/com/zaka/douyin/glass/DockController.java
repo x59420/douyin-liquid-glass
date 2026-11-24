@@ -455,7 +455,9 @@ final class DockController {
                     LONG_PRESS_TARGETS.remove(act);
                     synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
                 } else {
-                    return pageHasVideo;
+                    // 目标已在 ACTION_DOWN 时确认是视频长按区域；按住期间不再依赖
+                    // 周期性视频树扫描，避免宿主临时重建 Surface 时 Dock 闪回。
+                    return true;
                 }
             }
         }
