@@ -24,6 +24,7 @@ final class DockPrefs {
     private static final String KEY_ENTRY_OFFSET = "entry_top_offset_dp";
     /** 日志开关：关掉之后只留警告/错误，LSPosed 里不再刷日常流程。 */
     private static final String KEY_LOG = "verbose_log";
+    private static final String KEY_THEME_MODE = "theme_mode";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -116,6 +117,15 @@ final class DockPrefs {
     /** 日志开关（默认开）：关掉只保留警告/错误。 */
     static boolean logEnabled(Context context) {
         return readBool(context, KEY_LOG, true);
+    }
+
+    /** 0=跟随系统，1=浅色，2=深色。 */
+    static int themeMode(Context context) {
+        return clamp(readInt(context, KEY_THEME_MODE, 0), 0, 2);
+    }
+
+    static void setThemeMode(Context context, int value) {
+        writeInt(context, KEY_THEME_MODE, clamp(value, 0, 2));
     }
 
     static void setLogEnabled(Context context, boolean value) {
