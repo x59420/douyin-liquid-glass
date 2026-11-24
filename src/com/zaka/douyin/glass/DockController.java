@@ -1312,6 +1312,7 @@ final class DockController {
      * 底栏那一带的坐标用缓存——原生底栏已经被设成 GONE，现场量出来可能是 0。
      */
     static void applySettingsToAll() {
+        NativeUiTransparency.applyAll();
         List<Activity> acts;
         synchronized (OVERLAYS) {
             acts = new ArrayList<Activity>(OVERLAYS.keySet());
