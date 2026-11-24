@@ -341,7 +341,7 @@ final class Shield {
 
     private static boolean hasSpeedMarker(View view, int depth, int[] budget) {
         if (view == null || depth > 14 || budget[0]-- <= 0
-                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
+                || !isActuallyVisible(view)) return false;
         String value = "";
         if (view instanceof TextView) {
             CharSequence text = ((TextView) view).getText();
@@ -656,6 +656,18 @@ final class Shield {
         return strongIdentity && count >= 2;
     }
 
+    /**
+     * 忽略仍留在视图树、但已经被父容器裁出屏幕的旧页面节点。
+     * 页面切换动画结束后，旧主页节点可能仍保持 VISIBLE，造成资料页特征残留。
+     */
+    private static boolean isActuallyVisible(View view) {
+        if (view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f || !view.isShown()) {
+            return false;
+        }
+        Rect visible = new Rect();
+        return view.getGlobalVisibleRect(visible) && !visible.isEmpty();
+    }
+
     private static boolean containsVisibleMarker(View view, String marker,
                                                   int depth, int[] budget) {
         if (view == null || depth > 28 || budget[0]-- <= 0
@@ -680,7 +692,7 @@ final class Shield {
     private static void collectProfileMarkers(View view, int depth,
                                               String[] markers, boolean[] found, int[] budget) {
         if (view == null || depth > 22 || budget[0]-- <= 0
-                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return;
+                || !isActuallyVisible(view)) return;
         String value = "";
         if (view instanceof TextView) {
             CharSequence text = ((TextView) view).getText();
