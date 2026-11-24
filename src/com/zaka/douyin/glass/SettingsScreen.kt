@@ -92,6 +92,12 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
     override val sideMargin = mutableStateOf(DockPrefs.sideMarginDp(ctx))
     override val bottomGap = mutableStateOf(DockPrefs.bottomGapDp(ctx))
+    override val nativeTopEnabled = mutableStateOf(DockPrefs.nativeTopEnabled(ctx))
+    override val nativeTopPlayAlpha = mutableStateOf(DockPrefs.nativeTopPlayAlpha(ctx))
+    override val nativeTopPauseAlpha = mutableStateOf(DockPrefs.nativeTopPauseAlpha(ctx))
+    override val nativeControlsEnabled = mutableStateOf(DockPrefs.nativeControlsEnabled(ctx))
+    override val nativeControlsPlayAlpha = mutableStateOf(DockPrefs.nativeControlsPlayAlpha(ctx))
+    override val nativeControlsPauseAlpha = mutableStateOf(DockPrefs.nativeControlsPauseAlpha(ctx))
 
     override fun setEnabled(value: Boolean) {
         enabled.value = value
