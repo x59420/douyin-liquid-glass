@@ -507,7 +507,6 @@ private fun GlassSurface(
                         start = Offset(center.x, center.y - arm),
                         end = Offset(center.x, center.y + arm),
                         strokeWidth = stroke,
-                        cap = stroke,
                         cap = StrokeCap.Round
                     )
                 }
