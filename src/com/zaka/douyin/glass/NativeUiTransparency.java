@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.graphics.Rect;
 import android.view.View;
 import android.view.ViewGroup;
+import android.os.Handler;
+import android.os.Looper;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -24,8 +26,45 @@ final class NativeUiTransparency {
     private static final WeakHashMap<Activity, WeakHashMap<View, Float>> ORIGINAL =
             new WeakHashMap<Activity, WeakHashMap<View, Float>>();
     private static final int NODE_BUDGET = 2200;
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final WeakHashMap<Activity, Runnable> POLLERS = new WeakHashMap<Activity, Runnable>();
 
     private NativeUiTransparency() {}
+
+    static void start(final Activity activity) {
+        if (activity == null) return;
+        synchronized (POLLERS) {
+            if (POLLERS.containsKey(activity)) return;
+            Runnable poller = new Runnable() {
+                @Override public void run() {
+                    if (activity.isFinishing() || activity.isDestroyed()) {
+                        stop(activity);
+                        return;
+                    }
+                    try { apply(activity); } catch (Throwable ignored) {}
+                    MAIN.postDelayed(this, 650L);
+                }
+            };
+            POLLERS.put(activity, poller);
+            MAIN.post(poller);
+        }
+    }
+
+    static void stop(Activity activity) {
+        if (activity == null) return;
+        Runnable poller;
+        synchronized (POLLERS) { poller = POLLERS.remove(activity); }
+        if (poller != null) MAIN.removeCallbacks(poller);
+        restore(activity);
+    }
+
+    static void applyAll() {
+        List<Activity> activities;
+        synchronized (POLLERS) { activities = new ArrayList<Activity>(POLLERS.keySet()); }
+        for (Activity activity : activities) {
+            try { apply(activity); } catch (Throwable ignored) {}
+        }
+    }
 
     static void apply(Activity activity) {
         if (activity == null || activity.isFinishing() || activity.isDestroyed()) return;
