@@ -656,6 +656,39 @@ final class DockController {
         return sb.toString().trim();
     }
 
+    /**
+     * 只记录类名和容器层级，不读取页面文案、账号信息或用户内容。
+     * 层级最多取有限节点，且只在诊断状态变化时写入日志。
+     */
+    private static String diagnosticHierarchy(View dock, View content) {
+        StringBuilder out = new StringBuilder();
+        out.append("content=").append(content == null ? "null"
+                : content.getClass().getSimpleName());
+        if (content instanceof ViewGroup) {
+            ViewGroup root = (ViewGroup) content;
+            out.append("[").append(root.getChildCount()).append("]");
+            int count = Math.min(root.getChildCount(), 5);
+            for (int i = 0; i < count; i++) {
+                View child = root.getChildAt(i);
+                if (i > 0) out.append(",");
+                out.append(child == null ? "null" : child.getClass().getSimpleName())
+                        .append(child == null ? "" : child.getVisibility() == View.VISIBLE
+                                ? ":V" : ":H");
+            }
+        }
+        out.append(" dock=");
+        if (dock == null) return out.append("null").toString();
+        out.append(dock.getClass().getSimpleName());
+        View cur = dock;
+        for (int depth = 0; depth < 6; depth++) {
+            ViewParent parent = cur.getParent();
+            if (!(parent instanceof View)) break;
+            cur = (View) parent;
+            out.append("<").append(cur.getClass().getSimpleName());
+        }
+        return out.toString();
+    }
+
     private static boolean install(Activity act) {
         if (!DockPrefs.enabled(act)) {
             // 用户在设置里关掉了玻璃 Dock：原生底栏我们一概不碰。
@@ -852,6 +885,8 @@ final class DockController {
         final boolean[] chromeUntrusted = new boolean[]{false};
         /** 上一次隐藏是什么原因，只在变化时记一条日志，方便对着日志定位。 */
         final String[] lastHideReason = new String[]{""};
+        /** 仅在视图/显隐状态变化时记录诊断，避免每帧刷日志。 */
+        final String[] lastDiagnosticState = new String[]{""};
         final float densityPx = act.getResources().getDisplayMetrics().density;
 
         final Runnable refreshGeometry = new Runnable() {
@@ -1150,6 +1185,29 @@ final class DockController {
                     int needed = lastHideStructural[0]
                             ? STRUCTURAL_REVEAL_TICKS : FAST_REVEAL_TICKS;
                     boolean show = !hidden && revealTicks[0] >= needed;
+
+                    // 诊断模式：不参与显隐决策，只记录页面容器、Dock 父链和判据变化。
+                    // 用于确认「Tab 仍选中但实际已进入二级页面」以及原生容器重建的时序。
+                    String diagnosticState = "tab=" + ownProfileTabSelected + "/"
+                            + homeTabSelected + "/" + friendsTabSelected + "/"
+                            + messagesTabSelected
+                            + " main=" + mainTabSelected
+                            + " attached=" + dockAttached
+                            + " comment=" + commentOpen[0]
+                            + " chatInput=" + chatComposerState[0]
+                            + " otherProfile=" + otherProfileState[0]
+                            + " covered=" + coveredState[0] + ":" + coveredTicks[0]
+                            + " expanded=" + expandedState[0] + ":" + expandedTicks[0]
+                            + " missing=" + dockMissingTicks[0]
+                            + " speed=" + speedPlayback
+                            + " longPress=" + longPress
+                            + " clear=" + clearScreen
+                            + " hidden=" + hidden + " show=" + show
+                            + " path={" + diagnosticHierarchy(d, content) + "}";
+                    if (!diagnosticState.equals(lastDiagnosticState[0])) {
+                        lastDiagnosticState[0] = diagnosticState;
+                        Dydock.log("页面诊断: " + diagnosticState);
+                    }
 
                     // 位置只在「尺寸真的变了」的时候重算（旋转、导航模式变化、底栏重建）。
                     // 不跟位置走：抖音底栏滚动时会上下位移，跟着它算玻璃就会一路漂。
