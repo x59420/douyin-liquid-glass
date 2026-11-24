@@ -22,6 +22,9 @@ import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.PeopleAlt
 import androidx.compose.material.icons.rounded.PersonOutline
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.getValue
@@ -33,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -129,6 +133,7 @@ class IsoOverlay private constructor(
     private var labels by mutableStateOf<List<String>>(emptyList())
     private var icons by mutableStateOf<List<ImageBitmap?>>(emptyList())
     private var selectedIndex by mutableIntStateOf(0)
+    private var dockVisible by mutableStateOf(true)
 
     @Volatile
     private var disposed = false
@@ -192,6 +197,7 @@ class IsoOverlay private constructor(
                     labels = labels,
                     icons = icons,
                     selectedIndex = selectedIndex,
+                    dockVisible = dockVisible,
                     onTabClick = { index -> onTabClick.accept(index) },
                     onPlusClick = { onPlusClick.run() },
                     onLongPress = { onLongPress.run() },
@@ -220,6 +226,12 @@ class IsoOverlay private constructor(
         this.region = Rect(region)
         this.tabsRect = Rect(tabs)
         this.plusRect = Rect(plus)
+    }
+
+    /** 只驱动底部胶囊组的显隐，不移动全屏覆盖层或背景采样区域。 */
+    fun setDockVisible(visible: Boolean) {
+        if (disposed) return
+        dockVisible = visible
     }
 
     /** 宿主采来的底栏那一条真实画面。所有权交给这里，宿主每帧给的都是新副本。 */
@@ -383,6 +395,7 @@ private fun GlassSurface(
     labels: List<String>,
     icons: List<ImageBitmap?>,
     selectedIndex: Int,
+    dockVisible: Boolean,
     onTabClick: (Int) -> Unit,
     onPlusClick: () -> Unit,
     onLongPress: () -> Unit,
@@ -405,6 +418,11 @@ private fun GlassSurface(
         }
     })
     val density = LocalDensity.current
+    val dockProgress = animateFloatAsState(
+        targetValue = if (dockVisible) 1f else 0f,
+        animationSpec = tween(durationMillis = 60, easing = FastOutSlowInEasing),
+        label = "dockCapsuleVisibility"
+    ).value
     // 33 以下没有 RuntimeShader；个别机型/ROM 上 AGSL 编译会直接抛错，
     // 这里先探一次：探不通就走 Miuix 自带的「无模糊」降级，绝不让一帧着色器异常把整层玻璃干掉。
     val isBlurEnabled = remember {
@@ -432,6 +450,15 @@ private fun GlassSurface(
             )
         }
 
+        // 只动画底部胶囊与加号，不再移动/缩放全屏 IsoOverlay。
+        Box(
+            modifier = Modifier.fillMaxSize().graphicsLayer {
+                alpha = dockProgress
+                scaleX = 0.985f + 0.015f * dockProgress
+                scaleY = 0.985f + 0.015f * dockProgress
+                translationY = with(density) { 6.dp.toPx() } * (1f - dockProgress)
+            }
+        ) {
         if (labels.isNotEmpty() && tabsRect.width() > 0 && tabsRect.height() > 0) {
             Box(
                 modifier = Modifier
@@ -492,6 +519,7 @@ private fun GlassSurface(
             ) {
                 Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
             }
+        }
         }
     }
 }
