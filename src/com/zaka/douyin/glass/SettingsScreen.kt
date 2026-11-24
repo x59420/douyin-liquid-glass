@@ -362,7 +362,7 @@ private fun TopBar(version: String, onBack: () -> Unit) {
                     cap = StrokeCap.Round,
                 )
                 drawLine(
-                    color = Color.White,
+                    color = iconColor,
                     start = Offset(size.width * 0.28f, size.height * 0.5f),
                     end = Offset(size.width * 0.62f, size.height * 0.88f),
                     strokeWidth = w,
