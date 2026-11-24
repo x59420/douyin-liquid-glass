@@ -126,6 +126,9 @@ final class NativeUiTransparency {
 
             // 状态栏透明，状态图标明暗继续交给宿主原有主题处理。
             window.setStatusBarColor(Color.TRANSPARENT);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                window.setStatusBarContrastEnforced(false);
+            }
             if (DockPrefs.navigationTransparent(activity)) {
                 window.setNavigationBarColor(Color.TRANSPARENT);
                 if (android.os.Build.VERSION.SDK_INT >= 28) {
@@ -156,6 +159,9 @@ final class NativeUiTransparency {
             Window w = activity.getWindow();
             w.getDecorView().setSystemUiVisibility(original.flags);
             w.setStatusBarColor(original.statusColor);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                w.setStatusBarContrastEnforced(original.statusContrast);
+            }
             w.setNavigationBarColor(original.navigationColor);
             if (android.os.Build.VERSION.SDK_INT >= 28) {
                 w.setNavigationBarDividerColor(original.dividerColor);
@@ -273,10 +279,12 @@ final class NativeUiTransparency {
     }
     private static final class Background { final Drawable drawable; Background(Drawable d){drawable=d;} }
     private static final class Bars {
-        final int flags,statusColor,navigationColor,dividerColor; final boolean contrast;
+        final int flags,statusColor,navigationColor,dividerColor;
+        final boolean contrast,statusContrast;
         Bars(Window w,View d){flags=d.getSystemUiVisibility();statusColor=w.getStatusBarColor();
             navigationColor=w.getNavigationBarColor();
             dividerColor=android.os.Build.VERSION.SDK_INT>=28?w.getNavigationBarDividerColor():navigationColor;
-            contrast=android.os.Build.VERSION.SDK_INT>=29 && w.isNavigationBarContrastEnforced();}
+            contrast=android.os.Build.VERSION.SDK_INT>=29 && w.isNavigationBarContrastEnforced();
+            statusContrast=android.os.Build.VERSION.SDK_INT>=29 && w.isStatusBarContrastEnforced();}
     }
 }
