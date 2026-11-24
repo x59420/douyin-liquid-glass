@@ -341,7 +341,7 @@ final class Shield {
 
     private static boolean hasSpeedMarker(View view, int depth, int[] budget) {
         if (view == null || depth > 14 || budget[0]-- <= 0
-                || !isActuallyVisible(view)) return false;
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
         String value = "";
         if (view instanceof TextView) {
             CharSequence text = ((TextView) view).getText();
@@ -671,7 +671,7 @@ final class Shield {
     private static boolean containsVisibleMarker(View view, String marker,
                                                   int depth, int[] budget) {
         if (view == null || depth > 28 || budget[0]-- <= 0
-                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
+                || !isActuallyVisible(view)) return false;
         String value = "";
         if (view instanceof TextView) {
             CharSequence text = ((TextView) view).getText();
