@@ -282,16 +282,16 @@ internal fun SettingsScreen(
             SectionTitle("尺寸")
             GlassCard(scene) {
                 SliderRow("Dock 高度", state.height.value,
-                    DockPrefs.MIN_HEIGHT, DockPrefs.MAX_HEIGHT, 2, state::setHeight)
+                    52, 88, 2, state::setHeight)
                 Divider()
                 SliderRow("单个图标宽度", state.tabWidth.value,
-                    DockPrefs.MIN_TAB_WIDTH, DockPrefs.MAX_TAB_WIDTH, 2, state::setTabWidth)
+                    60, 100, 2, state::setTabWidth)
                 Divider()
                 SliderRow("左右留白", state.sideMargin.value,
-                    DockPrefs.MIN_SIDE_MARGIN, DockPrefs.MAX_SIDE_MARGIN, 2, state::setSideMargin)
+                    12, 40, 2, state::setSideMargin)
                 Divider()
                 SliderRow("离底部距离", state.bottomGap.value,
-                    DockPrefs.MIN_BOTTOM_GAP, DockPrefs.MAX_BOTTOM_GAP, 1, state::setBottomGap)
+                    0, 28, 1, state::setBottomGap)
             }
 
             Spacer(Modifier.height(18.dp))
