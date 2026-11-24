@@ -9,8 +9,6 @@ import android.os.Looper;
 import android.widget.TextView;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.List;
 import java.util.WeakHashMap;
 
@@ -141,6 +139,7 @@ final class NativeUiTransparency {
                         && (hasAny(identity, "toolbar", "topbar", "titlebar", "header", "top_bar")
                             || hasTopLabels(view, 0, new int[]{180}));
                 boolean controls = bounds.height() >= 24f * density
+                        && bounds.height() <= page.height() * 0.70f
                         && bounds.width() >= page.width() * 0.16f
                         && bounds.bottom <= page.bottom - page.height() * 0.16f
                         && (hasAny(identity, "playercontrol", "video_control", "videocontrol",
