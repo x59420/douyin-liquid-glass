@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -50,19 +51,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupPositionProvider
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.IntRect
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
@@ -70,7 +64,6 @@ import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import com.zaka.douyin.glass.ksu.liquid.vibrancy
 import com.zaka.douyin.glass.iso.SettingsModel
-import androidx.compose.ui.window.PopupProperties
 
 /**
  * dydock 设置界面。
@@ -403,10 +396,13 @@ private fun ModeRow(
     val palette = LocalSettingsPalette.current
     var menuOpen by remember { mutableStateOf(false) }
     val modes = listOf("跟随系统", "浅色", "深色")
-    val density = LocalDensity.current
-    Column(Modifier.fillMaxWidth().padding(vertical = 9.dp)) {
-        // 只让触发按钮参与正常布局；选项菜单通过 Popup 独立绘制，
-        // 展开时不会增加 ModeRow 高度，也不会把后续设置项向下推。
+    Column(
+        Modifier.fillMaxWidth()
+            .padding(vertical = 9.dp)
+            .zIndex(if (menuOpen) 2f else 0f)
+    ) {
+        // 菜单放在 matchParentSize 的覆盖层里绘制，不创建独立 Popup 窗口，
+        // 也不参与 ModeRow 测量，因此不会推动后续设置项。
         Box(Modifier.fillMaxWidth()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -432,26 +428,11 @@ private fun ModeRow(
                 }
             }
             if (menuOpen) {
-                Popup(
-                    popupPositionProvider = object : PopupPositionProvider {
-                        override fun calculatePosition(
-                            anchorBounds: IntRect,
-                            windowSize: IntSize,
-                            layoutDirection: LayoutDirection,
-                            popupContentSize: IntSize,
-                        ): IntOffset {
-                            val gap = with(density) { 8.dp.roundToPx() }
-                            val x = (anchorBounds.right - popupContentSize.width)
-                                .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
-                            val y = (anchorBounds.bottom + gap)
-                                .coerceAtMost((windowSize.height - popupContentSize.height).coerceAtLeast(0))
-                            return IntOffset(x, y)
-                        }
-                    },
-                    onDismissRequest = { menuOpen = false },
-                ) {
+                Box(Modifier.matchParentSize()) {
                     Column(
-                        Modifier.width(148.dp)
+                        Modifier.align(Alignment.TopEnd)
+                            .offset(y = 48.dp)
+                            .width(148.dp)
                             .clip(RoundedCornerShape(20.dp))
                             .background(palette.panel.copy(alpha = 0.97f))
                             .border(1.dp, palette.border, RoundedCornerShape(20.dp))
