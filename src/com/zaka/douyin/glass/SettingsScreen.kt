@@ -606,7 +606,7 @@ private fun TextRow(title: String, subtitle: String, onClick: () -> Unit) {
             .padding(vertical = 15.dp)
     ) {
         Column(Modifier.weight(1f)) {
-            Label(title, Color.White, 15.sp)
+            Label(title, LocalSettingsPalette.current.primary, 15.sp)
             Spacer(Modifier.height(3.dp))
             Label(subtitle, LocalSettingsPalette.current.secondary, 11.5.sp)
         }
