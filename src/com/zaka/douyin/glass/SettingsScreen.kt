@@ -572,12 +572,13 @@ private fun SliderRow(
     max: Int,
     step: Int,
     onChange: (Int) -> Unit,
+    suffix: String = "dp",
 ) {
     val palette = LocalSettingsPalette.current
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Label(title, palette.primary, 15.sp, modifier = Modifier.weight(1f))
-            Label("$value dp", LocalSettingsPalette.current.secondary, 12.5.sp)
+            Label("$value $suffix", LocalSettingsPalette.current.secondary, 12.5.sp)
         }
         Spacer(Modifier.height(10.dp))
         GlassSlider(value, min, max, step, onChange)
