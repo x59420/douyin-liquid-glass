@@ -101,6 +101,12 @@ public final class SettingsSync {
                     DockPrefs.DEF_BOTTOM_GAP));
             changed = true;
         }
+        if (intent.hasExtra("native_top_enabled")) { DockPrefs.setNativeTopEnabled(context, intent.getBooleanExtra("native_top_enabled", false)); changed = true; }
+        if (intent.hasExtra("native_top_play_alpha")) { DockPrefs.setNativeTopPlayAlpha(context, intent.getIntExtra("native_top_play_alpha", 100)); changed = true; }
+        if (intent.hasExtra("native_top_pause_alpha")) { DockPrefs.setNativeTopPauseAlpha(context, intent.getIntExtra("native_top_pause_alpha", 100)); changed = true; }
+        if (intent.hasExtra("native_controls_enabled")) { DockPrefs.setNativeControlsEnabled(context, intent.getBooleanExtra("native_controls_enabled", false)); changed = true; }
+        if (intent.hasExtra("native_controls_play_alpha")) { DockPrefs.setNativeControlsPlayAlpha(context, intent.getIntExtra("native_controls_play_alpha", 100)); changed = true; }
+        if (intent.hasExtra("native_controls_pause_alpha")) { DockPrefs.setNativeControlsPauseAlpha(context, intent.getIntExtra("native_controls_pause_alpha", 100)); changed = true; }
         if (!changed) return;
         Dydock.log("设置:收到设置界面的改动，立刻应用");
         DockController.applySettingsToAll();
@@ -110,7 +116,9 @@ public final class SettingsSync {
 
     /** 设置界面每改一项就调一次：广播出去 + （兜底）把 prefs 文件设成可读。 */
     static void push(Context context, boolean enabled, boolean showPlus, boolean showLabels,
-                     boolean verboseLog, int height, int tabWidth, int sideMargin, int bottomGap) {
+                     boolean verboseLog, int height, int tabWidth, int sideMargin, int bottomGap,
+                     boolean nativeTopEnabled, int nativeTopPlayAlpha, int nativeTopPauseAlpha,
+                     boolean nativeControlsEnabled, int nativeControlsPlayAlpha, int nativeControlsPauseAlpha) {
         if (context == null) return;
         try {
             Intent intent = new Intent(ACTION);
@@ -123,6 +131,12 @@ public final class SettingsSync {
             intent.putExtra("tab_width", tabWidth);
             intent.putExtra("side_margin", sideMargin);
             intent.putExtra("bottom_gap", bottomGap);
+            intent.putExtra("native_top_enabled", nativeTopEnabled);
+            intent.putExtra("native_top_play_alpha", nativeTopPlayAlpha);
+            intent.putExtra("native_top_pause_alpha", nativeTopPauseAlpha);
+            intent.putExtra("native_controls_enabled", nativeControlsEnabled);
+            intent.putExtra("native_controls_play_alpha", nativeControlsPlayAlpha);
+            intent.putExtra("native_controls_pause_alpha", nativeControlsPauseAlpha);
             context.sendBroadcast(intent);
         } catch (Throwable t) {
             Dydock.warnOnce("settings-push", "发送设置广播失败: " + t);
