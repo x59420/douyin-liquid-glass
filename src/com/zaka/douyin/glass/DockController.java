@@ -496,6 +496,7 @@ final class DockController {
     static void onHostPause(Activity act) {
         if (!isHomeActivity(act)) return;
         synchronized (HOME_RESUMED) { HOME_RESUMED.put(act, Boolean.FALSE); }
+        pauseHostMonitor(act);
         final Runnable poller;
         synchronized (POLLERS) { poller = POLLERS.get(act); }
         if (poller != null) {
@@ -508,6 +509,7 @@ final class DockController {
     static void onHostResume(Activity act) {
         if (!isHomeActivity(act)) return;
         synchronized (HOME_RESUMED) { HOME_RESUMED.put(act, Boolean.TRUE); }
+        resumeHostMonitor(act);
         final Runnable poller;
         synchronized (POLLERS) { poller = POLLERS.get(act); }
         if (poller != null) {
@@ -1413,6 +1415,35 @@ final class DockController {
     }
 
     /** 把玻璃层从窗口上摘掉（不销毁，dispose 由 release 负责）。 */
+    private static void pauseHostMonitor(Activity activity) {
+        if (activity == null) return;
+        ViewTreeObserver observer;
+        synchronized (HOST_OBSERVERS) { observer = HOST_OBSERVERS.get(activity); }
+        ViewTreeObserver.OnPreDrawListener listener;
+        synchronized (HOST_PRE_DRAWS) { listener = HOST_PRE_DRAWS.get(activity); }
+        if (observer != null && observer.isAlive() && listener != null) {
+            try { observer.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
+        }
+    }
+
+    private static void resumeHostMonitor(Activity activity) {
+        if (activity == null || activity.getWindow() == null) return;
+        ViewTreeObserver.OnPreDrawListener listener;
+        synchronized (HOST_PRE_DRAWS) { listener = HOST_PRE_DRAWS.get(activity); }
+        if (listener == null) return;
+        ViewTreeObserver next = activity.getWindow().getDecorView().getViewTreeObserver();
+        if (!next.isAlive()) return;
+        ViewTreeObserver previous;
+        synchronized (HOST_OBSERVERS) { previous = HOST_OBSERVERS.put(activity, next); }
+        if (previous != null && previous != next && previous.isAlive()) {
+            try { previous.removeOnPreDrawListener(listener); } catch (Throwable ignored) { }
+        }
+        try {
+            next.removeOnPreDrawListener(listener);
+            next.addOnPreDrawListener(listener);
+        } catch (Throwable ignored) { }
+    }
+
     private static void removeHostMonitor(Activity activity) {
         if (activity == null) return;
         ViewTreeObserver observer;
