@@ -3,6 +3,7 @@ package com.zaka.douyin.glass;
 import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
@@ -78,6 +79,10 @@ final class DockController {
             new WeakHashMap<Activity, Runnable>();
     private static final WeakHashMap<Activity, boolean[]> POLL_STATES =
             new WeakHashMap<Activity, boolean[]>();
+    private static final WeakHashMap<Activity, WeakHashMap<View, Drawable>> STRIPPED_BACKGROUNDS =
+            new WeakHashMap<Activity, WeakHashMap<View, Drawable>>();
+    private static final WeakHashMap<Activity, WeakHashMap<View, Drawable>> STRIPPED_FOREGROUNDS =
+            new WeakHashMap<Activity, WeakHashMap<View, Drawable>>();
     /** 每个 Activity 的背景采样器：设置改了要立刻重算几何，得能拿回它。 */
     private static final WeakHashMap<Activity, Backdrop> BACKDROPS =
             new WeakHashMap<Activity, Backdrop>();
@@ -586,6 +591,7 @@ final class DockController {
         synchronized (POLL_STATES) {
             pollState = POLL_STATES.remove(act);
         }
+        restoreStrippedBackgrounds(act);
         if (pollState != null) pollState[0] = false;
         if (poller != null) MAIN.removeCallbacks(poller);
         try {
@@ -742,6 +748,7 @@ final class DockController {
                 });
 
         if (iso == null) {
+            restoreStrippedBackgrounds(act);
             // 隔离加载都起不来的话，宁可不接管，也不在宿主进程里硬塞一套会和抖音撞版本的 Compose。
             Dydock.warn("底栏:玻璃组件加载失败，保留抖音原生底栏");
             toast(act, "Dydock " + Dydock.VER + "：玻璃组件加载失败");
@@ -1395,6 +1402,8 @@ final class DockController {
     }
 
     private static void restoreNative(View dock) {
+        Activity owner = Shield.activityOf(dock);
+        if (owner != null) restoreStrippedBackgrounds(owner);
         try {
             if (dock != null) {
                 dock.setVisibility(View.VISIBLE);
@@ -1524,26 +1533,95 @@ final class DockController {
      */
     private static void stripDockBackground(View dock) {
         if (dock == null) return;
+        Activity owner = Shield.activityOf(dock);
         View root = dock.getRootView();
         int screenW = root == null ? 0 : root.getWidth();
         int screenH = root == null ? 0 : root.getHeight();
         if (screenW <= 0 || screenH <= 0) return;
-        View v = dock;
-        for (int i = 0; i < 4 && v != null; i++) {
-            try {
-                if (v.getBackground() != null
-                        && v.getWidth() >= screenW * 0.7f
-                        && v.getHeight() <= screenH * 0.4f) {
-                    v.setBackground(null);
-                }
-            } catch (Throwable ignored) {
+        Rect dockBand = rectInWindow(dock);
+        if (dockBand.isEmpty()) return;
+
+        View current = dock;
+        int visited = 0;
+        while (current != null && visited++ < 16 && current.getId() != android.R.id.content) {
+            stripNativeSurface(owner, current, dockBand, screenW, screenH);
+            ViewParent parent = current.getParent();
+            if (!(parent instanceof ViewGroup)) {
+                current = parent instanceof View ? (View) parent : null;
+                continue;
             }
-            ViewParent parent = v.getParent();
-            v = parent instanceof View ? (View) parent : null;
-            if (v != null && v.getId() == android.R.id.content) break;
+            ViewGroup siblings = (ViewGroup) parent;
+            for (int i = 0; i < siblings.getChildCount(); i++) {
+                View sibling = siblings.getChildAt(i);
+                if (sibling != current) stripNativeSurface(owner, sibling, dockBand, screenW, screenH);
+            }
+            current = siblings;
         }
-        Dydock.log("底栏:已去掉原生底栏区域的背景色");
+        Dydock.log("底栏:已检查原生底栏及其背景容器/同层背景");
     }
+
+    private static void stripNativeSurface(Activity owner, View view, Rect dockBand,
+                                           int screenW, int screenH) {
+        if (owner == null || view == null || view.getId() == android.R.id.content) return;
+        if (view.getWidth() < screenW * 0.68f || view.getHeight() <= 0
+                || view.getHeight() > screenH * 0.45f) return;
+        Rect bounds = rectInWindow(view);
+        if (!bounds.intersect(dockBand)) return;
+
+        WeakHashMap<View, Drawable> backgrounds;
+        synchronized (STRIPPED_BACKGROUNDS) {
+            backgrounds = STRIPPED_BACKGROUNDS.get(owner);
+            if (backgrounds == null) {
+                backgrounds = new WeakHashMap<View, Drawable>();
+                STRIPPED_BACKGROUNDS.put(owner, backgrounds);
+            }
+        }
+        Drawable background = view.getBackground();
+        if (background != null) {
+            if (!backgrounds.containsKey(view)) backgrounds.put(view, background);
+            view.setBackground(null);
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 23) {
+            WeakHashMap<View, Drawable> foregrounds;
+            synchronized (STRIPPED_FOREGROUNDS) {
+                foregrounds = STRIPPED_FOREGROUNDS.get(owner);
+                if (foregrounds == null) {
+                    foregrounds = new WeakHashMap<View, Drawable>();
+                    STRIPPED_FOREGROUNDS.put(owner, foregrounds);
+                }
+            }
+            Drawable foreground = view.getForeground();
+            if (foreground != null) {
+                if (!foregrounds.containsKey(view)) foregrounds.put(view, foreground);
+                view.setForeground(null);
+            }
+        }
+    }
+
+    private static void restoreStrippedBackgrounds(Activity owner) {
+        if (owner == null) return;
+        WeakHashMap<View, Drawable> backgrounds;
+        synchronized (STRIPPED_BACKGROUNDS) { backgrounds = STRIPPED_BACKGROUNDS.remove(owner); }
+        if (backgrounds != null) {
+            for (View view : new ArrayList<View>(backgrounds.keySet())) {
+                Drawable drawable = backgrounds.get(view);
+                if (view != null && drawable != null) {
+                    try { view.setBackground(drawable); } catch (Throwable ignored) { }
+                }
+            }
+        }
+        WeakHashMap<View, Drawable> foregrounds;
+        synchronized (STRIPPED_FOREGROUNDS) { foregrounds = STRIPPED_FOREGROUNDS.remove(owner); }
+        if (foregrounds != null && android.os.Build.VERSION.SDK_INT >= 23) {
+            for (View view : new ArrayList<View>(foregrounds.keySet())) {
+                Drawable drawable = foregrounds.get(view);
+                if (view != null && drawable != null) {
+                    try { view.setForeground(drawable); } catch (Throwable ignored) { }
+                }
+            }
+        }
+    }
+
 
     /**
      * 系统导航栏那片区域（红米 / HyperOS 的手势条那一带）。
