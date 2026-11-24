@@ -50,13 +50,16 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
@@ -349,6 +352,7 @@ private fun TopBar(
 ) {
     val palette = LocalSettingsPalette.current
     var themeMenuOpen by remember { mutableStateOf(false) }
+    val menuOffset = with(LocalDensity.current) { IntOffset(0, 48.dp.roundToPx()) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(56.dp)
@@ -385,7 +389,7 @@ private fun TopBar(
         Spacer(Modifier.width(10.dp))
         Label(version, palette.secondary, 12.sp)
         Spacer(Modifier.weight(1f))
-        Box(Modifier.size(42.dp).zIndex(5f)) {
+        Box(Modifier.size(42.dp)) {
             Box(
                 Modifier.fillMaxSize()
                     .clip(RoundedCornerShape(13.dp))
@@ -400,36 +404,41 @@ private fun TopBar(
                 Label("◐", palette.primary, 19.sp, weight = FontWeight.SemiBold)
             }
             if (themeMenuOpen) {
-                Column(
-                    Modifier.align(Alignment.TopEnd)
-                        .offset(y = 48.dp)
-                        .width(148.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(palette.panel.copy(alpha = 0.97f))
-                        .border(1.dp, palette.border, RoundedCornerShape(20.dp))
-                        .padding(6.dp)
+                Popup(
+                    alignment = Alignment.TopEnd,
+                    offset = menuOffset,
+                    onDismissRequest = { themeMenuOpen = false },
+                    properties = PopupProperties(focusable = true),
                 ) {
-                    listOf("跟随系统", "浅色", "深色").forEachIndexed { index, label ->
-                        val selected = themeMode == index
-                        Box(
-                            Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                ) {
-                                    onThemeChange(index)
-                                    themeMenuOpen = false
-                                }
-                                .padding(horizontal = 13.dp, vertical = 11.dp)
-                        ) {
-                            Label(
-                                label,
-                                if (selected) palette.selectedText else palette.primary,
-                                13.sp,
-                                weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                            )
+                    Column(
+                        Modifier.width(148.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(palette.panel.copy(alpha = 0.97f))
+                            .border(1.dp, palette.border, RoundedCornerShape(20.dp))
+                            .padding(6.dp)
+                    ) {
+                        listOf("跟随系统", "浅色", "深色").forEachIndexed { index, label ->
+                            val selected = themeMode == index
+                            Box(
+                                Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                    ) {
+                                        onThemeChange(index)
+                                        themeMenuOpen = false
+                                    }
+                                    .padding(horizontal = 13.dp, vertical = 11.dp)
+                            ) {
+                                Label(
+                                    label,
+                                    if (selected) palette.selectedText else palette.primary,
+                                    13.sp,
+                                    weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                )
+                            }
                         }
                     }
                 }
