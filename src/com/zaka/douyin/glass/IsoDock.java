@@ -1,5 +1,6 @@
 package com.zaka.douyin.glass;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
@@ -80,6 +81,37 @@ final class IsoDock {
 
     static void setModulePath(String path) {
         if (path != null && !path.isEmpty()) modulePathHint = path;
+    }
+
+    /** 用 Dock 的隔离类加载器在宿主 Activity 内显示设置 Dialog。 */
+    static boolean showSettings(Activity activity) {
+        if (activity == null) return false;
+        try {
+            Class<?> base = isoClass;
+            if (base == null) {
+                String apk = moduleApk(activity);
+                if (apk == null) {
+                    Dydock.warn("设置面板:找不到模块 APK");
+                    return false;
+                }
+                File opt = new File(activity.getCodeCacheDir(), OPT_DIR);
+                if (!opt.isDirectory() && !opt.mkdirs()) {
+                    Dydock.warn("设置面板:隔离缓存目录不可写");
+                }
+                String libs = nativeLibraryDir(activity, apk, opt, message -> Dydock.log(message));
+                base = loadClass(apk, opt, libs, message -> Dydock.log(message));
+                if (base == null) return false;
+                isoClass = base;
+            }
+            Class<?> dialogClass = Class.forName(
+                    "com.zaka.douyin.glass.iso.IsoSettingsOverlay", true, base.getClassLoader());
+            Method show = dialogClass.getMethod("show", Activity.class);
+            show.invoke(null, activity);
+            return true;
+        } catch (Throwable t) {
+            Dydock.error("设置面板隔离加载失败", t);
+            return false;
+        }
     }
 
     /**
