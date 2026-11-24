@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -28,6 +30,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +49,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -76,6 +81,7 @@ internal class SettingsState(context: Context) {
     val showPlus = mutableStateOf(DockPrefs.showPlusButton(ctx))
     val showLabels = mutableStateOf(DockPrefs.showLabels(ctx))
     val logEnabled = mutableStateOf(DockPrefs.logEnabled(ctx))
+    val themeMode = mutableStateOf(DockPrefs.themeMode(ctx))
 
     val height = mutableStateOf(DockPrefs.heightDp(ctx))
     val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
@@ -104,6 +110,12 @@ internal class SettingsState(context: Context) {
         logEnabled.value = value
         DockPrefs.setLogEnabled(ctx, value)
         push()
+    }
+
+    fun setThemeMode(value: Int) {
+        val mode = value.coerceIn(0, 2)
+        themeMode.value = mode
+        DockPrefs.setThemeMode(ctx, mode)
     }
 
     fun setHeight(value: Int) {
@@ -162,11 +174,23 @@ internal class SettingsState(context: Context) {
 }
 
 private val GlassCardShape = RoundedCornerShape(26.dp)
-/** 中性色：整套界面只用黑白灰，不要彩虹渐变。 */
-private val Accent = Color(0xFFEAEAEA)
-private val SubText = Color(0xFF9A9DA3)
-private val TrackOn = Color(0xFFD8D8D8)
-private val TrackOff = Color(0x33FFFFFF)
+private data class SettingsPalette(
+    val background: Color, val panel: Color, val card: Color, val primary: Color,
+    val secondary: Color, val accent: Color, val trackOn: Color, val trackOff: Color,
+    val border: Color, val divider: Color,
+)
+private val DarkSettingsPalette = SettingsPalette(
+    Color(0xFF070A12), Color(0xF0161B25), Color(0xCC202735), Color(0xFFF7F8FA),
+    Color(0xFFA6ABB4), Color(0xFFD8DDE6), Color(0xFFD8DDE6), Color(0x33FFFFFF),
+    Color(0x24FFFFFF), Color(0x18FFFFFF),
+)
+private val LightSettingsPalette = SettingsPalette(
+    Color(0xFFF2F4F8), Color(0xF7FFFFFF), Color(0xDDE8ECF2), Color(0xFF171A20),
+    Color(0xFF666D78), Color(0xFF424B59), Color(0xFF424B59), Color(0x22000000),
+    Color(0x1F000000), Color(0x16000000),
+)
+private val LocalSettingsPalette = staticCompositionLocalOf { DarkSettingsPalette }
+private val LocalSettingsOverlay = staticCompositionLocalOf { false }
 
 @Composable
 private fun Label(
@@ -198,33 +222,39 @@ internal fun SettingsScreen(
     state: SettingsState,
     version: String,
     onBack: () -> Unit,
+    overlay: Boolean = false,
 ) {
-    val scene = rememberLayerBackdrop()
-    Box(Modifier.fillMaxSize().background(Color(0xFF070A12))) {
-        // 背景层：深色渐变 + 三团柔光，整块记进 scene，卡片采样用。
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color(0xFF17181B), Color(0xFF0D0E10))
-                    )
-                )
-                .layerBackdrop(scene)
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+    val dark = when (state.themeMode.value) {
+        1 -> false
+        2 -> true
+        else -> isSystemInDarkTheme()
+    }
+    val palette = if (dark) DarkSettingsPalette else LightSettingsPalette
+    CompositionLocalProvider(LocalSettingsPalette provides palette, LocalSettingsOverlay provides overlay) {
+        val scene = rememberLayerBackdrop()
+        Box((if (overlay) Modifier.fillMaxWidth() else Modifier.fillMaxSize())
+            .background(if (overlay) Color.Transparent else palette.background)) {
+            if (!overlay) {
+                Box(Modifier.fillMaxSize()
+                    .background(Brush.verticalGradient(listOf(Color(0xFF17181B), Color(0xFF0D0E10))))
+                    .layerBackdrop(scene))
+            }
+            val panel = if (overlay) {
+                Modifier.align(Alignment.Center).fillMaxWidth().padding(horizontal = 16.dp)
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.86f).dp)
+                    .clip(RoundedCornerShape(28.dp)).background(palette.panel)
+                    .border(1.dp, palette.border, RoundedCornerShape(28.dp))
+            } else Modifier.fillMaxSize()
+            Column(panel.verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp)
-                .padding(top = 8.dp, bottom = 36.dp)
-        ) {
+                .padding(top = 8.dp, bottom = if (overlay) 24.dp else 36.dp)) {
             TopBar(version = version, onBack = onBack)
             Spacer(Modifier.height(16.dp))
 
             SectionTitle("外观")
             GlassCard(scene) {
+                ThemeModeRow(state.themeMode.value, state::setThemeMode)
+                Divider()
                 SwitchRow(
                     title = "启用玻璃 Dock",
                     subtitle = "关掉就完全用抖音原生底栏",
@@ -286,7 +316,7 @@ internal fun SettingsScreen(
             Spacer(Modifier.height(22.dp))
             Label(
                 text = "dydock $version",
-                color = SubText,
+                color = LocalSettingsPalette.current.secondary,
                 size = 12.sp,
                 modifier = Modifier.fillMaxWidth(),
                 align = TextAlign.Center,
@@ -295,18 +325,19 @@ internal fun SettingsScreen(
             Label(
                 text = "液态玻璃渲染移植自 KernelSU（Compose + Miuix），折射与色散参数与上游一致；"
                     + "模糊采样由 compose-miuix-ui 提供。本模块与抖音官方无关，仅限个人非商业用途。",
-                color = SubText.copy(alpha = 0.75f),
+                color = LocalSettingsPalette.current.secondary.copy(alpha = 0.75f),
                 size = 11.sp,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp),
                 align = TextAlign.Center,
                 lineHeight = 16.sp,
             )
+            }
         }
     }
 }
-
 @Composable
 private fun TopBar(version: String, onBack: () -> Unit) {
+    val iconColor = LocalSettingsPalette.current.primary
     // 顶上不放任何底色 / 玻璃层，只有返回箭头 + 标题 + 版本号。
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -340,9 +371,9 @@ private fun TopBar(version: String, onBack: () -> Unit) {
             }
         }
         Spacer(Modifier.width(6.dp))
-        Label("dydock 设置", Color.White, 19.sp, weight = FontWeight.SemiBold)
+        Label("dydock 设置", LocalSettingsPalette.current.primary, 19.sp, weight = FontWeight.SemiBold)
         Spacer(Modifier.width(10.dp))
-        Label(version, SubText, 12.sp)
+        Label(version, LocalSettingsPalette.current.secondary, 12.sp)
     }
 }
 
@@ -350,7 +381,7 @@ private fun TopBar(version: String, onBack: () -> Unit) {
 private fun SectionTitle(text: String) {
     Label(
         text = text,
-        color = SubText,
+        color = LocalSettingsPalette.current.secondary,
         size = 12.sp,
         modifier = Modifier.padding(start = 8.dp, bottom = 8.dp),
         letterSpacing = 1.2.sp,
@@ -376,7 +407,11 @@ private fun GlassCard(backdrop: Backdrop, content: @Composable () -> Unit) {
 @Composable
 private fun Modifier.glassSurface(backdrop: Backdrop, shape: Shape): Modifier {
     val supported = remember { android.os.Build.VERSION.SDK_INT >= 33 }
-    return if (supported) {
+    val palette = LocalSettingsPalette.current
+    return if (LocalSettingsOverlay.current) {
+        this.background(palette.card, shape)
+    } else if (supported) {
+        val surfaceTint = palette.border.copy(alpha = 0.35f)
         this.drawBackdrop(
             backdrop = backdrop,
             shape = { shape },
@@ -384,10 +419,33 @@ private fun Modifier.glassSurface(backdrop: Backdrop, shape: Shape): Modifier {
                 blur(22.dp.toPx(), 22.dp.toPx())
                 vibrancy()
             },
-            onDrawSurface = { drawRect(Color.White.copy(alpha = 0.07f)) },
+            onDrawSurface = { drawRect(surfaceTint) },
         )
     } else {
-        this.background(Color(0xFF161D2E).copy(alpha = 0.94f), shape)
+        this.background(LocalSettingsPalette.current.card, shape)
+    }
+}
+
+@Composable
+private fun ThemeModeRow(mode: Int, onChange: (Int) -> Unit) {
+    val palette = LocalSettingsPalette.current
+    val options = listOf("跟随系统", "浅色", "深色")
+    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        Label("设置界面主题", palette.primary, 15.sp)
+        Spacer(Modifier.height(9.dp))
+        Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .background(palette.trackOff).padding(3.dp)) {
+            options.forEachIndexed { index, label ->
+                Box(Modifier.weight(1f).clip(RoundedCornerShape(13.dp))
+                    .background(if (mode == index) palette.accent else Color.Transparent)
+                    .clickable(interactionSource = remember { MutableInteractionSource() },
+                        indication = null) { onChange(index) }
+                    .padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                    Label(label, if (mode == index) Color.White else palette.secondary, 12.sp,
+                        weight = if (mode == index) FontWeight.SemiBold else FontWeight.Normal)
+                }
+            }
+        }
     }
 }
 
@@ -397,7 +455,7 @@ private fun Divider() {
         Modifier
             .fillMaxWidth()
             .height(1.dp)
-            .background(Color.White.copy(alpha = 0.07f))
+            .background(LocalSettingsPalette.current.divider)
     )
 }
 
@@ -419,9 +477,9 @@ private fun SwitchRow(
             .padding(vertical = 13.dp)
     ) {
         Column(Modifier.weight(1f)) {
-            Label(title, Color.White, 15.sp)
+            Label(title, LocalSettingsPalette.current.primary, 15.sp)
             Spacer(Modifier.height(3.dp))
-            Label(subtitle, SubText, 11.5.sp)
+            Label(subtitle, LocalSettingsPalette.current.secondary, 11.5.sp)
         }
         Spacer(Modifier.width(12.dp))
         GlassSwitch(checked)
@@ -439,7 +497,7 @@ private fun GlassSwitch(checked: Boolean) {
         modifier = Modifier
             .size(50.dp, 30.dp)
             .clip(CircleShape)
-            .background(lerp(TrackOff, TrackOn, progress)),
+            .background(lerp(LocalSettingsPalette.current.trackOff, LocalSettingsPalette.current.trackOn, progress)),
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
@@ -464,7 +522,7 @@ private fun SliderRow(
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Label(title, Color.White, 15.sp, modifier = Modifier.weight(1f))
-            Label("$value dp", SubText, 12.5.sp)
+            Label("$value dp", LocalSettingsPalette.current.secondary, 12.5.sp)
         }
         Spacer(Modifier.height(10.dp))
         GlassSlider(value, min, max, step, onChange)
@@ -479,6 +537,7 @@ private fun GlassSlider(
     step: Int,
     onChange: (Int) -> Unit,
 ) {
+    val palette = LocalSettingsPalette.current
     var widthPx by remember { mutableFloatStateOf(1f) }
     val fraction = ((value - min).toFloat() / (max - min).toFloat()).coerceIn(0f, 1f)
 
@@ -513,13 +572,13 @@ private fun GlassSlider(
         val trackH = 6.dp.toPx()
         val radius = CornerRadius(trackH / 2f, trackH / 2f)
         drawRoundRect(
-            color = TrackOff,
+            color = palette.trackOff,
             topLeft = Offset(0f, trackY - trackH / 2f),
             size = Size(size.width, trackH),
             cornerRadius = radius,
         )
         drawRoundRect(
-            color = TrackOn,
+            color = palette.trackOn,
             topLeft = Offset(0f, trackY - trackH / 2f),
             size = Size(size.width * fraction, trackH),
             cornerRadius = radius,
@@ -547,8 +606,8 @@ private fun TextRow(title: String, subtitle: String, onClick: () -> Unit) {
         Column(Modifier.weight(1f)) {
             Label(title, Color.White, 15.sp)
             Spacer(Modifier.height(3.dp))
-            Label(subtitle, SubText, 11.5.sp)
+            Label(subtitle, LocalSettingsPalette.current.secondary, 11.5.sp)
         }
-        Label("›", SubText, 20.sp)
+        Label("›", LocalSettingsPalette.current.secondary, 20.sp)
     }
 }
