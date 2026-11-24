@@ -240,9 +240,11 @@ final class Shield {
      */
     static boolean isOtherProfilePage(View root) {
         if (root == null || root.getWidth() <= 0 || root.getHeight() <= 0) return false;
+        // 单独优先扫描本人主页标记，避免深层视图树超过普通扫描预算后漏掉「编辑资料」。
+        if (containsVisibleMarker(root, "编辑资料", 0, new int[]{6000})) return false;
         String[] markers = {"编辑资料", "粉丝", "关注", "私信", "发消息", "抖音号", "获赞"};
         boolean[] found = new boolean[markers.length];
-        collectProfileMarkers(root, 0, markers, found, new int[]{1800});
+        collectProfileMarkers(root, 0, markers, found, new int[]{6000});
         // 本人主页的「编辑资料」优先级最高，避免误隐藏「我」主 Tab。
         if (found[0]) return false;
         // 他人主页必须同时出现资料页的粉丝/关注关系和私信操作。
@@ -482,11 +484,11 @@ final class Shield {
         if (view == null || page.height() <= 0) return false;
         if (bounds.height() > page.height() * 0.78f) return false;
         if (bounds.width() < page.width() * 0.55f) return false;
-        if (className.contains("comment")) {
-            return bounds.bottom >= page.bottom - page.height() * 0.45f
-                    && bounds.height() >= page.height() * 0.12f;
-        }
-        return hasConversationMarker(view, 0);
+        // 只认真正的评论容器类名；单独出现「评论区 / 写评论」文案可能是视频页残留节点，
+        // 返回视频页后仍可见，不能继续把 Dock 锁在隐藏状态。
+        return className.contains("comment")
+                && bounds.bottom >= page.bottom - page.height() * 0.45f
+                && bounds.height() >= page.height() * 0.12f;
     }
 
     /**
@@ -497,8 +499,9 @@ final class Shield {
      */
     static boolean commentSheetOpen(View root) {
         if (root == null) return false;
-        return findCommentMarker(root, 0, new int[]{1200})
-                || findCommentPanel(root, 0, new int[]{900});
+        // 不再用整棵页面树里的输入提示文案判定：视频页可能常驻评论入口/输入节点。
+        // 仅当底部确实挂着评论容器时才算评论区仍打开。
+        return findCommentPanel(root, 0, new int[]{1800});
     }
 
     /** 评论面板重建时文案可能暂时消失；用底部面板容器作为第二识别线索。 */
@@ -621,13 +624,36 @@ final class Shield {
     private static boolean hasProfileSignature(View root) {
         // "关注" and "作品" also occur in ordinary feeds. They are not enough
         // to identify a profile page and could keep the Dock hidden after returning.
+        if (containsVisibleMarker(root, "编辑资料", 0, new int[]{6000})) return false;
         String[] markers = {"编辑资料", "抖音号", "获赞", "粉丝", "关注", "作品", "私信"};
         boolean[] found = new boolean[markers.length];
-        collectProfileMarkers(root, 0, markers, found, new int[]{1800});
+        collectProfileMarkers(root, 0, markers, found, new int[]{6000});
+        if (found[0]) return false;
         int count = 0;
         for (boolean hit : found) if (hit) count++;
         boolean strongIdentity = found[0] || found[1] || found[2];
         return strongIdentity && count >= 2;
+    }
+
+    private static boolean containsVisibleMarker(View view, String marker,
+                                                  int depth, int[] budget) {
+        if (view == null || depth > 28 || budget[0]-- <= 0
+                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.05f) return false;
+        String value = "";
+        if (view instanceof TextView) {
+            CharSequence text = ((TextView) view).getText();
+            if (text != null) value = text.toString();
+        }
+        CharSequence desc = view.getContentDescription();
+        if (desc != null) value += " " + desc;
+        if (value.contains(marker)) return true;
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+                if (containsVisibleMarker(group.getChildAt(i), marker, depth + 1, budget)) return true;
+            }
+        }
+        return false;
     }
 
     private static void collectProfileMarkers(View view, int depth,
