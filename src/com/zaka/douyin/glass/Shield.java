@@ -480,15 +480,41 @@ final class Shield {
      * （类名带 comment，或者有「写评论 / 说点什么 / 条评论」这类文案 / 评论输入框）。
      * 整屏页面一律不算，否则别人主页、详情页会被一起排掉。
      */
+    /**
+     * 判断评论面板是否仍有足够大的可见区域。
+     *
+     * rectOf() 只返回 View 的布局矩形；评论面板向下拖动关闭时，布局矩形可能仍在屏幕内，
+     * 但真正显示出来的部分已经被父容器裁掉。这里用 getGlobalVisibleRect() 取得裁剪后的
+     * 可见矩形，并与页面可见区域求交，避免把正在退出的面板继续当成打开状态。
+     */
+    private static boolean isCommentPanelActuallyVisible(View view) {
+        if (view == null || view.getWidth() <= 0 || view.getHeight() <= 0) return false;
+        View root = view.getRootView();
+        if (root == null) return false;
+
+        Rect pageVisible = new Rect();
+        Rect panelVisible = new Rect();
+        if (!root.getGlobalVisibleRect(pageVisible)
+                || !view.getGlobalVisibleRect(panelVisible)
+                || pageVisible.isEmpty()
+                || !panelVisible.intersect(pageVisible)) return false;
+
+        Rect panelLayout = rectOf(view);
+        float minVisibleHeight = Math.max(
+                pageVisible.height() * 0.12f,
+                panelLayout.height() * 0.45f);
+        return panelVisible.width() >= pageVisible.width() * 0.55f
+                && panelVisible.height() >= minVisibleHeight
+                && panelVisible.bottom >= pageVisible.bottom - pageVisible.height() * 0.45f;
+    }
+
     private static boolean isCommentSheet(View view, Rect bounds, Rect page, String className) {
         if (view == null || page.height() <= 0) return false;
         if (bounds.height() > page.height() * 0.78f) return false;
         if (bounds.width() < page.width() * 0.55f) return false;
-        // 只认真正的评论容器类名；单独出现「评论区 / 写评论」文案可能是视频页残留节点，
-        // 返回视频页后仍可见，不能继续把 Dock 锁在隐藏状态。
-        return className.contains("comment")
-                && bounds.bottom >= page.bottom - page.height() * 0.45f
-                && bounds.height() >= page.height() * 0.12f;
+        // 只认真正的评论容器类名，并要求面板当前仍有足够的实际可见区域。
+        // 向下拖动关闭时，裁剪后的可见高度会迅速缩小，不能继续锁住 Dock。
+        return className.contains("comment") && isCommentPanelActuallyVisible(view);
     }
 
     /**
@@ -513,10 +539,8 @@ final class Shield {
             View root = view.getRootView();
             Rect page = rectOf(root);
             Rect bounds = rectOf(view);
-            if (page.height() > 0 && bounds.width() >= page.width() * 0.55f
-                    && bounds.height() >= page.height() * 0.12f
-                    && bounds.height() <= page.height() * 0.80f
-                    && bounds.bottom >= page.bottom - page.height() * 0.45f) return true;
+            if (page.height() > 0 && bounds.height() <= page.height() * 0.80f
+                    && isCommentPanelActuallyVisible(view)) return true;
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
