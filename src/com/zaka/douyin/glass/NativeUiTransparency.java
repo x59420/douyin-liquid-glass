@@ -1,31 +1,26 @@
 package com.zaka.douyin.glass;
 
 import android.app.Activity;
+import android.graphics.Color;
 import android.graphics.Rect;
-import android.view.View;
-import android.view.ViewGroup;
+import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.TextView;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.WeakHashMap;
 
-/**
- * Applies Doula-inspired opacity to Douyin-owned chrome only.
- *
- * This intentionally does not touch the native bottom navigation row (dyDock replaces it),
- * our own overlay, video SurfaceView/TextureView pixels, or any layout/touch properties.
- * Host view recognition is heuristic because Doula's implementation is not public; candidates
- * are kept conservative and can be disabled independently in settings.
- */
 final class NativeUiTransparency {
-    private static final WeakHashMap<Activity, WeakHashMap<View, Float>> ORIGINAL =
-            new WeakHashMap<Activity, WeakHashMap<View, Float>>();
-    private static final int NODE_BUDGET = 1000;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static final WeakHashMap<Activity, Runnable> POLLERS = new WeakHashMap<Activity, Runnable>();
+    private static final WeakHashMap<Activity, Runnable> POLLERS = new WeakHashMap<>();
+    private static final WeakHashMap<Activity, WeakHashMap<View, Float>> ALPHAS = new WeakHashMap<>();
+    private static final WeakHashMap<Activity, WeakHashMap<View, Background>> BACKGROUNDS = new WeakHashMap<>();
+    private static final WeakHashMap<Activity, Bars> BARS = new WeakHashMap<>();
+    private static final int NODE_BUDGET = 1800;
 
     private NativeUiTransparency() {}
 
@@ -35,12 +30,11 @@ final class NativeUiTransparency {
             if (POLLERS.containsKey(activity)) return;
             Runnable poller = new Runnable() {
                 @Override public void run() {
-                    if (activity.isFinishing() || activity.isDestroyed()) {
-                        stop(activity);
-                        return;
+                    if (activity.isFinishing() || activity.isDestroyed()) { stop(activity); return; }
+                    try { apply(activity); } catch (Throwable t) {
+                        Dydock.warnOnce("native-transparency", "原生透明度应用失败: " + t);
                     }
-                    try { apply(activity); } catch (Throwable ignored) {}
-                    MAIN.postDelayed(this, 850L);
+                    MAIN.postDelayed(this, 700L);
                 }
             };
             POLLERS.put(activity, poller);
@@ -53,249 +47,213 @@ final class NativeUiTransparency {
         Runnable poller;
         synchronized (POLLERS) { poller = POLLERS.remove(activity); }
         if (poller != null) MAIN.removeCallbacks(poller);
-        restore(activity);
+        restoreViews(activity);
+        restoreBars(activity);
     }
 
     static void applyAll() {
         List<Activity> activities;
-        synchronized (POLLERS) { activities = new ArrayList<Activity>(POLLERS.keySet()); }
-        for (Activity activity : activities) {
-            try { apply(activity); } catch (Throwable ignored) {}
-        }
+        synchronized (POLLERS) { activities = new ArrayList<>(POLLERS.keySet()); }
+        for (Activity activity : activities) try { apply(activity); } catch (Throwable ignored) {}
     }
 
     static void apply(Activity activity) {
         if (activity == null || activity.isFinishing() || activity.isDestroyed()) return;
-        View root = activity.findViewById(android.R.id.content);
-        if (!(root instanceof ViewGroup)) return;
+        applySystemBars(activity);
+        View content = activity.findViewById(android.R.id.content);
+        if (!(content instanceof ViewGroup)) { restoreViews(activity); return; }
 
-        boolean topEnabled = DockPrefs.nativeTopEnabled(activity);
-        boolean controlsEnabled = DockPrefs.nativeControlsEnabled(activity);
-        if (!topEnabled && !controlsEnabled) { restore(activity); return; }
+        boolean topOn = DockPrefs.nativeTopEnabled(activity);
+        boolean controlsOn = DockPrefs.nativeControlsEnabled(activity);
+        boolean bottomOn = DockPrefs.nativeBottomEnabled(activity);
+        boolean homeTopOn = DockPrefs.homeTopTransparent(activity);
+        boolean homeBottomOn = DockPrefs.homeBottomTransparent(activity);
+        boolean paused = isPaused((ViewGroup) content);
 
-        boolean paused = isPaused((ViewGroup) root);
-        int topPercent = paused ? DockPrefs.nativeTopPauseAlpha(activity)
-                : DockPrefs.nativeTopPlayAlpha(activity);
-        int controlsPercent = paused ? DockPrefs.nativeControlsPauseAlpha(activity)
-                : DockPrefs.nativeControlsPlayAlpha(activity);
+        List<Candidate> found = new ArrayList<>();
+        collect((ViewGroup) content, content, 0, new int[]{NODE_BUDGET}, found);
+        Candidate top = (topOn || homeTopOn) ? choose(found, 1, null, null) : null;
+        Candidate controls = controlsOn ? choose(found, 2, top, null) : null;
+        Candidate bottom = (bottomOn || homeBottomOn) ? choose(found, 3, top, controls) : null;
 
-        List<Candidate> nodes = new ArrayList<Candidate>();
-        collect((ViewGroup) root, root, 0, new int[]{NODE_BUDGET}, nodes);
-        Candidate top = topEnabled ? chooseTop(nodes) : null;
-        Candidate controls = controlsEnabled ? chooseControls(nodes, top) : null;
-
-        WeakHashMap<View, Integer> desired = new WeakHashMap<View, Integer>();
-        if (top != null) desired.put(top.view, topPercent);
-        if (controls != null && (top == null || !isAncestor(top.view, controls.view))) {
-            desired.put(controls.view, controlsPercent);
-        }
-        applyDesired(activity, desired);
+        WeakHashMap<View, Integer> alphaTargets = new WeakHashMap<>();
+        WeakHashMap<View, Boolean> backgroundTargets = new WeakHashMap<>();
+        if (topOn && top != null) alphaTargets.put(top.view,
+                paused ? DockPrefs.nativeTopPauseAlpha(activity) : DockPrefs.nativeTopPlayAlpha(activity));
+        if (controlsOn && controls != null) alphaTargets.put(controls.view,
+                paused ? DockPrefs.nativeControlsPauseAlpha(activity) : DockPrefs.nativeControlsPlayAlpha(activity));
+        if (bottomOn && bottom != null) alphaTargets.put(bottom.view,
+                paused ? DockPrefs.nativeBottomPauseAlpha(activity) : DockPrefs.nativeBottomPlayAlpha(activity));
+        if (homeTopOn && top != null) backgroundTargets.put(top.view, true);
+        if (homeBottomOn && bottom != null) backgroundTargets.put(bottom.view, true);
+        applyAlphas(activity, alphaTargets);
+        applyBackgrounds(activity, backgroundTargets);
     }
 
-    static void restore(Activity activity) {
-        WeakHashMap<View, Float> values;
-        synchronized (ORIGINAL) { values = ORIGINAL.remove(activity); }
-        if (values == null) return;
-        for (View view : values.keySet()) {
-            Float alpha = values.get(view);
-            if (view != null && alpha != null) {
-                try { view.setAlpha(alpha); } catch (Throwable ignored) {}
+    static void applySystemBars(Activity activity) {
+        if (activity == null || activity.getWindow() == null) return;
+        try {
+            Window window = activity.getWindow();
+            View decor = window.getDecorView();
+            Bars original;
+            synchronized (BARS) {
+                original = BARS.get(activity);
+                if (original == null) { original = new Bars(window, decor); BARS.put(activity, original); }
             }
-        }
+            int managed = View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            int flags = (decor.getSystemUiVisibility() & ~managed) | (original.flags & managed);
+            if (DockPrefs.hideStatusBar(activity)) flags |= View.SYSTEM_UI_FLAG_FULLSCREEN;
+            if (DockPrefs.hideNavigationBar(activity)) {
+                flags |= View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+            }
+            decor.setSystemUiVisibility(flags);
+            if (DockPrefs.navigationTransparent(activity)) {
+                window.setNavigationBarColor(Color.TRANSPARENT);
+                if (android.os.Build.VERSION.SDK_INT >= 28) window.setNavigationBarDividerColor(Color.TRANSPARENT);
+                if (android.os.Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(false);
+            } else {
+                window.setNavigationBarColor(original.navigationColor);
+                if (android.os.Build.VERSION.SDK_INT >= 28) window.setNavigationBarDividerColor(original.dividerColor);
+                if (android.os.Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(original.contrast);
+            }
+        } catch (Throwable t) { Dydock.warnOnce("native-system-bars", "系统栏设置失败: " + t); }
     }
 
-    private static void applyDesired(Activity activity, WeakHashMap<View, Integer> desired) {
-        WeakHashMap<View, Float> old;
-        synchronized (ORIGINAL) {
-            old = ORIGINAL.get(activity);
-            if (old == null) {
-                old = new WeakHashMap<View, Float>();
-                ORIGINAL.put(activity, old);
-            }
-        }
-        // Restore views that stopped matching, without flashing current candidates.
-        for (View previous : new ArrayList<View>(old.keySet())) {
-            if (!desired.containsKey(previous)) {
-                Float original = old.remove(previous);
-                if (previous != null && original != null) {
-                    try { previous.setAlpha(original); } catch (Throwable ignored) {}
-                }
-            }
-        }
-        for (View view : desired.keySet()) {
-            if (view == null) continue;
-            try {
-                Float original = old.get(view);
-                if (original == null) {
-                    original = view.getAlpha();
-                    old.put(view, original);
-                }
-                int percent = desired.get(view);
-                view.setAlpha(original * (percent / 100f));
-            } catch (Throwable ignored) {}
-        }
-        if (old.isEmpty()) {
-            synchronized (ORIGINAL) { ORIGINAL.remove(activity); }
-        }
+    private static void restoreBars(Activity activity) {
+        Bars original;
+        synchronized (BARS) { original = BARS.remove(activity); }
+        if (original == null || activity.getWindow() == null) return;
+        try {
+            Window w = activity.getWindow();
+            w.getDecorView().setSystemUiVisibility(original.flags);
+            w.setNavigationBarColor(original.navigationColor);
+            if (android.os.Build.VERSION.SDK_INT >= 28) w.setNavigationBarDividerColor(original.dividerColor);
+            if (android.os.Build.VERSION.SDK_INT >= 29) w.setNavigationBarContrastEnforced(original.contrast);
+        } catch (Throwable ignored) {}
     }
 
-    private static void collect(View view, View root, int depth, int[] budget,
-                                List<Candidate> out) {
-        if (view == null || depth > 22 || budget[0]-- <= 0
-                || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.03f) return;
-        if (view instanceof android.view.SurfaceView || view instanceof android.view.TextureView) return;
-        String cls = view.getClass().getName();
+    private static void collect(View v, View root, int depth, int[] budget, List<Candidate> out) {
+        if (v == null || depth > 22 || budget[0]-- <= 0 || v.getVisibility() != View.VISIBLE
+                || v.getAlpha() < 0.03f || v instanceof android.view.SurfaceView
+                || v instanceof android.view.TextureView) return;
+        String cls = v.getClass().getName();
         if (cls.startsWith("com.zaka.douyin.glass")) return;
-        if (view instanceof ViewGroup && view != root && view.getWidth() > 0 && view.getHeight() > 0) {
-            Rect page = Shield.rectOf(root);
-            Rect bounds = Shield.rectOf(view);
+        if (v instanceof ViewGroup && v != root && v.getWidth() > 0 && v.getHeight() > 0) {
+            Rect page = Shield.rectOf(root), bounds = Shield.rectOf(v);
             if (!page.isEmpty() && bounds.intersect(page)) {
-                float density = view.getResources().getDisplayMetrics().density;
-                String identity = identity(view);
-                boolean top = bounds.top <= page.top + page.height() * 0.24f
-                        && bounds.height() >= 24f * density && bounds.height() <= 132f * density
-                        && bounds.width() >= page.width() * 0.48f
-                        && (hasAny(identity, "toolbar", "topbar", "titlebar", "header", "top_bar")
-                            || hasTopLabels(view, 0, new int[]{64}));
-                boolean controls = bounds.height() >= 24f * density
-                        && bounds.height() <= page.height() * 0.70f
-                        && bounds.width() >= page.width() * 0.16f
-                        && bounds.bottom <= page.bottom - page.height() * 0.16f
-                        && (hasAny(identity, "playercontrol", "video_control", "videocontrol",
-                                    "playbackcontrol", "player_toolbar", "action_panel")
-                            || hasVideoControlLabels(view, 0, new int[]{72}));
-                if (top || controls) out.add(new Candidate(view, bounds, top, controls, depth));
+                float d = v.getResources().getDisplayMetrics().density;
+                String id = identity(v);
+                boolean top = bounds.top <= page.top + page.height() * .24f
+                        && bounds.height() >= 24*d && bounds.height() <= 150*d
+                        && bounds.width() >= page.width()*.46f
+                        && (hasAny(id,"toolbar","topbar","titlebar","header","top_bar")
+                            || hasLabels(v,1,0,new int[]{72}));
+                boolean controls = bounds.height() >= 24*d && bounds.height() <= page.height()*.70f
+                        && bounds.width() >= page.width()*.15f
+                        && bounds.bottom <= page.bottom-page.height()*.12f
+                        && (hasAny(id,"playercontrol","video_control","videocontrol","playbackcontrol","action_panel")
+                            || hasLabels(v,2,0,new int[]{96}));
+                boolean bottom = bounds.bottom >= page.bottom-page.height()*.22f
+                        && bounds.height() >= 24*d && bounds.height() <= 180*d
+                        && bounds.width() >= page.width()*.50f
+                        && (hasAny(id,"bottomnavigation","bottom_navigation","bottom_nav","bottom_bar","tabbar","navigation_bar")
+                            || hasLabels(v,3,0,new int[]{72}));
+                if (top || controls || bottom) out.add(new Candidate(v,bounds,top,controls,bottom,depth));
             }
         }
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
-                collect(group.getChildAt(i), root, depth + 1, budget, out);
-            }
+        if (v instanceof ViewGroup) {
+            ViewGroup g=(ViewGroup)v;
+            for(int i=0;i<g.getChildCount() && budget[0]>0;i++) collect(g.getChildAt(i),root,depth+1,budget,out);
         }
     }
 
-    private static Candidate chooseTop(List<Candidate> nodes) {
-        Candidate best = null;
-        for (Candidate c : nodes) {
-            if (!c.top) continue;
-            if (best == null || c.depth < best.depth
-                    || (c.depth == best.depth && area(c.bounds) > area(best.bounds))) best = c;
+    private static Candidate choose(List<Candidate> all,int kind,Candidate a,Candidate b) {
+        Candidate best=null;
+        for(Candidate c:all) {
+            boolean match=kind==1?c.top:kind==2?c.controls:c.bottom;
+            if(!match) continue;
+            if(a!=null && (a.view==c.view || ancestor(a.view,c.view))) continue;
+            if(b!=null && (b.view==c.view || ancestor(b.view,c.view))) continue;
+            if(best==null || (kind==1?c.depth<best.depth:c.depth>best.depth)
+                    || (c.depth==best.depth && (kind==1?area(c.rect)>area(best.rect):area(c.rect)<area(best.rect)))) best=c;
         }
         return best;
     }
 
-    private static Candidate chooseControls(List<Candidate> nodes, Candidate top) {
-        Candidate best = null;
-        for (Candidate c : nodes) {
-            if (!c.controls || (top != null && isAncestor(top.view, c.view))) continue;
-            // Prefer the most specific control container to avoid fading the entire video page.
-            if (best == null || c.depth > best.depth
-                    || (c.depth == best.depth && area(c.bounds) < area(best.bounds))) best = c;
-        }
-        return best;
-    }
-
-    private static boolean isAncestor(View ancestor, View child) {
-        if (ancestor == null || child == null) return false;
-        android.view.ViewParent p = child.getParent();
-        for (int i = 0; i < 32 && p != null; i++, p = p.getParent()) {
-            if (p == ancestor) return true;
-        }
+    private static boolean ancestor(View a,View b) {
+        android.view.ViewParent p=b==null?null:b.getParent();
+        for(int i=0;i<32 && p!=null;i++,p=p.getParent()) if(p==a) return true;
         return false;
     }
-
-    private static long area(Rect r) { return (long) r.width() * r.height(); }
+    private static long area(Rect r){return (long)r.width()*r.height();}
 
     private static String identity(View v) {
-        StringBuilder b = new StringBuilder(v.getClass().getName().toLowerCase());
-        if (v.getId() != View.NO_ID) {
-            try { b.append(' ').append(v.getResources().getResourceEntryName(v.getId()).toLowerCase()); }
-            catch (Throwable ignored) {}
-        }
-        return b.toString();
+        String s=v.getClass().getName().toLowerCase();
+        if(v.getId()!=View.NO_ID) try{s+=" "+v.getResources().getResourceEntryName(v.getId()).toLowerCase();}catch(Throwable ignored){}
+        return s;
     }
+    private static String label(View v) {
+        String s="";
+        if(v instanceof TextView){CharSequence t=((TextView)v).getText();if(t!=null)s=t.toString();}
+        CharSequence d=v.getContentDescription();if(d!=null)s+=" "+d;
+        return s.toLowerCase();
+    }
+    private static boolean hasLabels(View v,int kind,int depth,int[] budget) {
+        if(v==null || depth>(kind==2?7:6) || budget[0]--<=0)return false;
+        String s=label(v);
+        boolean hit=kind==1?contains(s,"推荐","关注","同城","朋友","搜索","扫一扫","直播")
+                :kind==2?contains(s,"暂停","播放","倍速","进度","点赞","评论","分享","收藏","音量","全屏","选集")
+                :contains(s,"首页","朋友","消息","商城","拍摄","我");
+        if(hit)return true;
+        if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount()&&budget[0]>0;i++)if(hasLabels(g.getChildAt(i),kind,depth+1,budget))return true;}
+        return false;
+    }
+    private static boolean contains(String s,String... words){for(String w:words)if(s.contains(w.toLowerCase()))return true;return false;}
+    private static boolean hasAny(String s,String... words){return contains(s,words);}
 
-    private static boolean hasTopLabels(View view, int depth, int[] budget) {
-        if (view == null || depth > 6 || budget[0]-- <= 0) return false;
-        String value = label(view);
-        if (containsAny(value, "推荐", "关注", "同城", "朋友", "搜索", "扫一扫", "直播")) return true;
-        if (view instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) view;
-            for (int i = 0; i < g.getChildCount() && budget[0] > 0; i++)
-                if (hasTopLabels(g.getChildAt(i), depth + 1, budget)) return true;
+    private static boolean isPaused(View root) { return findPaused(root,0,new int[]{900}); }
+    private static boolean findPaused(View v,int depth,int[] budget) {
+        if(v==null || depth>18 || budget[0]--<=0 || v.getVisibility()!=View.VISIBLE)return false;
+        String s=label(v), id=identity(v);
+        if(v.isClickable() || v.hasOnClickListeners() || hasAny(id,"player","playback","control")) {
+            if(s.contains("播放")||s.contains("play"))return true;
+            if(s.contains("暂停")||s.contains("pause"))return false;
         }
+        if(v instanceof ViewGroup){ViewGroup g=(ViewGroup)v;for(int i=0;i<g.getChildCount()&&budget[0]>0;i++)if(findPaused(g.getChildAt(i),depth+1,budget))return true;}
         return false;
     }
 
-    private static boolean hasVideoControlLabels(View view, int depth, int[] budget) {
-        if (view == null || depth > 7 || budget[0]-- <= 0) return false;
-        String value = label(view);
-        if (containsAny(value, "暂停", "播放", "倍速", "进度", "点赞", "评论", "分享",
-                "收藏", "音量", "全屏", "选集")) return true;
-        if (view instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) view;
-            for (int i = 0; i < g.getChildCount() && budget[0] > 0; i++)
-                if (hasVideoControlLabels(g.getChildAt(i), depth + 1, budget)) return true;
-        }
-        return false;
+    private static void applyAlphas(Activity a,WeakHashMap<View,Integer> wanted) {
+        WeakHashMap<View,Float> old;
+        synchronized(ALPHAS){old=ALPHAS.get(a);if(old==null){old=new WeakHashMap<>();ALPHAS.put(a,old);}}
+        for(View v:new ArrayList<>(old.keySet()))if(!wanted.containsKey(v)){Float f=old.remove(v);if(v!=null&&f!=null)try{v.setAlpha(f);}catch(Throwable ignored){}}
+        for(View v:wanted.keySet())if(v!=null)try{Float f=old.get(v);if(f==null){f=v.getAlpha();old.put(v,f);}v.setAlpha(f*wanted.get(v)/100f);}catch(Throwable ignored){}
+        if(old.isEmpty())synchronized(ALPHAS){ALPHAS.remove(a);}
     }
-
-    private static boolean isPaused(View root) {
-        return findPlaybackState(root, 0, new int[]{900});
+    private static void applyBackgrounds(Activity a,WeakHashMap<View,Boolean> wanted) {
+        WeakHashMap<View,Background> old;
+        synchronized(BACKGROUNDS){old=BACKGROUNDS.get(a);if(old==null){old=new WeakHashMap<>();BACKGROUNDS.put(a,old);}}
+        for(View v:new ArrayList<>(old.keySet()))if(!wanted.containsKey(v)){Background b=old.remove(v);if(v!=null&&b!=null)try{v.setBackground(b.drawable);}catch(Throwable ignored){}}
+        for(View v:wanted.keySet())if(v!=null)try{if(!old.containsKey(v))old.put(v,new Background(v.getBackground()));v.setBackgroundColor(Color.TRANSPARENT);}catch(Throwable ignored){}
+        if(old.isEmpty())synchronized(BACKGROUNDS){BACKGROUNDS.remove(a);}
     }
-
-    private static boolean findPlaybackState(View view, int depth, int[] budget) {
-        if (view == null || depth > 18 || budget[0]-- <= 0
-                || view.getVisibility() != View.VISIBLE) return false;
-        String identity = identity(view);
-        String value = label(view).toLowerCase();
-        boolean buttonLike = view.isClickable() || view.hasOnClickListeners()
-                || hasAny(identity, "player", "playback", "control", "play_button", "pause_button");
-        if (buttonLike) {
-            if (value.contains("播放") || value.contains("play")) return true;
-            if (value.contains("暂停") || value.contains("pause")) return false;
-        }
-        if (view instanceof ViewGroup) {
-            ViewGroup g = (ViewGroup) view;
-            for (int i = 0; i < g.getChildCount() && budget[0] > 0; i++) {
-                View child = g.getChildAt(i);
-                if (findPlaybackState(child, depth + 1, budget)) return true;
-            }
-        }
-        return false;
-    }
-
-    private static String label(View view) {
-        String value = "";
-        if (view instanceof TextView) {
-            CharSequence text = ((TextView) view).getText();
-            if (text != null) value = text.toString();
-        }
-        CharSequence desc = view.getContentDescription();
-        if (desc != null) value += " " + desc;
-        return value.toLowerCase();
-    }
-
-    private static boolean containsAny(String value, String... words) {
-        if (value == null || value.isEmpty()) return false;
-        for (String word : words) if (value.contains(word.toLowerCase())) return true;
-        return false;
-    }
-
-    private static boolean hasAny(String value, String... words) {
-        return containsAny(value, words);
+    private static void restoreViews(Activity a) {
+        WeakHashMap<View,Float> alphas;synchronized(ALPHAS){alphas=ALPHAS.remove(a);}
+        if(alphas!=null)for(View v:alphas.keySet()){Float f=alphas.get(v);if(v!=null&&f!=null)try{v.setAlpha(f);}catch(Throwable ignored){}}
+        WeakHashMap<View,Background> bgs;synchronized(BACKGROUNDS){bgs=BACKGROUNDS.remove(a);}
+        if(bgs!=null)for(View v:bgs.keySet()){Background b=bgs.get(v);if(v!=null&&b!=null)try{v.setBackground(b.drawable);}catch(Throwable ignored){}}
     }
 
     private static final class Candidate {
-        final View view;
-        final Rect bounds;
-        final boolean top;
-        final boolean controls;
-        final int depth;
-        Candidate(View view, Rect bounds, boolean top, boolean controls, int depth) {
-            this.view = view; this.bounds = new Rect(bounds);
-            this.top = top; this.controls = controls; this.depth = depth;
-        }
+        final View view; final Rect rect; final boolean top,controls,bottom; final int depth;
+        Candidate(View v,Rect r,boolean t,boolean c,boolean b,int d){view=v;rect=new Rect(r);top=t;controls=c;bottom=b;depth=d;}
+    }
+    private static final class Background { final Drawable drawable; Background(Drawable d){drawable=d;} }
+    private static final class Bars {
+        final int flags,navigationColor,dividerColor; final boolean contrast;
+        Bars(Window w,View d){flags=d.getSystemUiVisibility();navigationColor=w.getNavigationBarColor();
+            dividerColor=android.os.Build.VERSION.SDK_INT>=28?w.getNavigationBarDividerColor():navigationColor;
+            contrast=android.os.Build.VERSION.SDK_INT>=29 && w.isNavigationBarContrastEnforced();}
     }
 }
