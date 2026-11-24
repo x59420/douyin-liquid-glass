@@ -1076,8 +1076,10 @@ final class DockController {
                         }
                     }
                     boolean speedPlayback = speedPlaybackState[0];
-                    boolean clearScreen = clearScreenState[0]
-                            || updateGestureClearMode(act, d, clearScreenState[0]);
+                    // 必须始终推进手势清屏状态机：不能用 || 短路跳过 markerClear=true
+                    // 时的确认步骤，否则宿主标记清屏期间永远无法置 confirmed，恢复后可能卡住。
+                    boolean gestureClear = updateGestureClearMode(act, d, clearScreenState[0]);
+                    boolean clearScreen = clearScreenState[0] || gestureClear;
 
                     // 浮层扫描要遍历几百个节点，跟着 16ms 轮询跑会拖帧；60ms 一次足够。
                     if (now - lastExpandedAt[0] >= 60L) {
