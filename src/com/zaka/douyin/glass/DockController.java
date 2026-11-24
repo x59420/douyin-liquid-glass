@@ -1036,12 +1036,15 @@ final class DockController {
                     // 评论区本身就是需要隐藏 Dock 的页面状态；不要再用 commentOpen
                     // 去屏蔽结构隐藏判据，否则评论区会一直保留 Dock。
                     boolean structuralHidden = commentOpen[0]
-                            || coveredTicks[0] >= COVER_CONFIRM_TICKS
-                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
                             || dockMissingTicks[0] >= 12
-                            || hostHiddenTicks[0] >= 25;
-                    // 每帧读取当前选中的底部 Tab，避免资料页扫描缓存让本人「我」页误隐藏 Dock。
+                            || (!messagesTabSelected && (coveredTicks[0] >= COVER_CONFIRM_TICKS
+                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
+                            || hostHiddenTicks[0] >= 25));
+                    // 每帧读取当前选中的底部 Tab。本人「我」页和「消息」主 Tab
+                    // 都是一级导航页面；切换消息 Tab 时抖音会短暂叠加页面容器，
+                    // 不能把这几帧误判成覆盖页/浮层，否则 Dock 会闪一下。
                     boolean ownProfileTabSelected = Finder.isOwnProfileTabSelected(tabTargets[0]);
+                    boolean messagesTabSelected = Finder.isMessagesTabSelected(tabTargets[0]);
                     boolean otherProfile = otherProfileState[0] && !ownProfileTabSelected;
                     boolean hidden = speedPlayback || longPress || clearScreen
                             || structuralHidden || otherProfile;
@@ -2155,6 +2158,16 @@ final class DockController {
                 if (item == null) continue;
                 String label = navigationLabel(item, 0);
                 if (("我".equals(label) || "个人主页".equals(label))
+                        && selectedDeep(item, 0)) return true;
+            }
+            return false;
+        }
+
+        /** 消息是一级主 Tab；其切页动画不应触发覆盖页/浮层隐藏。 */
+        static boolean isMessagesTabSelected(List<View> items) {
+            if (items == null || items.isEmpty()) return false;
+            for (View item : items) {
+                if (item != null && "消息".equals(navigationLabel(item, 0))
                         && selectedDeep(item, 0)) return true;
             }
             return false;
