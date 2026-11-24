@@ -652,17 +652,13 @@ class filters    private static void attempt(final Activity act, final int n) {
         }, n == 0 ? 120L : RETRY_MS);
     }
 
-    /** 把当前成立的隐藏理由拼成一行，只在状态变化时写日志。 */
+    /** Build a concise reason for the remaining gesture/native-host visibility states. */
     private static String hideReason(boolean speedPlayback, boolean longPress, boolean clearScreen,
-                                     boolean commentOpen, int coveredTicks, int expandedTicks,
                                      int dockMissingTicks, int hostHiddenTicks) {
         StringBuilder sb = new StringBuilder();
         if (speedPlayback) sb.append("倍速播放 ");
         if (longPress) sb.append("长按加速 ");
         if (clearScreen) sb.append("清屏 ");
-        if (coveredTicks >= COVER_CONFIRM_TICKS) sb.append("整屏覆盖页 ");
-        if (commentOpen) sb.append("评论区 ");
-        if (expandedTicks >= COVER_CONFIRM_TICKS) sb.append("展开浮层 ");
         if (dockMissingTicks >= 12) sb.append("原生底栏脱离窗口 ");
         if (hostHiddenTicks >= 25) sb.append("宿主隐藏了底栏容器 ");
         if (sb.length() == 0) sb.append("复合判据");
@@ -1024,9 +1020,7 @@ class filters    private static void attempt(final Activity act, final int n) {
                         // 要连续干净地撑过一小段时间才恢复，转场里的那几帧空档就不会闪。
                         lastHideStructural[0] = !(speedPlayback || longPress || clearScreen);
                         String why = hideReason(speedPlayback, longPress, clearScreen,
-                                commentOpen[0], coveredTicks[0], expandedTicks[0],
                                 dockMissingTicks[0], hostHiddenTicks[0]);
-                        if (otherProfileState[0]) why += " 他人主页";
                         if (!why.equals(lastHideReason[0])) {
                             lastHideReason[0] = why;
                             Dydock.log("底栏隐藏：" + why);
