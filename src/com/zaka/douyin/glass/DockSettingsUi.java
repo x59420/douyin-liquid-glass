@@ -2,7 +2,7 @@ package com.zaka.douyin.glass;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.Intent;
+import android.content.ContextWrapper;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -168,18 +168,32 @@ final class DockSettingsUi {
         }
     }
 
-    /** 打开模块自己的设置界面（新的整屏界面，液态玻璃风格）。 */
+    /** 在当前抖音 Activity 上弹出透明背景的设置面板，不启动独立 Activity。 */
     static void openSettings(Context context) {
-        if (context == null) return;
+        Activity activity = findActivity(context);
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) return;
         try {
-            Intent intent = new Intent();
-            intent.setClassName(Dydock.PKG, Dydock.PKG + ".DockSettingsActivity");
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            context.startActivity(intent);
-            Dydock.log("设置:已打开 dydock 设置界面");
+            if (IsoDock.showSettings(activity)) {
+                Dydock.log("设置:已在当前抖音页面打开 dydock 面板");
+            } else {
+                Dydock.warnOnce("open-settings", "设置面板隔离加载失败，未跳转独立页面");
+            }
         } catch (Throwable t) {
-            Dydock.warnOnce("open-settings", "打开设置界面失败: " + t);
+            Dydock.warnOnce("open-settings", "打开设置面板失败: " + t);
         }
+    }
+
+    private static Activity findActivity(Context context) {
+        Context current = context;
+        for (int i = 0; i < 8 && current != null; i++) {
+            if (current instanceof Activity) return (Activity) current;
+            if (current instanceof ContextWrapper) {
+                Context next = ((ContextWrapper) current).getBaseContext();
+                if (next == current) break;
+                current = next;
+            } else break;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------ 监听
