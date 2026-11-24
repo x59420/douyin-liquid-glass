@@ -361,7 +361,7 @@ final class DockController {
      * 常驻隐藏的层、我们自己的玻璃层、content / decor 这两个根节点都不参与判断。
      */
     private static final class ChromeSnapshot {
-        private static final int DEPTH = 12;
+        private static final int DEPTH = 24;
 
         private final View content;
         private final View decor;
