@@ -59,6 +59,7 @@ final class IsoDock {
     final View view;
 
     private final Method setGeometryMethod;
+    private final Method setDockVisibleMethod;
     private final Method setBackdropMethod;
     private final Method clearBackdropMethod;
     private final Method setTabsMethod;
@@ -71,6 +72,7 @@ final class IsoDock {
     private IsoDock(View view, Class<?> iso) throws NoSuchMethodException {
         this.view = view;
         this.setGeometryMethod = iso.getMethod("setGeometry", Rect.class, Rect.class, Rect.class);
+        this.setDockVisibleMethod = iso.getMethod("setDockVisible", boolean.class);
         this.setBackdropMethod = iso.getMethod("setBackdrop", Bitmap.class);
         this.clearBackdropMethod = iso.getMethod("clearBackdrop");
         this.setTabsMethod = iso.getMethod("setTabs", String[].class, Bitmap[].class, int.class);
@@ -270,6 +272,10 @@ final class IsoDock {
 
     void setGeometry(Rect region, Rect tabs, Rect plus) {
         invoke(setGeometryMethod, "setGeometry", region, tabs, plus);
+    }
+
+    void setDockVisible(boolean visible) {
+        invoke(setDockVisibleMethod, "setDockVisible", visible);
     }
 
     void setBackdrop(Bitmap bitmap) {
