@@ -42,8 +42,8 @@ final class DockController {
      * 显隐过渡：所有页面、所有理由（倍速 / 清屏 / 覆盖页 / 浮层 / 宿主隐藏）共用这一套，
      * 不再有的地方硬切、有的地方慢半拍。显示 150ms、隐藏 110ms，先快后缓，手感轻。
      */
-    private static final long SHOW_MS = 60L;
-    private static final long HIDE_MS = 60L;
+    private static final long SHOW_MS = 40L;
+    private static final long HIDE_MS = 40L;
     private static final android.view.animation.Interpolator TRANSITION =
             new android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f);
     /** 手势类隐藏（倍速/清屏）恢复要快：抬手就该回来。 */
@@ -227,10 +227,17 @@ final class DockController {
                     View decor = act.getWindow() == null ? null : act.getWindow().peekDecorView();
                     int w = decor == null ? 0 : decor.getWidth();
                     int h = decor == null ? 0 : decor.getHeight();
-                    // 左上角的关闭按钮。
+                    // 左上角关闭按钮，或清屏界面常见的单击退出方式。
                     if (w > 0 && h > 0
                             && start[0] <= w * 0.24f && start[1] <= h * 0.22f) {
                         exitGestureClearMode(act, "左上角关闭");
+                        return;
+                    }
+                    float dx = event.getRawX() - start[0];
+                    float dy = event.getRawY() - start[1];
+                    float tapSlop = 24f * act.getResources().getDisplayMetrics().density;
+                    if (dx * dx + dy * dy <= tapSlop * tapSlop) {
+                        exitGestureClearMode(act, "点击退出清屏");
                         return;
                     }
                 }
@@ -983,7 +990,7 @@ final class DockController {
                         pageHasVideo[0] = Shield.hasVideoSurface(content);
                     }
                     boolean longPress = isHostLongPressActive(act, pageHasVideo[0]);
-                    if (now - lastClearScanAt[0] >= 80L) {
+                    if (now - lastClearScanAt[0] >= 24L) {
                         speedPlaybackState[0] = Shield.hasSpeedPlaybackOverlay(decor);
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
                         lastClearScanAt[0] = now;
@@ -1015,7 +1022,12 @@ final class DockController {
                     }
                     if (now - lastChatScanAt[0] >= 120L) {
                         lastChatScanAt[0] = now;
-                        chatComposerState[0] = Shield.hasBottomInputComposer(content);
+                        // 评论面板本身也有底部输入框；关闭动画期间不能把它误认成聊天输入区。
+                        boolean commentTransition = commentOpen[0]
+                                || (commentClosedAt[0] != 0L
+                                && now - commentClosedAt[0] < 1000L);
+                        chatComposerState[0] = !commentTransition
+                                && Shield.hasBottomInputComposer(content);
                     }
                     if (now - lastProfileScanAt[0] >= 240L) {
                         lastProfileScanAt[0] = now;
@@ -1093,12 +1105,19 @@ final class DockController {
                     boolean friendsTabSelected = Finder.isFriendsTabSelected(tabTargets[0]);
                     boolean mainTabSelected = ownProfileTabSelected || messagesTabSelected
                             || homeTabSelected || friendsTabSelected;
+                    // 任一一级导航页已明确选中，说明已经离开他人主页。
+                    // 清掉旧的资料页状态，避免返回首页后仍被上一页的状态锁住。
+                    if (mainTabSelected && otherProfileState[0]) {
+                        otherProfileState[0] = false;
+                        lastOtherProfileHitAt[0] = 0L;
+                    }
                     boolean commentReturnGrace = commentClosedAt[0] != 0L
-                            && now - commentClosedAt[0] < 700L;
+                            && now - commentClosedAt[0] < 1000L;
                     boolean messagesClickGrace = now < messagesClickUntil[0];
                     // 一级导航页切换时宿主会短暂重排覆盖层/底栏；这些结构信号不能让 Dock 闪烁。
                     // 会话输入框和评论面板是明确的二级页面，仍然优先隐藏。
-                    boolean structuralHidden = commentOpen[0] || chatComposerState[0]
+                    boolean structuralHidden = commentOpen[0]
+                            || (chatComposerState[0] && !mainTabSelected && !commentReturnGrace)
                             || (!mainTabSelected && !messagesClickGrace && !commentReturnGrace
                             && (dockMissingTicks[0] >= 12
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
