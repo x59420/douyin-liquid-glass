@@ -46,7 +46,7 @@ class DockSettingsActivity : Activity() {
         super.onCreate(savedInstanceState)
         state = SettingsState(this)
         host = SettingsHost(this)
-        host.compose { SettingsScreen(state, Dydock.VER) { finish() } }
+        host.compose { SettingsScreen(state, Dydock.VER, onBack = { finish() }) }
         window.setBackgroundDrawable(ColorDrawable(Color.parseColor("#070A12")))
         setContentView(host)
         applyEdgeToEdge()
