@@ -25,6 +25,12 @@ final class DockPrefs {
     /** 日志开关：关掉之后只留警告/错误，LSPosed 里不再刷日常流程。 */
     private static final String KEY_LOG = "verbose_log";
     private static final String KEY_THEME_MODE = "theme_mode";
+    private static final String KEY_NATIVE_TOP_ENABLED = "native_top_transparency_enabled";
+    private static final String KEY_NATIVE_TOP_PLAY_ALPHA = "native_top_play_alpha";
+    private static final String KEY_NATIVE_TOP_PAUSE_ALPHA = "native_top_pause_alpha";
+    private static final String KEY_NATIVE_CONTROLS_ENABLED = "native_controls_transparency_enabled";
+    private static final String KEY_NATIVE_CONTROLS_PLAY_ALPHA = "native_controls_play_alpha";
+    private static final String KEY_NATIVE_CONTROLS_PAUSE_ALPHA = "native_controls_pause_alpha";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -124,6 +130,20 @@ final class DockPrefs {
         return clamp(readInt(context, KEY_THEME_MODE, 0), 0, 2);
     }
 
+    static boolean nativeTopEnabled(Context c) { return readBool(c, KEY_NATIVE_TOP_ENABLED, false); }
+    static void setNativeTopEnabled(Context c, boolean v) { writeBool(c, KEY_NATIVE_TOP_ENABLED, v); }
+    static int nativeTopPlayAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_TOP_PLAY_ALPHA, 100), 0, 100); }
+    static void setNativeTopPlayAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_TOP_PLAY_ALPHA, clamp(v, 0, 100)); }
+    static int nativeTopPauseAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_TOP_PAUSE_ALPHA, 100), 0, 100); }
+    static void setNativeTopPauseAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_TOP_PAUSE_ALPHA, clamp(v, 0, 100)); }
+
+    static boolean nativeControlsEnabled(Context c) { return readBool(c, KEY_NATIVE_CONTROLS_ENABLED, false); }
+    static void setNativeControlsEnabled(Context c, boolean v) { writeBool(c, KEY_NATIVE_CONTROLS_ENABLED, v); }
+    static int nativeControlsPlayAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_CONTROLS_PLAY_ALPHA, 100), 0, 100); }
+    static void setNativeControlsPlayAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_CONTROLS_PLAY_ALPHA, clamp(v, 0, 100)); }
+    static int nativeControlsPauseAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_CONTROLS_PAUSE_ALPHA, 100), 0, 100); }
+    static void setNativeControlsPauseAlpha(Context c, int v) { writeInt(c, KEY_NATIVE_CONTROLS_PAUSE_ALPHA, clamp(v, 0, 100)); }
+
     static void setThemeMode(Context context, int value) {
         writeInt(context, KEY_THEME_MODE, clamp(value, 0, 2));
     }
@@ -197,6 +217,12 @@ final class DockPrefs {
             editor.putInt(KEY_BOTTOM_GAP, remote.getInt(KEY_BOTTOM_GAP, DEF_BOTTOM_GAP));
             editor.putInt(KEY_ENTRY_OFFSET, remote.getInt(KEY_ENTRY_OFFSET, 0));
             editor.putBoolean(KEY_LOG, remote.getBoolean(KEY_LOG, true));
+            editor.putBoolean(KEY_NATIVE_TOP_ENABLED, remote.getBoolean(KEY_NATIVE_TOP_ENABLED, false));
+            editor.putInt(KEY_NATIVE_TOP_PLAY_ALPHA, remote.getInt(KEY_NATIVE_TOP_PLAY_ALPHA, 100));
+            editor.putInt(KEY_NATIVE_TOP_PAUSE_ALPHA, remote.getInt(KEY_NATIVE_TOP_PAUSE_ALPHA, 100));
+            editor.putBoolean(KEY_NATIVE_CONTROLS_ENABLED, remote.getBoolean(KEY_NATIVE_CONTROLS_ENABLED, false));
+            editor.putInt(KEY_NATIVE_CONTROLS_PLAY_ALPHA, remote.getInt(KEY_NATIVE_CONTROLS_PLAY_ALPHA, 100));
+            editor.putInt(KEY_NATIVE_CONTROLS_PAUSE_ALPHA, remote.getInt(KEY_NATIVE_CONTROLS_PAUSE_ALPHA, 100));
             editor.putLong(KEY_REV, remoteRev);
             editor.apply();
             Dydock.setVerbose(remote.getBoolean(KEY_LOG, true));
