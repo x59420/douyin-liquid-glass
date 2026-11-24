@@ -93,14 +93,11 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val sideMargin = mutableStateOf(DockPrefs.sideMarginDp(ctx))
     override val bottomGap = mutableStateOf(DockPrefs.bottomGapDp(ctx))
     override val nativeTopEnabled = mutableStateOf(DockPrefs.nativeTopEnabled(ctx))
-    override val nativeTopPlayAlpha = mutableStateOf(DockPrefs.nativeTopPlayAlpha(ctx))
-    override val nativeTopPauseAlpha = mutableStateOf(DockPrefs.nativeTopPauseAlpha(ctx))
+    override val nativeTopAlpha = mutableStateOf(DockPrefs.nativeTopAlpha(ctx))
     override val nativeControlsEnabled = mutableStateOf(DockPrefs.nativeControlsEnabled(ctx))
-    override val nativeControlsPlayAlpha = mutableStateOf(DockPrefs.nativeControlsPlayAlpha(ctx))
-    override val nativeControlsPauseAlpha = mutableStateOf(DockPrefs.nativeControlsPauseAlpha(ctx))
+    override val nativeControlsAlpha = mutableStateOf(DockPrefs.nativeControlsAlpha(ctx))
     override val nativeBottomEnabled = mutableStateOf(DockPrefs.nativeBottomEnabled(ctx))
-    override val nativeBottomPlayAlpha = mutableStateOf(DockPrefs.nativeBottomPlayAlpha(ctx))
-    override val nativeBottomPauseAlpha = mutableStateOf(DockPrefs.nativeBottomPauseAlpha(ctx))
+    override val nativeBottomAlpha = mutableStateOf(DockPrefs.nativeBottomAlpha(ctx))
     override val homeTopTransparent = mutableStateOf(DockPrefs.homeTopTransparent(ctx))
     override val homeBottomTransparent = mutableStateOf(DockPrefs.homeBottomTransparent(ctx))
     override val navigationTransparent = mutableStateOf(DockPrefs.navigationTransparent(ctx))
@@ -166,14 +163,11 @@ internal class SettingsState(context: Context) : SettingsModel {
         DockPrefs.setNativeTopEnabled(ctx, value)
         push()
     }
-    override fun setNativeTopPlayAlpha(value: Int) {
-        nativeTopPlayAlpha.value = value.coerceIn(0, 100)
-        DockPrefs.setNativeTopPlayAlpha(ctx, value)
+    override fun setNativeTopAlpha(value: Int) {
+        nativeTopAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeTopAlpha(ctx, value)
         push()
     }
-    override fun setNativeTopPauseAlpha(value: Int) {
-        nativeTopPauseAlpha.value = value.coerceIn(0, 100)
-        DockPrefs.setNativeTopPauseAlpha(ctx, value)
         push()
     }
     override fun setNativeControlsEnabled(value: Boolean) {
@@ -181,19 +175,15 @@ internal class SettingsState(context: Context) : SettingsModel {
         DockPrefs.setNativeControlsEnabled(ctx, value)
         push()
     }
-    override fun setNativeControlsPlayAlpha(value: Int) {
-        nativeControlsPlayAlpha.value = value.coerceIn(0, 100)
-        DockPrefs.setNativeControlsPlayAlpha(ctx, value)
+    override fun setNativeControlsAlpha(value: Int) {
+        nativeControlsAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeControlsAlpha(ctx, value)
         push()
     }
-    override fun setNativeControlsPauseAlpha(value: Int) {
-        nativeControlsPauseAlpha.value = value.coerceIn(0, 100)
-        DockPrefs.setNativeControlsPauseAlpha(ctx, value)
         push()
     }
     override fun setNativeBottomEnabled(value: Boolean) { nativeBottomEnabled.value = value; DockPrefs.setNativeBottomEnabled(ctx, value); push() }
-    override fun setNativeBottomPlayAlpha(value: Int) { nativeBottomPlayAlpha.value = value.coerceIn(0,100); DockPrefs.setNativeBottomPlayAlpha(ctx,value); push() }
-    override fun setNativeBottomPauseAlpha(value: Int) { nativeBottomPauseAlpha.value = value.coerceIn(0,100); DockPrefs.setNativeBottomPauseAlpha(ctx,value); push() }
+    override fun setNativeBottomAlpha(value: Int) { nativeBottomAlpha.value = value.coerceIn(0,100); DockPrefs.setNativeBottomAlpha(ctx,value); push() }
     override fun setHomeTopTransparent(value: Boolean) { homeTopTransparent.value = value; DockPrefs.setHomeTopTransparent(ctx,value); push() }
     override fun setHomeBottomTransparent(value: Boolean) { homeBottomTransparent.value = value; DockPrefs.setHomeBottomTransparent(ctx,value); push() }
     override fun setNavigationTransparent(value: Boolean) { navigationTransparent.value = value; DockPrefs.setNavigationTransparent(ctx,value); push() }
@@ -218,14 +208,11 @@ internal class SettingsState(context: Context) : SettingsModel {
             sideMargin.value,
             bottomGap.value,
             nativeTopEnabled.value,
-            nativeTopPlayAlpha.value,
-            nativeTopPauseAlpha.value,
+            nativeTopAlpha.value,
             nativeControlsEnabled.value,
-            nativeControlsPlayAlpha.value,
-            nativeControlsPauseAlpha.value,
+            nativeControlsAlpha.value,
             nativeBottomEnabled.value,
-            nativeBottomPlayAlpha.value,
-            nativeBottomPauseAlpha.value,
+            nativeBottomAlpha.value,
             homeTopTransparent.value,
             homeBottomTransparent.value,
             navigationTransparent.value,
@@ -243,14 +230,11 @@ internal class SettingsState(context: Context) : SettingsModel {
         setSideMargin(DockPrefs.DEF_SIDE_MARGIN)
         setBottomGap(DockPrefs.DEF_BOTTOM_GAP)
         setNativeTopEnabled(false)
-        setNativeTopPlayAlpha(100)
-        setNativeTopPauseAlpha(100)
+        setNativeTopAlpha(100)
         setNativeControlsEnabled(false)
-        setNativeControlsPlayAlpha(100)
-        setNativeControlsPauseAlpha(100)
+        setNativeControlsAlpha(100)
         setNativeBottomEnabled(false)
-        setNativeBottomPlayAlpha(100)
-        setNativeBottomPauseAlpha(100)
+        setNativeBottomAlpha(100)
         setHomeTopTransparent(false)
         setHomeBottomTransparent(false)
         setNavigationTransparent(true)
@@ -387,36 +371,31 @@ internal fun SettingsScreen(
             GlassCard(scene) {
                 SwitchRow(
                     title = "顶部原生菜单透明",
-                    subtitle = "只处理抖音顶部原生控件，不影响 dyDock",
+                    subtitle = "播放和暂停时使用同一透明度，不影响 dyDock",
                     checked = state.nativeTopEnabled.value,
                     onChange = state::setNativeTopEnabled,
                 )
                 Divider()
-                SliderRow("播放时顶部透明度", state.nativeTopPlayAlpha.value,
-                    0, 100, 5, state::setNativeTopPlayAlpha, "%")
+                SliderRow("顶部菜单透明度", state.nativeTopAlpha.value,
+                    0, 100, 5, state::setNativeTopAlpha, "%")
                 Divider()
-                SliderRow("暂停时顶部透明度", state.nativeTopPauseAlpha.value,
-                    0, 100, 5, state::setNativeTopPauseAlpha, "%")
                 Divider()
                 SwitchRow(
                     title = "原生视频控件透明",
-                    subtitle = "只处理视频页原生控制层，不处理底部 Dock",
+                    subtitle = "播放和暂停时使用同一透明度，不处理底部 Dock",
                     checked = state.nativeControlsEnabled.value,
                     onChange = state::setNativeControlsEnabled,
                 )
                 Divider()
-                SliderRow("播放时视频控件透明度", state.nativeControlsPlayAlpha.value,
-                    0, 100, 5, state::setNativeControlsPlayAlpha, "%")
+                SliderRow("视频控件透明度", state.nativeControlsAlpha.value,
+                    0, 100, 5, state::setNativeControlsAlpha, "%")
                 Divider()
-                SliderRow("暂停时视频控件透明度", state.nativeControlsPauseAlpha.value,
-                    0, 100, 5, state::setNativeControlsPauseAlpha, "%")
                 Divider()
-                SwitchRow("底部原生菜单透明", "仅原生底栏显示时生效；dyDock 玻璃 Dock 保持原样",
+                SwitchRow("底部原生菜单透明", "播放和暂停时使用同一透明度；dyDock 玻璃 Dock 保持原样",
                     state.nativeBottomEnabled.value, state::setNativeBottomEnabled)
                 Divider()
-                SliderRow("播放时底部菜单透明度", state.nativeBottomPlayAlpha.value, 0, 100, 5, state::setNativeBottomPlayAlpha, "%")
+                SliderRow("底部菜单透明度", state.nativeBottomAlpha.value, 0, 100, 5, state::setNativeBottomAlpha, "%")
                 Divider()
-                SliderRow("暂停时底部菜单透明度", state.nativeBottomPauseAlpha.value, 0, 100, 5, state::setNativeBottomPauseAlpha, "%")
                 Divider()
                 SwitchRow("主页顶部背景透明", "移除主页顶部原生菜单背景，不改变文字和点击区域",
                     state.homeTopTransparent.value, state::setHomeTopTransparent)
