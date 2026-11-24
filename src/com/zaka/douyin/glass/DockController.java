@@ -1588,29 +1588,19 @@ final class DockController {
      */
     private static void applyImmersiveNavigation(Activity act) {
         try {
-            android.view.Window window = act.getWindow();
+            android.view.Window window = act == null ? null : act.getWindow();
             if (window == null) return;
-            if (android.os.Build.VERSION.SDK_INT >= 29) {
-                window.setNavigationBarContrastEnforced(false);
-            }
-            try {
-                window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
-                if (android.os.Build.VERSION.SDK_INT >= 28) {
-                    window.setNavigationBarDividerColor(android.graphics.Color.TRANSPARENT);
-                }
-            } catch (Throwable ignored) {
-            }
             View decor = window.getDecorView();
             if (decor != null) {
                 int flags = decor.getSystemUiVisibility();
                 flags |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-                // 主动清掉：0.3.3 打开过，残留会让底栏坐标一直偏低。
                 flags &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
                 decor.setSystemUiVisibility(flags);
             }
-            Dydock.log("系统导航栏:背景透明，布局范围保持与宿主一致（Dock 贴原生底栏位置）");
+            NativeUiTransparency.applySystemBars(act);
+            Dydock.log("系统导航栏:按设置应用透明/隐藏选项");
         } catch (Throwable t) {
-            Dydock.warnOnce("immersive-nav", "设置导航栏透明度失败: " + t);
+            Dydock.warnOnce("immersive-nav", "系统栏设置失败: " + t);
         }
     }
 
