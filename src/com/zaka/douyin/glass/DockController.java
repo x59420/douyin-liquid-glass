@@ -977,7 +977,9 @@ final class DockController {
                     }
                     if (now - lastProfileScanAt[0] >= 240L) {
                         lastProfileScanAt[0] = now;
-                        otherProfileState[0] = Shield.isOtherProfilePage(content);
+                        // 底部「我」Tab 已选中时属于本人主页，不能被资料页特征误判成他人主页。
+                        otherProfileState[0] = Shield.isOtherProfilePage(content)
+                                && !Finder.isOwnProfileTabSelected(tabTargets[0]);
                     }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
@@ -2141,6 +2143,18 @@ final class DockController {
                 for (int i = 0; i < g.getChildCount(); i++) {
                     if (textIsPlus(g.getChildAt(i), depth + 1)) return true;
                 }
+            }
+            return false;
+        }
+
+        /** 当前底栏是否明确选中了本人「我」Tab。 */
+        static boolean isOwnProfileTabSelected(List<View> items) {
+            if (items == null || items.isEmpty()) return false;
+            for (View item : items) {
+                if (item == null) continue;
+                String label = navigationLabel(item, 0);
+                if (("我".equals(label) || "个人主页".equals(label))
+                        && selectedDeep(item, 0)) return true;
             }
             return false;
         }
