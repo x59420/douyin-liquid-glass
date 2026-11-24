@@ -134,8 +134,8 @@ public final class Backdrop {
     /**
      * 不属于「玻璃后面的画面」的视图：抖音原生底栏。
      *
-     * 正常情况下它已经被隐藏了，这里只是兜一层：万一宿主又把它设回可见，
-     * 宁可这一帧不画树，也不能把一条原生底栏画进玻璃里。
+     * dyDock 保留原生导航树用于布局与点击同步，只把它的绘制 alpha 压到近乎透明。
+     * 只有宿主真的把原生导航恢复为可见且不透明时，才跳过内容树以免重复采进原生底栏。
      */
     void setExcluded(View v) {
         excluded = v;
@@ -326,7 +326,9 @@ public final class Backdrop {
         // 2. 内容树。视频已经把这一条铺满的时候就不用画树了 ——
         //    抖音首页每 1.2 秒重画一遍整棵信息流，卡顿就是这么来的
         boolean covered = videoCoversAll(sw, sh);
-        boolean skipTree = excluded != null && excluded.isShown() && !covered;
+        boolean excludedActuallyVisible = excluded != null && excluded.isShown()
+                && excluded.getAlpha() > 0.05f;
+        boolean skipTree = excludedActuallyVisible && !covered;
         if (!covered && !skipTree) {
             try {
                 Canvas uc = new Canvas(ui);
