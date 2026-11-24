@@ -706,7 +706,7 @@ final class DockController {
 
         // 原生底栏那一带的深色底/渐变是「玻璃一片黑」的来源：我们的采样是隔着它采的。
         // 把它拿掉之后，视频画面才能真正透到 Dock 后面来。
-        stripDockBackground(dock);
+        stripDockBackground(act, dock);
         // 系统导航条那片区域：透明底、关掉对比度强制、内容延伸到底部。
         applyImmersiveNavigation(act);
 
@@ -947,6 +947,7 @@ final class DockController {
                                     List<View> lf = new ArrayList<View>(its);
                                     if (p != null) lf.remove(p);
                                     chrome[0] = new ChromeSnapshot(fresh, content, decor);
+                                    stripDockBackground(act, fresh);
                                     fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
                                     backdrop.setExcluded(fresh);
@@ -955,7 +956,7 @@ final class DockController {
                                     synchronized (DOCKS) {
                                         DOCKS.put(act, fresh);
                                     }
-                                    stripDockBackground(fresh);
+                                    // The replacement surface was stripped before it was hidden.
                                     refreshTabs(iso, lf, p);
                                     applyGeometry(iso, backdrop, fresh, lf.size());
                                     bandRect[0] = rectInWindow(fresh);
@@ -1564,17 +1565,17 @@ final class DockController {
      *
      * 抖音的底栏容器通常自己铺一层深色底 + 顶部渐变，模块只把底栏 View 设成 GONE
      * 是拿不掉这层的 —— 于是玻璃隔着它采样，看上去就是一块黑色。
-     * 只处理「够宽、且不高于屏幕 40%」的那几层，避免误伤整页容器。
+     * 只处理与底栏区域重叠的宽背景层：包括底栏子树、祖先容器和同层背景，并保存原 Drawable 供恢复。
      */
-    private static void stripDockBackground(View dock) {
-        if (dock == null) return;
-        Activity owner = Shield.activityOf(dock);
+    private static void stripDockBackground(Activity owner, View dock) {
+        if (dock == null || owner == null) return;
         View root = dock.getRootView();
         int screenW = root == null ? 0 : root.getWidth();
         int screenH = root == null ? 0 : root.getHeight();
         if (screenW <= 0 || screenH <= 0) return;
         Rect dockBand = rectInWindow(dock);
         if (dockBand.isEmpty()) return;
+        stripDockDescendants(owner, dock, dockBand, screenW, screenH, 0, new int[]{240});
 
         View current = dock;
         int visited = 0;
@@ -1593,6 +1594,17 @@ final class DockController {
             current = siblings;
         }
         Dydock.log("底栏:已检查原生底栏及其背景容器/同层背景");
+    }
+
+    private static void stripDockDescendants(Activity owner, View node, Rect dockBand,
+                                             int screenW, int screenH, int depth, int[] budget) {
+        if (node == null || depth > 8 || budget[0]-- <= 0 || !(node instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) node;
+        for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
+            View child = group.getChildAt(i);
+            stripNativeSurface(owner, child, dockBand, screenW, screenH);
+            stripDockDescendants(owner, child, dockBand, screenW, screenH, depth + 1, budget);
+        }
     }
 
     private static void stripNativeSurface(Activity owner, View view, Rect dockBand,
