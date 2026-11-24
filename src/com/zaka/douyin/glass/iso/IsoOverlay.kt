@@ -31,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.State
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -402,7 +403,7 @@ private fun GlassSurface(
     labels: List<String>,
     icons: List<ImageBitmap?>,
     selectedIndex: Int,
-    dockVisible: Boolean,
+    dockVisible: State<Boolean>,
     onTabClick: (Int) -> Unit,
     onPlusClick: () -> Unit,
     onLongPress: () -> Unit,
@@ -425,17 +426,6 @@ private fun GlassSurface(
         }
     })
     val density = LocalDensity.current
-    val dockProgress = animateFloatAsState(
-        targetValue = if (dockVisible) 1f else 0f,
-        animationSpec = tween(durationMillis = 60, easing = FastOutSlowInEasing),
-        label = "dockCapsuleVisibility"
-    ).value
-    val capsuleMotion = Modifier.graphicsLayer {
-        alpha = dockProgress
-        scaleX = 0.985f + 0.015f * dockProgress
-        scaleY = 0.985f + 0.015f * dockProgress
-        translationY = with(density) { 6.dp.toPx() } * (1f - dockProgress)
-    }
     // 33 以下没有 RuntimeShader；个别机型/ROM 上 AGSL 编译会直接抛错，
     // 这里先探一次：探不通就走 Miuix 自带的「无模糊」降级，绝不让一帧着色器异常把整层玻璃干掉。
     val isBlurEnabled = remember {
@@ -469,7 +459,7 @@ private fun GlassSurface(
                 modifier = Modifier
                     .offset(with(density) { tabsRect.left.toDp() }, with(density) { tabsRect.top.toDp() })
                     .width(with(density) { tabsRect.width().toDp() })
-                    .then(capsuleMotion),
+                    .then(CapsuleVisibilityModifier(dockVisible)),
                 contentAlignment = Alignment.TopCenter
             ) {
                 FloatingBottomBar(
@@ -527,6 +517,27 @@ private fun GlassSurface(
                 Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
             }
         }
+    }
+}
+
+/**
+ * 把显隐状态的读取限制在胶囊自己的重组作用域。
+ * 清屏切换时只重绘 Dock 胶囊，不让全屏透明层和背景采样层一起重组，
+ * 避免整屏覆盖层在状态切换帧出现黑闪。
+ */
+@Composable
+private fun CapsuleVisibilityModifier(dockVisible: State<Boolean>): Modifier {
+    val progress = animateFloatAsState(
+        targetValue = if (dockVisible.value) 1f else 0f,
+        animationSpec = tween(durationMillis = 60, easing = FastOutSlowInEasing),
+        label = "dockCapsuleVisibility"
+    ).value
+    val density = LocalDensity.current
+    return Modifier.graphicsLayer {
+        alpha = progress
+        scaleX = 0.985f + 0.015f * progress
+        scaleY = 0.985f + 0.015f * progress
+        translationY = with(density) { 6.dp.toPx() } * (1f - progress)
     }
 }
 
