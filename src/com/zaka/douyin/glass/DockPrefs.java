@@ -26,12 +26,15 @@ final class DockPrefs {
     private static final String KEY_LOG = "verbose_log";
     private static final String KEY_THEME_MODE = "theme_mode";
     private static final String KEY_NATIVE_TOP_ENABLED = "native_top_transparency_enabled";
+    private static final String KEY_NATIVE_TOP_ALPHA = "native_top_alpha";
     private static final String KEY_NATIVE_TOP_PLAY_ALPHA = "native_top_play_alpha";
     private static final String KEY_NATIVE_TOP_PAUSE_ALPHA = "native_top_pause_alpha";
     private static final String KEY_NATIVE_CONTROLS_ENABLED = "native_controls_transparency_enabled";
+    private static final String KEY_NATIVE_CONTROLS_ALPHA = "native_controls_alpha";
     private static final String KEY_NATIVE_CONTROLS_PLAY_ALPHA = "native_controls_play_alpha";
     private static final String KEY_NATIVE_CONTROLS_PAUSE_ALPHA = "native_controls_pause_alpha";
     private static final String KEY_NATIVE_BOTTOM_ENABLED = "native_bottom_transparency_enabled";
+    private static final String KEY_NATIVE_BOTTOM_ALPHA = "native_bottom_alpha";
     private static final String KEY_NATIVE_BOTTOM_PLAY_ALPHA = "native_bottom_play_alpha";
     private static final String KEY_NATIVE_BOTTOM_PAUSE_ALPHA = "native_bottom_pause_alpha";
     private static final String KEY_HOME_TOP_TRANSPARENT = "home_top_transparent_enabled";
@@ -138,6 +141,28 @@ final class DockPrefs {
         return clamp(readInt(context, KEY_THEME_MODE, 0), 0, 2);
     }
 
+    static int nativeTopAlpha(Context c) {
+        return clamp(readInt(c, KEY_NATIVE_TOP_ALPHA,
+                readInt(c, KEY_NATIVE_TOP_PLAY_ALPHA, 100)), 0, 100);
+    }
+    static void setNativeTopAlpha(Context c, int v) {
+        writeInt(c, KEY_NATIVE_TOP_ALPHA, clamp(v, 0, 100));
+    }
+    static int nativeControlsAlpha(Context c) {
+        return clamp(readInt(c, KEY_NATIVE_CONTROLS_ALPHA,
+                readInt(c, KEY_NATIVE_CONTROLS_PLAY_ALPHA, 100)), 0, 100);
+    }
+    static void setNativeControlsAlpha(Context c, int v) {
+        writeInt(c, KEY_NATIVE_CONTROLS_ALPHA, clamp(v, 0, 100));
+    }
+    static int nativeBottomAlpha(Context c) {
+        return clamp(readInt(c, KEY_NATIVE_BOTTOM_ALPHA,
+                readInt(c, KEY_NATIVE_BOTTOM_PLAY_ALPHA, 100)), 0, 100);
+    }
+    static void setNativeBottomAlpha(Context c, int v) {
+        writeInt(c, KEY_NATIVE_BOTTOM_ALPHA, clamp(v, 0, 100));
+    }
+
     static boolean nativeTopEnabled(Context c) { return readBool(c, KEY_NATIVE_TOP_ENABLED, false); }
     static void setNativeTopEnabled(Context c, boolean v) { writeBool(c, KEY_NATIVE_TOP_ENABLED, v); }
     static int nativeTopPlayAlpha(Context c) { return clamp(readInt(c, KEY_NATIVE_TOP_PLAY_ALPHA, 100), 0, 100); }
@@ -242,12 +267,18 @@ final class DockPrefs {
             editor.putInt(KEY_ENTRY_OFFSET, remote.getInt(KEY_ENTRY_OFFSET, 0));
             editor.putBoolean(KEY_LOG, remote.getBoolean(KEY_LOG, true));
             editor.putBoolean(KEY_NATIVE_TOP_ENABLED, remote.getBoolean(KEY_NATIVE_TOP_ENABLED, false));
+            editor.putInt(KEY_NATIVE_TOP_ALPHA, remote.getInt(KEY_NATIVE_TOP_ALPHA,
+                    remote.getInt(KEY_NATIVE_TOP_PLAY_ALPHA, 100)));
             editor.putInt(KEY_NATIVE_TOP_PLAY_ALPHA, remote.getInt(KEY_NATIVE_TOP_PLAY_ALPHA, 100));
             editor.putInt(KEY_NATIVE_TOP_PAUSE_ALPHA, remote.getInt(KEY_NATIVE_TOP_PAUSE_ALPHA, 100));
             editor.putBoolean(KEY_NATIVE_CONTROLS_ENABLED, remote.getBoolean(KEY_NATIVE_CONTROLS_ENABLED, false));
+            editor.putInt(KEY_NATIVE_CONTROLS_ALPHA, remote.getInt(KEY_NATIVE_CONTROLS_ALPHA,
+                    remote.getInt(KEY_NATIVE_CONTROLS_PLAY_ALPHA, 100)));
             editor.putInt(KEY_NATIVE_CONTROLS_PLAY_ALPHA, remote.getInt(KEY_NATIVE_CONTROLS_PLAY_ALPHA, 100));
             editor.putInt(KEY_NATIVE_CONTROLS_PAUSE_ALPHA, remote.getInt(KEY_NATIVE_CONTROLS_PAUSE_ALPHA, 100));
             editor.putBoolean(KEY_NATIVE_BOTTOM_ENABLED, remote.getBoolean(KEY_NATIVE_BOTTOM_ENABLED, false));
+            editor.putInt(KEY_NATIVE_BOTTOM_ALPHA, remote.getInt(KEY_NATIVE_BOTTOM_ALPHA,
+                    remote.getInt(KEY_NATIVE_BOTTOM_PLAY_ALPHA, 100)));
             editor.putInt(KEY_NATIVE_BOTTOM_PLAY_ALPHA, remote.getInt(KEY_NATIVE_BOTTOM_PLAY_ALPHA, 100));
             editor.putInt(KEY_NATIVE_BOTTOM_PAUSE_ALPHA, remote.getInt(KEY_NATIVE_BOTTOM_PAUSE_ALPHA, 100));
             editor.putBoolean(KEY_HOME_TOP_TRANSPARENT, remote.getBoolean(KEY_HOME_TOP_TRANSPARENT, false));
