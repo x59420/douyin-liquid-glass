@@ -332,9 +332,10 @@ public final class Backdrop {
                 && excluded.getAlpha() > 0.05f;
         boolean skipTree = excludedActuallyVisible && !covered;
         if (!covered && !skipTree) {
+            Canvas uc = new Canvas(ui);
+            uc.drawColor(0, PorterDuff.Mode.CLEAR);
             try {
-                Canvas uc = new Canvas(ui);
-                uc.drawColor(0, PorterDuff.Mode.CLEAR);
+                uc.save();
                 uc.scale(kx, ky);
                 int[] cl = new int[2];
                 c.getLocationInWindow(cl);
@@ -342,16 +343,18 @@ public final class Backdrop {
                 c.draw(uc);
                 uiValid = true;
             } catch (Throwable t) {
-                // 宿主树里常有 SurfaceView / 硬件位图，软件画布画到一半失败是常态
-                Dydock.warnOnce("ui-draw", "内容树绘制中断（通常无害）: " + t);
-            }
-        } else if (covered) {
-            try {
-                Canvas uc = new Canvas(ui);
+                // 绘制中断时清掉半帧，不能把上一次页面的残留像素带进合成。
                 uc.drawColor(0, PorterDuff.Mode.CLEAR);
-                uiValid = true;
-            } catch (Throwable ignored) {
+                uiValid = false;
+                Dydock.warnOnce("ui-draw", "内容树绘制中断（通常无害）: " + t);
+            } finally {
+                uc.restore();
             }
+        } else {
+            // 视频已覆盖取景区，或原生底栏临时恢复而需跳过内容树；
+            // 两种情况都必须清空旧 UI 缓冲，不能沿用上一页的像素。
+            new Canvas(ui).drawColor(0, PorterDuff.Mode.CLEAR);
+            uiValid = false;
         }
 
         // 3. 请求新帧
@@ -380,19 +383,52 @@ public final class Backdrop {
         return true;
     }
 
-    /** 视频层是不是已经把这一条铺满了（以新鲜帧为准） */
+    /** 视频层是不是已经把这一条铺满了（按矩形并集计算，不能重复累计重叠区域）。 */
     private boolean videoCoversAll(int sw, int sh) {
         if (layers.isEmpty()) return false;
         long now = SystemClock.uptimeMillis();
-        long total = (long) sw * sh;
-        long sum = 0;
+        Rect[] rects = new Rect[layers.size()];
+        int[] xs = new int[layers.size() * 2];
+        int[] ys = new int[layers.size() * 2];
+        int count = 0;
         for (Layer l : layers) {
             if (!l.usable || !l.valid || l.dst.isEmpty()
-                    || l.frame == null || l.frame.isRecycled()) return false;
-            if (now - l.stamp > LAYER_MAX_AGE_MS) return false;
-            sum += (long) l.dst.width() * l.dst.height();
+                    || l.frame == null || l.frame.isRecycled()
+                    || now - l.stamp > LAYER_MAX_AGE_MS) continue;
+            rects[count] = l.dst;
+            xs[count * 2] = l.dst.left;
+            xs[count * 2 + 1] = l.dst.right;
+            ys[count * 2] = l.dst.top;
+            ys[count * 2 + 1] = l.dst.bottom;
+            count++;
         }
-        return sum >= total * 0.94f;
+        if (count == 0) return false;
+        java.util.Arrays.sort(xs, 0, count * 2);
+        java.util.Arrays.sort(ys, 0, count * 2);
+
+        long covered = 0L;
+        for (int xi = 0; xi < count * 2 - 1; xi++) {
+            int left = xs[xi];
+            int right = xs[xi + 1];
+            if (right <= left) continue;
+            for (int yi = 0; yi < count * 2 - 1; yi++) {
+                int top = ys[yi];
+                int bottom = ys[yi + 1];
+                if (bottom <= top) continue;
+                boolean cellCovered = false;
+                for (int ri = 0; ri < count; ri++) {
+                    Rect r = rects[ri];
+                    if (r.left <= left && r.right >= right
+                            && r.top <= top && r.bottom >= bottom) {
+                        cellCovered = true;
+                        break;
+                    }
+                }
+                if (cellCovered) covered += (long) (right - left) * (bottom - top);
+            }
+        }
+        long total = (long) sw * sh;
+        return total > 0L && covered >= total * 0.94f;
     }
 
     private void logCaptureState(long now) {
@@ -583,6 +619,14 @@ public final class Backdrop {
         }
     }
 
+    private boolean isCurrentLayer(Layer target) {
+        if (target == null) return false;
+        for (Layer current : layers) {
+            if (current == target) return true;
+        }
+        return false;
+    }
+
     private void requestFrame(final Layer l) {
         try {
             if (l.dst.isEmpty()) return;
@@ -676,6 +720,8 @@ public final class Backdrop {
                     synchronized (Backdrop.this) {
                         if (inflight > 0) inflight--;
                     }
+                    // 页面切换/重扫后旧 Layer 可能已被释放；忽略迟到回调，避免旧帧刷新新页面。
+                    if (!isCurrentLayer(l)) return;
                     if (result == PixelCopy.SUCCESS) {
                         l.valid = true;
                         l.stamp = SystemClock.uptimeMillis();
