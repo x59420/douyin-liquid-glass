@@ -168,8 +168,6 @@ internal class SettingsState(context: Context) : SettingsModel {
         DockPrefs.setNativeTopAlpha(ctx, value)
         push()
     }
-        push()
-    }
     override fun setNativeControlsEnabled(value: Boolean) {
         nativeControlsEnabled.value = value
         DockPrefs.setNativeControlsEnabled(ctx, value)
@@ -180,10 +178,16 @@ internal class SettingsState(context: Context) : SettingsModel {
         DockPrefs.setNativeControlsAlpha(ctx, value)
         push()
     }
+    override fun setNativeBottomEnabled(value: Boolean) {
+        nativeBottomEnabled.value = value
+        DockPrefs.setNativeBottomEnabled(ctx, value)
         push()
     }
-    override fun setNativeBottomEnabled(value: Boolean) { nativeBottomEnabled.value = value; DockPrefs.setNativeBottomEnabled(ctx, value); push() }
-    override fun setNativeBottomAlpha(value: Int) { nativeBottomAlpha.value = value.coerceIn(0,100); DockPrefs.setNativeBottomAlpha(ctx,value); push() }
+    override fun setNativeBottomAlpha(value: Int) {
+        nativeBottomAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeBottomAlpha(ctx, value)
+        push()
+    }
     override fun setHomeTopTransparent(value: Boolean) { homeTopTransparent.value = value; DockPrefs.setHomeTopTransparent(ctx,value); push() }
     override fun setHomeBottomTransparent(value: Boolean) { homeBottomTransparent.value = value; DockPrefs.setHomeBottomTransparent(ctx,value); push() }
     override fun setNavigationTransparent(value: Boolean) { navigationTransparent.value = value; DockPrefs.setNavigationTransparent(ctx,value); push() }
