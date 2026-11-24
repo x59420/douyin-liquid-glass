@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'fix/comment-sheet-dismiss-detection']
   workflow_dispatch:
 
 permissions:
