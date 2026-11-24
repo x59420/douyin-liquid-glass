@@ -105,8 +105,8 @@ final class IsoDock {
             }
             Class<?> dialogClass = Class.forName(
                     "com.zaka.douyin.glass.iso.IsoSettingsOverlay", true, base.getClassLoader());
-            Method show = dialogClass.getMethod("show", Activity.class);
-            show.invoke(null, activity);
+            Method show = dialogClass.getMethod("show", Activity.class, String.class);
+            show.invoke(null, activity, Dydock.VER);
             return true;
         } catch (Throwable t) {
             Dydock.error("设置面板隔离加载失败", t);
