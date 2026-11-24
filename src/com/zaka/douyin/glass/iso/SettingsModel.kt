@@ -16,6 +16,12 @@ internal interface SettingsModel {
     val tabWidth: MutableState<Int>
     val sideMargin: MutableState<Int>
     val bottomGap: MutableState<Int>
+    val nativeTopEnabled: MutableState<Boolean>
+    val nativeTopPlayAlpha: MutableState<Int>
+    val nativeTopPauseAlpha: MutableState<Int>
+    val nativeControlsEnabled: MutableState<Boolean>
+    val nativeControlsPlayAlpha: MutableState<Int>
+    val nativeControlsPauseAlpha: MutableState<Int>
 
     fun setEnabled(value: Boolean)
     fun setShowPlus(value: Boolean)
@@ -26,5 +32,11 @@ internal interface SettingsModel {
     fun setTabWidth(value: Int)
     fun setSideMargin(value: Int)
     fun setBottomGap(value: Int)
+    fun setNativeTopEnabled(value: Boolean)
+    fun setNativeTopPlayAlpha(value: Int)
+    fun setNativeTopPauseAlpha(value: Int)
+    fun setNativeControlsEnabled(value: Boolean)
+    fun setNativeControlsPlayAlpha(value: Int)
+    fun setNativeControlsPauseAlpha(value: Int)
     fun reset()
 }
