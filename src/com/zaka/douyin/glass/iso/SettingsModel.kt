@@ -12,6 +12,8 @@ internal interface SettingsModel {
     val showLabels: MutableState<Boolean>
     val logEnabled: MutableState<Boolean>
     val themeMode: MutableState<Int>
+    val glassAlpha: MutableState<Int>
+    val hideBackground: MutableState<Boolean>
     val height: MutableState<Int>
     val tabWidth: MutableState<Int>
     val sideMargin: MutableState<Int>
@@ -22,6 +24,8 @@ internal interface SettingsModel {
     fun setShowLabels(value: Boolean)
     fun setLogEnabled(value: Boolean)
     fun setThemeMode(value: Int)
+    fun setGlassAlpha(value: Int)
+    fun setHideBackground(value: Boolean)
     fun setHeight(value: Int)
     fun setTabWidth(value: Int)
     fun setSideMargin(value: Int)

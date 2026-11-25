@@ -25,6 +25,10 @@ final class DockPrefs {
     /** 日志开关：关掉之后只留警告/错误，LSPosed 里不再刷日常流程。 */
     private static final String KEY_LOG = "verbose_log";
     private static final String KEY_THEME_MODE = "theme_mode";
+    /** 玻璃表面的不透明度（0-100，100 = 现在这套默认浓淡）。 */
+    private static final String KEY_GLASS_ALPHA = "glass_alpha";
+    /** 隐藏玻璃背景：只留图标，不画那块玻璃。 */
+    private static final String KEY_HIDE_BG = "hide_glass_background";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -128,6 +132,24 @@ final class DockPrefs {
         writeInt(context, KEY_THEME_MODE, clamp(value, 0, 2));
     }
 
+    /** 玻璃表面不透明度，0-100。默认 100 = 和以前一模一样，不改外观。 */
+    static int glassAlpha(Context context) {
+        return clamp(readInt(context, KEY_GLASS_ALPHA, 100), 0, 100);
+    }
+
+    static void setGlassAlpha(Context context, int value) {
+        writeInt(context, KEY_GLASS_ALPHA, clamp(value, 0, 100));
+    }
+
+    /** 隐藏玻璃背景：只留图标和「＋」，不画那块玻璃。默认关。 */
+    static boolean hideGlassBackground(Context context) {
+        return readBool(context, KEY_HIDE_BG, false);
+    }
+
+    static void setHideGlassBackground(Context context, boolean value) {
+        writeBool(context, KEY_HIDE_BG, value);
+    }
+
     static void setLogEnabled(Context context, boolean value) {
         writeBool(context, KEY_LOG, value);
     }
@@ -197,6 +219,9 @@ final class DockPrefs {
             editor.putInt(KEY_BOTTOM_GAP, remote.getInt(KEY_BOTTOM_GAP, DEF_BOTTOM_GAP));
             editor.putInt(KEY_ENTRY_OFFSET, remote.getInt(KEY_ENTRY_OFFSET, 0));
             editor.putBoolean(KEY_LOG, remote.getBoolean(KEY_LOG, true));
+            editor.putInt(KEY_THEME_MODE, remote.getInt(KEY_THEME_MODE, 0));
+            editor.putInt(KEY_GLASS_ALPHA, remote.getInt(KEY_GLASS_ALPHA, 100));
+            editor.putBoolean(KEY_HIDE_BG, remote.getBoolean(KEY_HIDE_BG, false));
             editor.putLong(KEY_REV, remoteRev);
             editor.apply();
             Dydock.setVerbose(remote.getBoolean(KEY_LOG, true));

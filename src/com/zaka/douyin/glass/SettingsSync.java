@@ -101,6 +101,19 @@ public final class SettingsSync {
                     DockPrefs.DEF_BOTTOM_GAP));
             changed = true;
         }
+        if (intent.hasExtra("theme_mode")) {
+            DockPrefs.setThemeMode(context, intent.getIntExtra("theme_mode", 0));
+            changed = true;
+        }
+        if (intent.hasExtra("glass_alpha")) {
+            DockPrefs.setGlassAlpha(context, intent.getIntExtra("glass_alpha", 100));
+            changed = true;
+        }
+        if (intent.hasExtra("hide_glass_background")) {
+            DockPrefs.setHideGlassBackground(context,
+                    intent.getBooleanExtra("hide_glass_background", false));
+            changed = true;
+        }
         if (!changed) return;
         Dydock.log("设置:收到设置界面的改动，立刻应用");
         DockController.applySettingsToAll();

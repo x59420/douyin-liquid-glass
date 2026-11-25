@@ -87,6 +87,8 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val showLabels = mutableStateOf(DockPrefs.showLabels(ctx))
     override val logEnabled = mutableStateOf(DockPrefs.logEnabled(ctx))
     override val themeMode = mutableStateOf(DockPrefs.themeMode(ctx))
+    override val glassAlpha = mutableStateOf(DockPrefs.glassAlpha(ctx))
+    override val hideBackground = mutableStateOf(DockPrefs.hideGlassBackground(ctx))
 
     override val height = mutableStateOf(DockPrefs.heightDp(ctx))
     override val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
@@ -121,6 +123,20 @@ internal class SettingsState(context: Context) : SettingsModel {
         val mode = value.coerceIn(0, 2)
         themeMode.value = mode
         DockPrefs.setThemeMode(ctx, mode)
+        push()
+    }
+
+    override fun setGlassAlpha(value: Int) {
+        val percent = value.coerceIn(0, 100)
+        glassAlpha.value = percent
+        DockPrefs.setGlassAlpha(ctx, percent)
+        push()
+    }
+
+    override fun setHideBackground(value: Boolean) {
+        hideBackground.value = value
+        DockPrefs.setHideGlassBackground(ctx, value)
+        push()
     }
 
     override fun setHeight(value: Int) {
@@ -253,16 +269,28 @@ internal fun SettingsScreen(
             Column(panel.verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp)
                 .padding(top = 8.dp, bottom = if (overlay) 24.dp else 36.dp)) {
-            TopBar(
-                version = version,
-                onBack = onBack,
-                themeMode = state.themeMode.value,
-                onThemeChange = state::setThemeMode,
-            )
+            TopBar(version = version, onBack = onBack)
             Spacer(Modifier.height(16.dp))
 
             SectionTitle("外观")
             GlassCard(scene) {
+                ThemeModeRow(
+                    backdrop = scene,
+                    themeMode = state.themeMode.value,
+                    onChange = state::setThemeMode,
+                )
+                Divider()
+                SliderRow("玻璃透明度", state.glassAlpha.value,
+                    0, 100, 5, state::setGlassAlpha, unit = "%",
+                    hint = "100% 就是现在这样，往左更透")
+                Divider()
+                SwitchRow(
+                    title = "隐藏玻璃背景",
+                    subtitle = "只留图标和「＋」，不画那块玻璃",
+                    checked = state.hideBackground.value,
+                    onChange = state::setHideBackground,
+                )
+                Divider()
                 SwitchRow(
                     title = "启用玻璃 Dock",
                     subtitle = "关掉就完全用抖音原生底栏",
@@ -344,15 +372,8 @@ internal fun SettingsScreen(
     }
 }
 @Composable
-private fun TopBar(
-    version: String,
-    onBack: () -> Unit,
-    themeMode: Int,
-    onThemeChange: (Int) -> Unit,
-) {
+private fun TopBar(version: String, onBack: () -> Unit) {
     val palette = LocalSettingsPalette.current
-    var themeMenuOpen by remember { mutableStateOf(false) }
-    val menuOffset = with(LocalDensity.current) { IntOffset(0, 48.dp.roundToPx()) }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().height(56.dp)
@@ -389,59 +410,103 @@ private fun TopBar(
         Spacer(Modifier.width(10.dp))
         Label(version, palette.secondary, 12.sp)
         Spacer(Modifier.weight(1f))
-        Box(Modifier.size(42.dp)) {
+    }
+}
+
+/**
+ * 深浅模式：左边文字，右边一个方框显示当前选择；点方框弹出悬浮玻璃胶囊。
+ * （以前是顶栏右上角一个小圆，位置不直观，也跟「外观」这一组对不上。）
+ */
+@Composable
+private fun ThemeModeRow(backdrop: Backdrop, themeMode: Int, onChange: (Int) -> Unit) {
+    val palette = LocalSettingsPalette.current
+    val modes = listOf("跟随系统", "浅色", "深色")
+    val current = themeMode.coerceIn(0, 2)
+    var open by remember { mutableStateOf(false) }
+    val offset = with(LocalDensity.current) { IntOffset(0, 8.dp.roundToPx()) }
+
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { open = !open }
+                .padding(vertical = 13.dp)
+        ) {
+            Column(Modifier.weight(1f)) {
+                Label("深浅模式", palette.primary, 15.sp)
+                Spacer(Modifier.height(3.dp))
+                Label("玻璃和这个设置页都跟着它", palette.secondary, 11.5.sp)
+            }
+            Spacer(Modifier.width(12.dp))
             Box(
-                Modifier.fillMaxSize()
+                Modifier
                     .clip(RoundedCornerShape(13.dp))
                     .background(palette.card.copy(alpha = 0.72f))
                     .border(1.dp, palette.border, RoundedCornerShape(13.dp))
+                    .padding(horizontal = 14.dp, vertical = 9.dp)
+            ) {
+                Label(modes[current], palette.primary, 13.sp, weight = FontWeight.Medium)
+            }
+        }
+        if (open) {
+            Popup(
+                alignment = Alignment.BottomEnd,
+                offset = offset,
+                onDismissRequest = { open = false },
+                properties = PopupProperties(focusable = true),
+            ) {
+                ThemeModeCapsule(backdrop, modes, current) { index ->
+                    onChange(index)
+                    open = false
+                }
+            }
+        }
+    }
+}
+
+/** 弹出来的那颗悬浮玻璃胶囊。 */
+@Composable
+private fun ThemeModeCapsule(
+    backdrop: Backdrop,
+    modes: List<String>,
+    selected: Int,
+    onPick: (Int) -> Unit,
+) {
+    val palette = LocalSettingsPalette.current
+    val shape = RoundedCornerShape(22.dp)
+    Column(
+        Modifier
+            .width(170.dp)
+            .clip(shape)
+            .glassSurface(backdrop, shape)
+            .border(1.dp, palette.border, shape)
+            .padding(6.dp)
+    ) {
+        modes.forEachIndexed { index, label ->
+            val isSelected = selected == index
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(
+                        if (isSelected) palette.accent.copy(alpha = 0.85f) else Color.Transparent
+                    )
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                    ) { themeMenuOpen = !themeMenuOpen },
-                contentAlignment = Alignment.Center,
+                    ) { onPick(index) }
+                    .padding(horizontal = 14.dp, vertical = 11.dp)
             ) {
-                Label("◐", palette.primary, 19.sp, weight = FontWeight.SemiBold)
-            }
-            if (themeMenuOpen) {
-                Popup(
-                    alignment = Alignment.TopEnd,
-                    offset = menuOffset,
-                    onDismissRequest = { themeMenuOpen = false },
-                    properties = PopupProperties(focusable = true),
-                ) {
-                    Column(
-                        Modifier.width(148.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(palette.panel.copy(alpha = 0.97f))
-                            .border(1.dp, palette.border, RoundedCornerShape(20.dp))
-                            .padding(6.dp)
-                    ) {
-                        listOf("跟随系统", "浅色", "深色").forEachIndexed { index, label ->
-                            val selected = themeMode == index
-                            Box(
-                                Modifier.fillMaxWidth()
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(if (selected) palette.accent.copy(alpha = 0.88f) else Color.Transparent)
-                                    .clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                    ) {
-                                        onThemeChange(index)
-                                        themeMenuOpen = false
-                                    }
-                                    .padding(horizontal = 13.dp, vertical = 11.dp)
-                            ) {
-                                Label(
-                                    label,
-                                    if (selected) palette.selectedText else palette.primary,
-                                    13.sp,
-                                    weight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                )
-                            }
-                        }
-                    }
-                }
+                Label(
+                    label,
+                    if (isSelected) palette.selectedText else palette.primary,
+                    13.sp,
+                    weight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                )
             }
         }
     }
@@ -566,12 +631,20 @@ private fun SliderRow(
     max: Int,
     step: Int,
     onChange: (Int) -> Unit,
+    unit: String = "dp",
+    hint: String? = null,
 ) {
     val palette = LocalSettingsPalette.current
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Label(title, palette.primary, 15.sp, modifier = Modifier.weight(1f))
-            Label("$value dp", LocalSettingsPalette.current.secondary, 12.5.sp)
+            Column(Modifier.weight(1f)) {
+                Label(title, palette.primary, 15.sp)
+                if (hint != null) {
+                    Spacer(Modifier.height(3.dp))
+                    Label(hint, palette.secondary, 11.5.sp)
+                }
+            }
+            Label("$value$unit", LocalSettingsPalette.current.secondary, 12.5.sp)
         }
         Spacer(Modifier.height(10.dp))
         GlassSlider(value, min, max, step, onChange)

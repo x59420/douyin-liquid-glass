@@ -129,6 +129,8 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override val showLabels = mutableStateOf(prefs.getBoolean("show_labels", true))
     override val logEnabled = mutableStateOf(prefs.getBoolean("verbose_log", true))
     override val themeMode = mutableStateOf(prefs.getInt("theme_mode", 0).coerceIn(0, 2))
+    override val glassAlpha = mutableStateOf(prefs.getInt("glass_alpha", 100).coerceIn(0, 100))
+    override val hideBackground = mutableStateOf(prefs.getBoolean("hide_glass_background", false))
     override val height = mutableStateOf(prefs.getInt("dock_height_dp", 64).coerceIn(52, 88))
     override val tabWidth = mutableStateOf(prefs.getInt("tab_width_dp", 76).coerceIn(60, 100))
     override val sideMargin = mutableStateOf(prefs.getInt("side_margin_dp", 24).coerceIn(12, 40))
@@ -145,8 +147,17 @@ private class IsoSettingsState(context: Context) : SettingsModel {
 
     override fun setThemeMode(value: Int) {
         themeMode.value = value.coerceIn(0, 2)
-        prefs.edit().putInt("theme_mode", themeMode.value)
-            .putLong("settings_rev", System.currentTimeMillis()).commit()
+        persistAndPush()
+    }
+
+    override fun setGlassAlpha(value: Int) {
+        glassAlpha.value = value.coerceIn(0, 100)
+        persistAndPush()
+    }
+
+    override fun setHideBackground(value: Boolean) {
+        hideBackground.value = value
+        persistAndPush()
     }
 
     override fun reset() {
@@ -171,6 +182,8 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putInt("side_margin_dp", sideMargin.value)
             .putInt("bottom_gap_dp", bottomGap.value)
             .putInt("theme_mode", themeMode.value)
+            .putInt("glass_alpha", glassAlpha.value)
+            .putBoolean("hide_glass_background", hideBackground.value)
             .putLong("settings_rev", System.currentTimeMillis())
             .commit()
 
@@ -184,6 +197,9 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putExtra("tab_width", tabWidth.value)
             .putExtra("side_margin", sideMargin.value)
             .putExtra("bottom_gap", bottomGap.value)
+            .putExtra("theme_mode", themeMode.value)
+            .putExtra("glass_alpha", glassAlpha.value)
+            .putExtra("hide_glass_background", hideBackground.value)
         app.sendBroadcast(intent)
     }
 }

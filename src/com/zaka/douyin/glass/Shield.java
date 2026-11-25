@@ -194,6 +194,62 @@ final class Shield {
         return false;
     }
 
+    /**
+     * 原生底栏此刻是不是「该显示」。
+     *
+     * 玻璃 Dock 就是原生底栏的替身，所以显隐完全镜像它：宿主把它藏起来（切页、评论区、
+     * 他人主页、全屏、会话页）玻璃就收，它回来玻璃就出。
+     *
+     * 这里只看宿主自己的状态，不去猜页面文案 —— 猜错一次 Dock 就回不来。
+     *
+     * 注意：模块自己会把原生底栏的 alpha 设成 0（避免它被采进玻璃里），所以判断
+     * alpha 时必须从**父链**算，不能把底栏自己那一份算进去，否则就是自己把自己判成隐藏。
+     */
+    static boolean nativeBarVisible(View dock, Rect band, View content) {
+        if (dock == null) return false;
+        try {
+            if (!dock.isAttachedToWindow()) return false;
+            if (dock.getVisibility() != View.VISIBLE) return false;
+            if (dock.getWidth() <= 0 || dock.getHeight() <= 0) return false;
+            // 自己（含祖先）显式不可见：GONE / INVISIBLE / 祖先被藏。
+            if (!dock.isShown()) return false;
+            if (ancestorAlpha(dock) < 0.35f) return false;
+            // 被下滑出屏、被裁掉一半：以实际可见区域为准，不看布局 rect。
+            Rect visible = new Rect();
+            if (!dock.getGlobalVisibleRect(visible)) return false;
+            if (visible.height() < dock.getHeight() * 0.55f) return false;
+            if (visible.width() < dock.getWidth() * 0.5f) return false;
+            // 会话页、聊天框里点开的视频这类「同一 Activity 里的整页」不改底栏 visibility，
+            // 只是把它盖住 —— 这一条必须留着，否则玻璃会浮在聊天页上。
+            if (content != null && pageCoversDock(dock, band, content)) return false;
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 父链上所有层的 alpha 乘积。
+     *
+     * 从**父节点**开始算：底栏自己那一层的 alpha 是模块设的（显示玻璃时归零），
+     * 算进来就永远是 0，会把自己判成隐藏，来回闪。
+     */
+    private static float ancestorAlpha(View v) {
+        float a = 1f;
+        try {
+            ViewParent parent = v == null ? null : v.getParent();
+            View cur = parent instanceof View ? (View) parent : null;
+            for (int guard = 0; guard < 24 && cur != null; guard++) {
+                a *= cur.getAlpha();
+                if (a <= 0.01f) return 0f;
+                ViewParent up = cur.getParent();
+                cur = up instanceof View ? (View) up : null;
+            }
+        } catch (Throwable ignored) {
+        }
+        return a;
+    }
+
     private static boolean coversDockFully(View s, Rect target, Rect page, float tol) {
         if (s == null || s.getVisibility() != View.VISIBLE || s.getAlpha() < 0.06f) return false;
         if (!s.isShown()) return false;

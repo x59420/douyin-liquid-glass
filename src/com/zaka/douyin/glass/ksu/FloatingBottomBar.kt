@@ -222,14 +222,31 @@ fun FloatingBottomBar(
     barWidth: Dp? = null,
     /** 胶囊高度；内部内容高 8dp 作为上下留白，和 KernelSU 的 64 / 56 是同一套比例。 */
     barHeight: Dp = 64.dp,
+    /**
+     * 玻璃表面不透明度 0..1。
+     *
+     * 1f（默认）时取值和以前完全一致，外观一点不变；调小只是把表面那层颜色变淡，
+     * 模糊 / 折射 / 高光这些参数一个都不动。
+     */
+    surfaceAlpha: Float = 1f,
+    /** 隐藏玻璃背景：不画那块玻璃，只留图标。默认关。 */
+    hideSurface: Boolean = false,
+    /** 深浅色：null = 跟随系统（默认，和以前一样）。 */
+    darkOverride: Boolean? = null,
     content: @Composable RowScope.((Int) -> Unit) -> Unit
 ) {
-    val isInDark = isSystemInDarkTheme()
+    val isInDark = darkOverride ?: isSystemInDarkTheme()
     val pillShape = remember { CircleShape }
     val accentColor = MiuixTheme.colorScheme.primary
     val tabContentColor = MiuixTheme.colorScheme.onSurface
     val surfaceContainer = MiuixTheme.colorScheme.surfaceContainer
-    val containerColor = if (isBlurEnabled) surfaceContainer.copy(0.4f) else surfaceContainer
+    // 默认值（surfaceAlpha = 1f、不隐藏）算出来和以前完全一致：仍是不透明的这一层。
+    val surfaceScale = surfaceAlpha.coerceIn(0f, 1f)
+    val containerColor = when {
+        hideSurface -> Color.Transparent
+        isBlurEnabled -> surfaceContainer.copy(0.4f * surfaceScale)
+        else -> surfaceContainer.copy(surfaceScale)
+    }
 
     val tabsBackdrop = rememberLayerBackdrop()
     val density = LocalDensity.current
@@ -371,7 +388,7 @@ fun FloatingBottomBar(
                     ),
                 )
                 .then(
-                    if (isBlurEnabled) {
+                    if (isBlurEnabled && !hideSurface) {
                         Modifier.drawBackdrop(
                             backdrop = backdrop,
                             shape = { pillShape },
@@ -393,8 +410,10 @@ fun FloatingBottomBar(
                             },
                             onDrawSurface = { drawRect(containerColor) },
                         )
-                    } else {
+                    } else if (!hideSurface) {
                         Modifier.background(containerColor, pillShape)
+                    } else {
+                        Modifier
                     }
                 )
                 .then(

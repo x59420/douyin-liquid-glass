@@ -129,6 +129,12 @@ class IsoOverlay private constructor(
     private var labels by mutableStateOf<List<String>>(emptyList())
     private var icons by mutableStateOf<List<ImageBitmap?>>(emptyList())
     private var selectedIndex by mutableIntStateOf(0)
+    /** 玻璃表面不透明度（0..1）。1f = 默认外观，一点不变。 */
+    private val glassAlpha = mutableStateOf(1f)
+    /** 隐藏玻璃背景：只留图标。 */
+    private val hideSurface = mutableStateOf(false)
+    /** 0=跟随系统 1=浅色 2=深色；0 时行为和以前完全一致。 */
+    private val themeMode = mutableIntStateOf(0)
 
     @Volatile
     private var disposed = false
@@ -175,10 +181,15 @@ class IsoOverlay private constructor(
             // 只创建一次：ThemeController 自带状态和协程，放在 composable 体里
             // 会随每一帧重组重新 new（背景 30fps 刷新时就是每秒几十个），几十秒能把宿主内存拖爆。
             val systemDark = isSystemInDarkTheme()
-            val controller = remember(systemDark) {
+            val dark = when (themeMode.intValue) {
+                1 -> false
+                2 -> true
+                else -> systemDark
+            }
+            val controller = remember(dark) {
                 ThemeController(
                     ColorSchemeMode.System,
-                    isDark = systemDark,
+                    isDark = dark,
                     paletteStyle = ThemePaletteStyle.TonalSpot,
                     colorSpec = ThemeColorSpec.Spec2025
                 )
@@ -192,6 +203,9 @@ class IsoOverlay private constructor(
                     labels = labels,
                     icons = icons,
                     selectedIndex = selectedIndex,
+                    surfaceAlpha = glassAlpha.value,
+                    hideSurface = hideSurface.value,
+                    dark = dark,
                     onTabClick = { index -> onTabClick.accept(index) },
                     onPlusClick = { onPlusClick.run() },
                     onLongPress = { onLongPress.run() },
@@ -237,6 +251,19 @@ class IsoOverlay private constructor(
     fun clearBackdrop() {
         if (disposed) return
         backdropImage.value = null
+    }
+
+    /**
+     * 外观参数：玻璃不透明度 / 隐藏玻璃背景 / 深浅模式。
+     * 默认（100%、不隐藏、跟随系统）和以前的绘制结果完全一致。
+     */
+    fun setAppearance(alphaPercent: Int, hide: Boolean, theme: Int) {
+        if (disposed) return
+        val alpha = (alphaPercent.coerceIn(0, 100)).toFloat() / 100f
+        val mode = theme.coerceIn(0, 2)
+        if (glassAlpha.value != alpha) glassAlpha.value = alpha
+        if (hideSurface.value != hide) hideSurface.value = hide
+        if (themeMode.intValue != mode) themeMode.intValue = mode
     }
 
     fun setTabs(labelArray: Array<String>, iconArray: Array<Bitmap?>, selected: Int) {
@@ -383,6 +410,9 @@ private fun GlassSurface(
     labels: List<String>,
     icons: List<ImageBitmap?>,
     selectedIndex: Int,
+    surfaceAlpha: Float,
+    hideSurface: Boolean,
+    dark: Boolean,
     onTabClick: (Int) -> Unit,
     onPlusClick: () -> Unit,
     onLongPress: () -> Unit,
@@ -447,7 +477,10 @@ private fun GlassSurface(
                     tabsCount = labels.size,
                     isBlurEnabled = isBlurEnabled,
                     barWidth = with(density) { tabsRect.width().toDp() },
-                    barHeight = with(density) { tabsRect.height().toDp() }
+                    barHeight = with(density) { tabsRect.height().toDp() },
+                    surfaceAlpha = surfaceAlpha,
+                    hideSurface = hideSurface,
+                    darkOverride = dark
                 ) { activate ->
                     labels.forEachIndexed { index, label ->
                         FloatingBottomBarItem(

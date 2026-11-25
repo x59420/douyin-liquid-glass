@@ -802,7 +802,12 @@ final class DockController {
 
         // 原生底栏先让位：留在原位会被一起采进玻璃里。
         // 玻璃万一脸都没画出来，下面的看门狗会把原生底栏原样还回去。
-        dock.setVisibility(View.GONE);
+        //
+        // 用 alpha 归零而不是 GONE：GONE 会触发宿主重新布局（底栏一消失，宿主自己
+        // 又会补一层底、位置也可能重算），而且「原生底栏此刻该不该显示」这条判断
+        // 就再也读不到了 —— 玻璃的显隐正是要跟着它走。
+        dock.setAlpha(0f);
+        Finder.hiddenByUs = new java.lang.ref.WeakReference<View>(dock);
         try {
             backdrop.capture();
         } catch (Throwable t) {
@@ -837,6 +842,8 @@ final class DockController {
          * 手势类 2 帧（约 30ms，抬手就回来），结构类 10 帧（约 160ms，转场里不闪）。
          */
         final int[] revealTicks = new int[]{FAST_REVEAL_TICKS};
+        /** 原生底栏连续几帧「该显示」：显隐镜像它的可见性，0 帧就是不可见。 */
+        final int[] nativeVisibleTicks = new int[]{0};
         /** 上一次隐藏是不是「结构类」理由（覆盖页/浮层/底栏脱离），决定恢复要等几帧。 */
         final boolean[] lastHideStructural = new boolean[]{false};
         final long[] lastFailLogAt = new long[]{0L};
@@ -971,7 +978,9 @@ final class DockController {
                                     // 先把位置量下来：设成 GONE 之后自己就量不到了，
                                     // 底栏区域和遮罩匹配都要用这份坐标。
                                     Rect freshBand = rectInWindow(fresh);
-                                    fresh.setVisibility(View.GONE);
+                                    fresh.setAlpha(0f);
+                                    Finder.hiddenByUs =
+                                            new java.lang.ref.WeakReference<View>(fresh);
                                     dockRef[0] = fresh;
                                     backdrop.setExcluded(fresh);
                                     // 底栏节点换了，父链的显隐基线也得跟着换，否则
@@ -1024,135 +1033,48 @@ final class DockController {
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
                         lastClearScanAt[0] = now;
                     }
-                    // 评论面板状态直接跟随当前视图树；不保留退出后的 1200ms 旧状态，
-                    // 否则关闭评论区/按返回后 Dock 会继续消失一段时间。
-                    if (now - lastCommentScanAt[0] >= 40L) {
-                        lastCommentScanAt[0] = now;
-                        commentOpen[0] = Shield.commentSheetOpen(content);
-                    }
-                    if (now - lastProfileScanAt[0] >= 240L) {
-                        lastProfileScanAt[0] = now;
-                        // 底部选中的就是「我」这一格 —— 这必然是自己的主页，不是别人主页。
-                        // 抖音改版后自己主页上「编辑资料」的文字不一定扫得到（视图树预算、
-                        // 换了控件），光靠文案判就会把「我」当成别人，点进「我的」Dock 直接没了。
-                        // 选中态是宿主自己给的，比扫文字可靠。
-                        boolean onMyTab = myTabSelected(tabTargets[0]);
-                        otherProfileState[0] = !onMyTab && Shield.isOtherProfilePage(content);
-                    }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
                             || updateGestureClearMode(act, d, clearScreenState[0]);
 
-                    // 浮层扫描要遍历几百个节点，跟着 16ms 轮询跑会拖帧；60ms 一次足够。
-                    if (now - lastExpandedAt[0] >= 60L) {
-                        lastExpandedAt[0] = now;
-                        expandedState[0] = d != null
-                                && Shield.hasExpandedOverlay(d, content, decor);
-                        // 整屏覆盖页（会话页、聊天框里点开的视频、详情页）：它必须真的把
-                        // Dock 这一条整个盖住才算，只盖住上面一部分的信息流不参与。
-                        coveredState[0] = d != null
-                                && Shield.pageCoversDock(d, bandRect[0], content);
-                    }
-                    expandedTicks[0] = expandedState[0]
-                            ? Math.min(4, expandedTicks[0] + 1) : 0;
-                    coveredTicks[0] = coveredState[0]
-                            ? Math.min(4, coveredTicks[0] + 1) : 0;
+                    // 显隐只跟一件事：抖音自己那条底栏此刻是不是「该显示」。
+                    //
+                    // 玻璃底栏就是原生底栏的替身，所以显隐完全镜像原生：原生藏起来
+                    // （切页、评论区、他人主页、全屏、会话页），玻璃就收；原生回来，玻璃就出。
+                    //
+                    // 以前是靠文案/类名去「猜」当前页面（他人主页？评论区还开着？浮层？），
+                    // 只要猜错一次 —— 残留的「私信 / 发消息」节点、下滑出屏但还没销毁的
+                    // 评论面板 —— 这条隐藏理由就会被一直占着，Dock 再也回不来。
+                    // 「从别人主页退出 / 从评论区返回 Dock 不出现」就是这条猜错导致的。
+                    boolean nativeVisible = Shield.nativeBarVisible(
+                            d != null ? d : dockRef[0], bandRect[0], content);
+                    // 正数=连续可见帧，负数=连续不可见帧。两个方向都要撑过 3 帧（约 50ms），
+                    // 宿主切页动画里那种单帧抖动就不会让玻璃闪一下。
+                    nativeVisibleTicks[0] = nativeVisible
+                            ? Math.min(6, nativeVisibleTicks[0] + 1)
+                            : Math.max(-6, nativeVisibleTicks[0] - 1);
+                    boolean nativeHidden = nativeVisibleTicks[0] <= -3;
 
-                    // 一个隐藏理由成立就收，不等其它理由结束；反过来，所有理由都结束之后
-                    // 还要再连续干净几帧才露出来 —— 隐藏和显示用的是同一组判据，只是方向相反。
-                    //
-                    // 这里刻意不再把「宿主自己把底栏藏起来」当隐藏理由：抖音在消息列表、
-                    // 我的页上下滚动时会让原生底栏跟着位移/隐藏，跟着它走就是一路闪。
-                    //
-                    // 原生底栏整个脱离窗口 = 当前不是主 tab 页（会话页、覆盖页、转场中）。
-                    // 要连续十几帧（约 190ms）都找不到才认，转场那一瞬间的游离不算。
-                    boolean dockAttached = d != null && d.isAttachedToWindow();
-                    dockMissingTicks[0] = dockAttached
-                            ? 0 : Math.min(60, dockMissingTicks[0] + 1);
-                    if (dockAttached) {
-                        dockMissingSince[0] = 0L;
-                    } else if (dockMissingSince[0] == 0L) {
-                        dockMissingSince[0] = now;
-                    }
-                    // 识别兜底：主 tab 页面上底栏一定在。连续 3 秒找不到节点，又不是覆盖页、
-                    // 也不在评论区，那就是宿主重建底栏之后我们没跟上 —— 继续拿「找不到节点」
-                    // 当隐藏理由，Dock 会永远不出来。从评论区 / 主页返回时消失就是这个。
-                    if (!dockAttached && dockMissingTicks[0] >= 12
-                            && !coveredState[0] && !commentOpen[0]
-                            && now - dockMissingSince[0] > 3000L) {
-                        dockMissingTicks[0] = 0;
-                        dockMissingSince[0] = now;
-                        Dydock.warn("底栏:3 秒没找到底栏节点（非覆盖页 / 评论区），复位这条隐藏判据");
-                    }
-                    boolean hostHidden = !chromeUntrusted[0] && chrome.isHiddenNow(d);
-                    if (hostHidden) {
-                        if (hostHiddenSince[0] == 0L) hostHiddenSince[0] = now;
-                    } else {
-                        hostHiddenSince[0] = 0L;
-                    }
-                    hostHiddenTicks[0] = hostHidden
-                            ? Math.min(60, hostHiddenTicks[0] + 1) : 0;
-                    // 误报兜底：宿主那条底栏还好端端挂在窗口里、页面也没被整屏盖住、
-                    // 既不在清屏也不在倍速，只是某个祖先报了不可见 —— 这不是「进会话页」。
-                    // 撑过 3.5 秒还是这样，先把这条理由关掉，保证玻璃不会因为一条判据错到底而永远出不来。
-                    if (hostHidden && dockAttached
-                            && !coveredState[0] && !clearScreen && !speedPlayback
-                            && now - hostHiddenSince[0] > 3500L) {
-                        chromeUntrusted[0] = true;
-                        hostHiddenTicks[0] = 0;
-                        hostHiddenSince[0] = 0L;
-                        Dydock.warn("底栏:祖先层报不可见但底栏仍在窗口内，判定为误报，"
-                                + "暂时不用这条理由隐藏 Dock");
-                    }
-                    // 误报排除要能自己退出来：底栏真的脱离过窗口、或者页面被整屏盖住，
-                    // 就说明宿主确实会藏底栏 —— 重新拍基线继续跟。
-                    // （以前这里是「本次运行永久关闭」，结果就是「宿主把底栏藏了，Dock 还杵在那儿」）
-                    if (chromeUntrusted[0] && (!dockAttached || coveredState[0])) {
-                        chromeUntrusted[0] = false;
-                        chrome.refresh(d);
-                        hostHiddenSince[0] = 0L;
-                        hostHiddenTicks[0] = 0;
-                        Dydock.log("底栏:恢复「跟随宿主底栏显隐」判据");
-                    }
-                    // 评论区开着时，结构类理由（覆盖 / 浮层 / 底栏脱离 / 宿主隐藏）一律不算：
-                    // 评论面板弹上来会让宿主重新排布底栏，跟着判就是「收起又冒出」。
-                    // 手势类（倍速 / 清屏）不受影响，该收还是收。
-                    // 评论区本身就是需要隐藏 Dock 的页面状态；不要再用 commentOpen
-                    // 去屏蔽结构隐藏判据，否则评论区会一直保留 Dock。
-                    boolean structuralHidden = commentOpen[0]
-                            || coveredTicks[0] >= COVER_CONFIRM_TICKS
-                            || expandedTicks[0] >= COVER_CONFIRM_TICKS
-                            || dockMissingTicks[0] >= 12
-                            // 宿主把底栏藏起来就跟上：约 160ms（10 帧）。以前是 400ms，
-                            // 手感上就是「底栏早没了，Dock 还挂在那儿一会儿」。
-                            || hostHiddenTicks[0] >= 10;
-                    boolean hidden = speedPlayback || longPress || clearScreen
-                            || structuralHidden || otherProfileState[0];
+                    boolean hidden = speedPlayback || longPress || clearScreen || nativeHidden;
                     if (hidden) {
                         revealTicks[0] = 0;
-                        // 手势类（倍速 / 清屏）抬手就恢复；结构类（覆盖页 / 浮层 / 底栏脱离）
-                        // 要连续干净地撑过一小段时间才恢复，转场里的那几帧空档就不会闪。
-                        lastHideStructural[0] = !(speedPlayback || longPress || clearScreen);
-                        String why = hideReason(speedPlayback, longPress, clearScreen,
-                                commentOpen[0], coveredTicks[0], expandedTicks[0],
-                                dockMissingTicks[0], hostHiddenTicks[0]);
-                        if (otherProfileState[0]) why += " 他人主页";
+                        String why = "";
+                        if (speedPlayback) why += "倍速 ";
+                        if (longPress) why += "长按 ";
+                        if (clearScreen) why += "清屏 ";
+                        if (nativeHidden) why += "原生底栏不可见";
                         if (!why.equals(lastHideReason[0])) {
                             lastHideReason[0] = why;
                             Dydock.log("底栏隐藏：" + why);
                         }
                     } else {
-                        int need = lastHideStructural[0]
-                                ? STRUCTURAL_REVEAL_TICKS : FAST_REVEAL_TICKS;
-                        if (revealTicks[0] < need) revealTicks[0]++;
-                        if (revealTicks[0] >= need && !lastHideReason[0].isEmpty()) {
+                        if (revealTicks[0] < FAST_REVEAL_TICKS) revealTicks[0]++;
+                        if (revealTicks[0] >= FAST_REVEAL_TICKS && !lastHideReason[0].isEmpty()) {
                             lastHideReason[0] = "";
                             Dydock.log("底栏恢复显示");
                         }
                     }
-                    int needed = lastHideStructural[0]
-                            ? STRUCTURAL_REVEAL_TICKS : FAST_REVEAL_TICKS;
-                    boolean show = !hidden && revealTicks[0] >= needed;
+                    boolean show = !hidden && revealTicks[0] >= FAST_REVEAL_TICKS;
 
                     // 位置只在「尺寸真的变了」的时候重算（旋转、导航模式变化、底栏重建）。
                     // 不跟位置走：抖音底栏滚动时会上下位移，跟着它算玻璃就会一路漂。
@@ -1242,7 +1164,13 @@ final class DockController {
                         backdrop.pump();
                     }
 
-                    if (d != null && d.getVisibility() != View.GONE) d.setVisibility(View.GONE);
+                    // 原生底栏：玻璃显示时把它整条 alpha 归零（保留布局、尺寸和点击），
+                    // 玻璃收起时把它还原 —— 任何时刻用户都只看得到一条「底栏」。
+                    // 这也让「原生底栏该不该显示」这条判断始终读得到，不会被我们自己破坏。
+                    if (d != null) {
+                        float want = show ? 0f : 1f;
+                        if (Math.abs(d.getAlpha() - want) > 0.01f) d.setAlpha(want);
+                    }
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
                         animateDock(iso.view, show, 6f * densityPx);
@@ -1533,6 +1461,7 @@ final class DockController {
                 dock.setVisibility(View.VISIBLE);
                 dock.setAlpha(1f);
             }
+            Finder.hiddenByUs = null;
         } catch (Throwable ignored) {
         }
     }
@@ -1558,6 +1487,11 @@ final class DockController {
                                             Rect bandRect, int tabsCount) {
         if (iso == null || dock == null) return;
         try {
+            // 外观参数（玻璃不透明度 / 隐藏玻璃背景 / 深浅模式）跟着几何一起推下去：
+            // 默认值就等于以前那套，不改外观；改了设置这里也会立刻生效。
+            android.content.Context glassCtx = dock.getContext();
+            iso.setAppearance(DockPrefs.glassAlpha(glassCtx),
+                    DockPrefs.hideGlassBackground(glassCtx), DockPrefs.themeMode(glassCtx));
             float density = dock.getResources().getDisplayMetrics().density;
             int count = Math.max(1, tabsCount);
             Rect band = bandRect == null ? rectInWindow(dock) : new Rect(bandRect);
@@ -1677,7 +1611,8 @@ final class DockController {
         // 1) 底栏本身和它的外壳容器。抖音的底栏壳通常自己铺一层深色 + 顶部渐变，
         //    只把底栏设成 GONE 是拿不掉这层的 —— 玻璃隔着它采样就是一块黑。
         View v = dock;
-        for (int i = 0; i < 6 && v != null; i++) {
+        // 12 层：抖音 41 把底栏外面又套了几层容器，6 层够不到真正铺底的那一层。
+        for (int i = 0; i < 12 && v != null; i++) {
             if (clearBandBackground(v, screenW, screenH, dockRect)) cleared++;
             ViewParent parent = v.getParent();
             v = parent instanceof View ? (View) parent : null;
@@ -1767,10 +1702,12 @@ final class DockController {
             boolean hasFg = hasForeground(v);
             if (!hasBg && !hasFg) return false;
             if (v.getWidth() < screenW * 0.6f) return false;
-            if (v.getHeight() > screenH * 0.45f) return false;
             Rect r = rectInWindow(v);
             // 只认底栏这一带：整块都在屏幕上半部的不碰（那是顶部标题栏的地盘）。
             if (r.bottom < screenH * 0.5f) return false;
+            // 底栏那一带的容器有高有矮：矮的是底栏壳，高一点的是「底栏 + 上方渐变」整块。
+            // 只要它是从下半屏开始、且没有顶到屏幕上沿，就不是页面自己的底。
+            if (r.height() > screenH * 0.62f || r.top < screenH * 0.34f) return false;
             if (hasBg) v.setBackground(null);
             if (hasFg) clearForeground(v);
             return true;
@@ -1823,14 +1760,34 @@ final class DockController {
                 // 图标、按钮都不会被碰到。
                 boolean bigMask = coversDock
                         && r.width() >= screenW * 0.8f
-                        && r.height() <= screenH * 0.35f;
+                        && r.height() <= screenH * 0.4f;
                 boolean insideBand = dockRect.contains(r);
-                if ((hasBg || hasFg) && (bigMask || insideBand)
+                // 压住底栏这一条的一大半（不必整条包含）：抖音的底部渐变压暗层经常
+                // 比底栏高出十几 dp，以前「必须完全落在底栏里」就把它漏掉了。
+                boolean coversBand = bandCoverage(r, dockRect) >= 0.6f
+                        && r.width() >= screenW * 0.7f
+                        && r.height() <= screenH * 0.5f;
+                if ((hasBg || hasFg) && (bigMask || insideBand || coversBand)
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)) {
                     if (hasBg) child.setBackground(null);
                     if (hasFg) clearForeground(child);
                     cleared++;
+                    Dydock.log("底栏:清掉一层原生背景（"
+                            + child.getClass().getName() + "）");
+                }
+                // 兜底：有些版本把这条压暗渐变直接画在 onDraw 里（不是 background /
+                // foreground），清背景对它没用。这种层只按「名字像装饰层 + 压在底栏上 +
+                // 没有文字也没有可点控件」认，认出来就把它的 alpha 归零。
+                if (!hasBg && !hasFg && looksLikeScrim(child)
+                        && (coversBand || bigMask || insideBand)
+                        && !hasVisibleTextIn(child, 0)
+                        && !hasClickableIn(child, 0)
+                        && child.getAlpha() > 0.02f) {
+                    child.setAlpha(0f);
+                    cleared++;
+                    Dydock.log("底栏:已隐藏绘制出来的渐变遮罩（"
+                            + child.getClass().getName() + "）");
                 }
                 if (child instanceof ViewGroup) {
                     cleared += clearMaskLayers((ViewGroup) child, dock, dockRect,
@@ -1840,6 +1797,28 @@ final class DockController {
             }
         }
         return cleared;
+    }
+
+    /** 这块区域压住了底栏那一条的多少（0..1）：按宽度、高度各自的重叠比例取小的那个。 */
+    private static float bandCoverage(Rect r, Rect band) {
+        if (r == null || band == null || r.isEmpty() || band.isEmpty()) return 0f;
+        int w = Math.min(r.right, band.right) - Math.max(r.left, band.left);
+        int h = Math.min(r.bottom, band.bottom) - Math.max(r.top, band.top);
+        if (w <= 0 || h <= 0) return 0f;
+        float cw = (float) w / Math.max(1, band.width());
+        float ch = (float) h / Math.max(1, band.height());
+        return Math.min(cw, ch);
+    }
+
+    /** 名字像「压暗 / 渐变 / 遮罩」这类纯装饰层。 */
+    private static boolean looksLikeScrim(View v) {
+        try {
+            String n = v.getClass().getName().toLowerCase();
+            return n.contains("scrim") || n.contains("gradient") || n.contains("vignette")
+                    || n.contains("shadow") || n.contains("fade");
+        } catch (Throwable ignored) {
+            return false;
+        }
     }
 
     private static boolean hasVisibleTextIn(View v, int depth) {
@@ -2334,6 +2313,15 @@ final class DockController {
 
         private static java.lang.ref.WeakReference<View> pending;
         private static int pendingHits;
+        /**
+         * 我们自己把 alpha 归零的那条原生底栏。
+         *
+         * 模块用 alpha=0 藏原生底栏（而不是 GONE，为的是保留布局和「该不该显示」这条信号），
+         * 打分里那条 alpha 门槛会把它一起否掉 —— 结果就是「藏起来之后再也认不出来」。
+         * 这里单独放行这一条。
+         */
+        static volatile java.lang.ref.WeakReference<View> hiddenByUs;
+
         /** 上一次扫描里最高分的候选，用来在日志里说明「为什么没认出来」。 */
         static volatile float lastBestScore = -1f;
         static volatile String lastBestClass = "无";
@@ -2388,7 +2376,11 @@ final class DockController {
         private static float score(ViewGroup g, View root) {
             String cn = g.getClass().getName();
             if (cn.startsWith("com.zaka.douyin.glass")) return -1f;
-            if (!g.isShown() || g.getAlpha() < 0.2f) return -1f;
+            if (!g.isShown()) return -1f;
+            if (g.getAlpha() < 0.2f) {
+                java.lang.ref.WeakReference<View> hu = hiddenByUs;
+                if (hu == null || hu.get() != g) return -1f;
+            }
 
             int rw = root.getWidth();
             int rh = root.getHeight();
