@@ -40,6 +40,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.zaka.douyin.glass.SettingsScreen
 import com.zaka.douyin.glass.iso.SettingsModel
+import com.zaka.douyin.glass.iso.LogSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -151,103 +152,144 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override val sideMargin = mutableStateOf(prefs.getInt("side_margin_dp", 24).coerceIn(12, 40))
     override val bottomGap = mutableStateOf(prefs.getInt("bottom_gap_dp", 8).coerceIn(0, 28))
 
+    override val logSessions = mutableStateOf<List<LogSession>>(emptyList())
+    override val selectedLog = mutableStateOf<LogSession?>(null)
+    override val selectedLogContent = mutableStateOf("")
+
+    init { refreshLogs() }
+
     override fun setEnabled(value: Boolean) { enabled.value = value; persistAndPush() }
     override fun setShowPlus(value: Boolean) { showPlus.value = value; persistAndPush() }
     override fun setShowLabels(value: Boolean) { showLabels.value = value; persistAndPush() }
     override fun setLogEnabled(value: Boolean) { logEnabled.value = value; persistAndPush() }
 
-    /**
-     * Read the complete append-only log written by the host process and export a
-     * timestamped copy into the public Downloads/Dydock folder.
-     */
-    override fun exportLogs() {
+    override fun refreshLogs() {
+        val directory = sessionDirectory()
+        val files = directory?.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".log") }
+            ?.sortedByDescending { it.name }
+            .orEmpty()
+        logSessions.value = files.map { file ->
+            val marker = File(directory, file.name.removeSuffix(".log") + ".active")
+            val header = try { file.bufferedReader().use { it.readLine().orEmpty() } }
+                catch (_: Throwable) { "" }
+            val state = when {
+                marker.exists() -> "正在记录"
+                header.contains("SESSION END: UNKNOWN") || file.readText().contains("SESSION END: UNKNOWN") ->
+                    "结束时间未知（下次启动时封存）"
+                else -> "已结束"
+            }
+            val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(Date(file.lastModified()))
+            LogSession(file.name, date, "$state · \${formatSize(file.length())}")
+        }
+    }
+
+    override fun viewLog(fileName: String) {
+        val file = sessionFile(fileName)
+        if (file == null || !file.isFile) {
+            refreshLogs()
+            Toast.makeText(app, "这段日志不存在或已被清除", Toast.LENGTH_LONG).show()
+            return
+        }
+        selectedLog.value = logSessions.value.firstOrNull { it.fileName == fileName }
+            ?: LogSession(fileName, file.name, formatSize(file.length()))
+        selectedLogContent.value = try { file.readText(Charsets.UTF_8) }
+            catch (error: Throwable) { "读取日志失败：\${error.message}" }
+    }
+
+    override fun closeLogViewer() {
+        selectedLog.value = null
+        selectedLogContent.value = ""
+    }
+
+    override fun exportLog(fileName: String) {
         val context = app
         Thread({
             var destination: Uri? = null
             var message: String
             try {
-                val source = openDiagnosticLog(context)
-                    ?: throw IllegalStateException("没有找到日志文件")
-                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-                val fileName = "dydock-diagnostic-$stamp.log"
-
+                val source = sessionFile(fileName)
+                    ?: throw IllegalStateException("找不到这段日志")
+                if (!source.isFile) throw IllegalStateException("这段日志已被清除")
+                val exportName = "dydock-" + source.name
                 if (Build.VERSION.SDK_INT >= 29) {
                     val values = ContentValues().apply {
-                        put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                        put(MediaStore.Downloads.DISPLAY_NAME, exportName)
                         put(MediaStore.Downloads.MIME_TYPE, "text/plain")
-                        put(
-                            MediaStore.Downloads.RELATIVE_PATH,
-                            Environment.DIRECTORY_DOWNLOADS + "/Dydock/"
-                        )
+                        put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Dydock/")
                         put(MediaStore.Downloads.IS_PENDING, 1)
                     }
                     destination = context.contentResolver.insert(
                         MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
-                    ) ?: throw IllegalStateException("无法在下载目录创建日志文件")
-
+                    ) ?: throw IllegalStateException("无法在下载目录创建文件")
                     context.contentResolver.openOutputStream(destination!!, "w")?.use { output ->
-                        source.use { input -> input.copyTo(output) }
+                        FileInputStream(source).use { input -> input.copyTo(output) }
                     } ?: throw IllegalStateException("无法写入导出文件")
-
-                    val ready = ContentValues().apply {
-                        put(MediaStore.Downloads.IS_PENDING, 0)
-                    }
-                    context.contentResolver.update(destination!!, ready, null, null)
-                    message = "完整日志已导出到 Download/Dydock/$fileName"
+                    context.contentResolver.update(destination!!,
+                        ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+                    message = "已导出到 Download/Dydock/$exportName"
                 } else {
                     val directory = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
                         ?: context.filesDir
-                    if (!directory.exists() && !directory.mkdirs()) {
-                        throw IllegalStateException("无法创建日志导出目录")
+                    val output = File(directory, exportName)
+                    FileInputStream(source).use { input ->
+                        FileOutputStream(output).use { input.copyTo(it) }
                     }
-                    val outputFile = File(directory, fileName)
-                    FileOutputStream(outputFile).use { output ->
-                        source.use { input -> input.copyTo(output) }
-                    }
-                    message = "完整日志已导出：${outputFile.absolutePath}"
+                    message = "日志已导出：\${output.absolutePath}"
                 }
             } catch (error: Throwable) {
-                try {
-                    destination?.let { context.contentResolver.delete(it, null, null) }
-                } catch (_: Throwable) {
-                }
-                message = "日志导出失败：${error.message ?: error.javaClass.simpleName}"
+                try { destination?.let { context.contentResolver.delete(it, null, null) } }
+                catch (_: Throwable) { }
+                message = "导出失败：\${error.message ?: error.javaClass.simpleName}"
             }
             Handler(Looper.getMainLooper()).post {
                 Toast.makeText(context, message, Toast.LENGTH_LONG).show()
             }
-        }, "dydock-log-export").start()
+        }, "dydock-session-export").start()
     }
 
-    private fun openDiagnosticLog(context: Context): InputStream? {
-        val documents = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-        val privateLog = documents?.let { File(it, "dydock-diagnostic.log") }
-        if (privateLog != null && privateLog.isFile && privateLog.length() > 0L) {
-            return FileInputStream(privateLog)
-        }
-
-        if (Build.VERSION.SDK_INT >= 29) {
-            val relativePath = Environment.DIRECTORY_DOWNLOADS + "/Dydock/"
-            val cursor = context.contentResolver.query(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                arrayOf(MediaStore.Downloads._ID),
-                MediaStore.Downloads.DISPLAY_NAME + "=? AND "
-                    + MediaStore.Downloads.RELATIVE_PATH + "=?",
-                arrayOf("dydock-diagnostic.log", relativePath),
-                MediaStore.Downloads._ID + " DESC"
-            )
-            val uri = cursor?.use {
-                if (it.moveToFirst()) {
-                    Uri.withAppendedPath(
-                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                        it.getLong(0).toString()
-                    )
-                } else null
-            }
-            if (uri != null) return context.contentResolver.openInputStream(uri)
-        }
-        return null
+    override fun deleteLog(fileName: String) {
+        val file = sessionFile(fileName) ?: return
+        val deleted = (!file.exists() || file.delete())
+        File(file.parentFile, file.nameWithoutExtension + ".active").delete()
+        if (selectedLog.value?.fileName == fileName) closeLogViewer()
+        refreshLogs()
+        Toast.makeText(app, if (deleted) "已删除这段日志" else "删除失败", Toast.LENGTH_SHORT).show()
     }
+
+    override fun clearLogs() {
+        val directory = sessionDirectory()
+        val files = directory?.listFiles().orEmpty()
+        var failed = 0
+        files.filter { it.isFile && (it.name.endsWith(".log") || it.name.endsWith(".active")) }
+            .forEach { if (it.exists() && !it.delete()) failed++ }
+        closeLogViewer()
+        refreshLogs()
+        Toast.makeText(app, if (failed == 0) "历史日志已清除" else "有 $failed 个文件未能删除",
+            Toast.LENGTH_LONG).show()
+    }
+
+    override fun exportLogs() {
+        val latest = logSessions.value.firstOrNull()
+        if (latest == null) {
+            Toast.makeText(app, "目前还没有运行会话日志", Toast.LENGTH_SHORT).show()
+        } else exportLog(latest.fileName)
+    }
+
+    private fun sessionDirectory(): File? {
+        val documents = app.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: return null
+        return File(documents, "dydock-sessions")
+    }
+
+    private fun sessionFile(fileName: String): File? {
+        if (fileName.contains("/") || fileName.contains("\\")) return null
+        return sessionDirectory()?.let { File(it, fileName) }
+    }
+
+    private fun formatSize(bytes: Long): String =
+        if (bytes < 1024) "$bytes B" else String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+
     override fun setHeight(value: Int) { height.value = value.coerceIn(52, 88); persistAndPush() }
     override fun setTabWidth(value: Int) { tabWidth.value = value.coerceIn(60, 100); persistAndPush() }
     override fun setSideMargin(value: Int) { sideMargin.value = value.coerceIn(12, 40); persistAndPush() }
