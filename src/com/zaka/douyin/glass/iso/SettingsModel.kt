@@ -30,5 +30,7 @@ internal interface SettingsModel {
     fun setTabWidth(value: Int)
     fun setSideMargin(value: Int)
     fun setBottomGap(value: Int)
+    /** Export the complete host diagnostic log to a user-accessible file. */
+    fun exportLogs()
     fun reset()
 }
