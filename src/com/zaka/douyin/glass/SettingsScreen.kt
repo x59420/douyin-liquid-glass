@@ -2,6 +2,9 @@ package com.zaka.douyin.glass
 
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.material.AlertDialog
+import androidx.compose.material.Text
+import androidx.compose.material.TextButton
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -267,6 +270,7 @@ internal fun SettingsScreen(
     onBack: () -> Unit,
     overlay: Boolean = false,
 ) {
+    var showClearLogsConfirm by remember { mutableStateOf(false) }
     val dark = when (state.themeMode.value) {
         1 -> false
         2 -> true
@@ -362,9 +366,23 @@ internal fun SettingsScreen(
                 )
                 Divider()
                 TextRow(
-                    title = "导出完整日志",
-                    subtitle = "保存到 Download/Dydock，方便分享排查",
-                    onClick = state::exportLogs,
+                    title = "刷新会话列表",
+                    subtitle = "每次启动抖音都会单独记录一段",
+                    onClick = state::refreshLogs,
+                )
+                state.logSessions.value.forEach { session ->
+                    Divider()
+                    TextRow(
+                        title = session.title,
+                        subtitle = "${session.subtitle} · 点击查看完整内容",
+                        onClick = { state.viewLog(session.fileName) },
+                    )
+                }
+                Divider()
+                TextRow(
+                    title = "清除全部历史日志",
+                    subtitle = "删除已保存的会话日志文件",
+                    onClick = { showClearLogsConfirm = true },
                 )
             }
 
@@ -396,6 +414,49 @@ internal fun SettingsScreen(
                 lineHeight = 16.sp,
             )
             }
+        }
+        state.selectedLog.value?.let { selected ->
+            AlertDialog(
+                onDismissRequest = state::closeLogViewer,
+                title = { Text(selected.title) },
+                text = {
+                    Column(
+                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                    ) {
+                        BasicText(
+                            state.selectedLogContent.value,
+                            style = TextStyle(
+                                color = LocalSettingsPalette.current.primary,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                            ),
+                        )
+                    }
+                },
+                confirmButton = {
+                    Row {
+                        TextButton(onClick = { state.exportLog(selected.fileName) }) { Text("导出") }
+                        TextButton(onClick = { state.deleteLog(selected.fileName) }) { Text("删除") }
+                        TextButton(onClick = state::closeLogViewer) { Text("关闭") }
+                    }
+                },
+            )
+        }
+        if (showClearLogsConfirm) {
+            AlertDialog(
+                onDismissRequest = { showClearLogsConfirm = false },
+                title = { Text("清除全部历史日志？") },
+                text = { Text("此操作会删除已保存的会话日志，无法恢复。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        state.clearLogs()
+                        showClearLogsConfirm = false
+                    }) { Text("清除") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showClearLogsConfirm = false }) { Text("取消") }
+                },
+            )
         }
     }
 }
