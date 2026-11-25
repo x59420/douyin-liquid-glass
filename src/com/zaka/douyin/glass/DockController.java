@@ -1868,8 +1868,11 @@ final class DockController {
                 android.graphics.drawable.Drawable bg = child.getBackground();
                 if (!(bg instanceof android.graphics.drawable.ColorDrawable)) continue;
                 if (hasInputField(child, 0)) continue;
-                // 评论区 / 列表页一定有滚动容器，菜单和分享面板基本没有 —— 用这条把它们分开。
-                if (hasScrollableList(child, 0)) continue;
+                // 评论区 / 列表页一定有滚动容器。小面板（菜单、分享）本身也可能带列表，
+                // 所以只有「大面板」（> 45% 屏高）才要求没有列表 —— 半屏以下的面板就算有
+                // RecyclerView 也照清，评论区那种大面板则因为有列表被排除。
+                boolean bigPanel = hh > screenH * 0.45f;
+                if (bigPanel && hasScrollableList(child, 0)) continue;
                 saveAndClearBackground(child);
                 cleared++;
                 Dydock.log("底栏:清掉一层弹层纯色底（" + child.getClass().getName() + "）");
@@ -2062,10 +2065,19 @@ final class DockController {
                             + child.getClass().getName() + "）");
                 }
                 // 兜底：有些版本把这条压暗渐变直接画在 onDraw 里（不是 background /
-                // foreground），清背景对它没用。这种层只按「名字像装饰层 + 压在底栏上 +
-                // 没有文字也没有可点控件」认，认出来就把它的 alpha 归零。
-                if (!hasBg && !hasFg && looksLikeScrim(child)
-                        && (coversBand || bigMask || insideBand)
+                // foreground），清背景对它没用。
+                //
+                // 以前这里按类名认（scrim / gradient / fade），可抖音 41 的类名是混淆的
+                // （日志里就是 X.0lkZ、X.12sL），这条兜底在真机上基本命中不了 ——
+                // 表现就是「底部背景透明怎么设都不生效」。
+                // 现在改成按形状和位置认：压在底栏这一条上、扁而宽、没有文字、没有可点控件、
+                // 里面也没有视频层，就把它的 alpha 归零。整屏容器和播放器容器都不满足「扁」，
+                // 不会被误伤。
+                boolean flatStrip = (coversBand || bigMask || insideBand)
+                        && dockRect.height() > 0
+                        && r.height() <= (int) (dockRect.height() * 1.8f);
+                if (!hasBg && !hasFg && flatStrip
+                        && !Shield.hasVideoSurface(child)
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)
                         && child.getAlpha() > 0.02f) {
