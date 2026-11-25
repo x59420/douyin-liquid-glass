@@ -3,13 +3,28 @@ package com.zaka.douyin.glass.iso
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.content.ContentValues
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.Toast
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.AndroidUiDispatcher
@@ -140,6 +155,99 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override fun setShowPlus(value: Boolean) { showPlus.value = value; persistAndPush() }
     override fun setShowLabels(value: Boolean) { showLabels.value = value; persistAndPush() }
     override fun setLogEnabled(value: Boolean) { logEnabled.value = value; persistAndPush() }
+
+    /**
+     * Read the complete append-only log written by the host process and export a
+     * timestamped copy into the public Downloads/Dydock folder.
+     */
+    override fun exportLogs() {
+        val context = app
+        Thread({
+            var destination: Uri? = null
+            var message: String
+            try {
+                val source = openDiagnosticLog(context)
+                    ?: throw IllegalStateException("没有找到日志文件")
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
+                val fileName = "dydock-diagnostic-$stamp.log"
+
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                        put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                        put(
+                            MediaStore.Downloads.RELATIVE_PATH,
+                            Environment.DIRECTORY_DOWNLOADS + "/Dydock/"
+                        )
+                        put(MediaStore.Downloads.IS_PENDING, 1)
+                    }
+                    destination = context.contentResolver.insert(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                    ) ?: throw IllegalStateException("无法在下载目录创建日志文件")
+
+                    context.contentResolver.openOutputStream(destination!!, "w")?.use { output ->
+                        source.use { input -> input.copyTo(output) }
+                    } ?: throw IllegalStateException("无法写入导出文件")
+
+                    val ready = ContentValues().apply {
+                        put(MediaStore.Downloads.IS_PENDING, 0)
+                    }
+                    context.contentResolver.update(destination!!, ready, null, null)
+                    message = "完整日志已导出到 Download/Dydock/$fileName"
+                } else {
+                    val directory = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                        ?: context.filesDir
+                    if (!directory.exists() && !directory.mkdirs()) {
+                        throw IllegalStateException("无法创建日志导出目录")
+                    }
+                    val outputFile = File(directory, fileName)
+                    FileOutputStream(outputFile).use { output ->
+                        source.use { input -> input.copyTo(output) }
+                    }
+                    message = "完整日志已导出：${outputFile.absolutePath}"
+                }
+            } catch (error: Throwable) {
+                try {
+                    destination?.let { context.contentResolver.delete(it, null, null) }
+                } catch (_: Throwable) {
+                }
+                message = "日志导出失败：${error.message ?: error.javaClass.simpleName}"
+            }
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            }
+        }, "dydock-log-export").start()
+    }
+
+    private fun openDiagnosticLog(context: Context): InputStream? {
+        val documents = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+        val privateLog = documents?.let { File(it, "dydock-diagnostic.log") }
+        if (privateLog != null && privateLog.isFile && privateLog.length() > 0L) {
+            return FileInputStream(privateLog)
+        }
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            val relativePath = Environment.DIRECTORY_DOWNLOADS + "/Dydock/"
+            val cursor = context.contentResolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                arrayOf(MediaStore.Downloads._ID),
+                MediaStore.Downloads.DISPLAY_NAME + "=? AND "
+                    + MediaStore.Downloads.RELATIVE_PATH + "=?",
+                arrayOf("dydock-diagnostic.log", relativePath),
+                MediaStore.Downloads._ID + " DESC"
+            )
+            val uri = cursor?.use {
+                if (it.moveToFirst()) {
+                    Uri.withAppendedPath(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                        it.getLong(0).toString()
+                    )
+                } else null
+            }
+            if (uri != null) return context.contentResolver.openInputStream(uri)
+        }
+        return null
+    }
     override fun setHeight(value: Int) { height.value = value.coerceIn(52, 88); persistAndPush() }
     override fun setTabWidth(value: Int) { tabWidth.value = value.coerceIn(60, 100); persistAndPush() }
     override fun setSideMargin(value: Int) { sideMargin.value = value.coerceIn(12, 40); persistAndPush() }
