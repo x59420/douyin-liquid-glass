@@ -15,6 +15,9 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.HashSet;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
 
 import de.robv.android.xposed.XposedBridge;
 
@@ -39,6 +42,8 @@ public final class Dydock {
     private static volatile Context appContext;
     private static volatile Uri logUri;
     private static volatile File fallbackFile;
+    private static volatile File sessionFile;
+    private static volatile File sessionMarker;
     private static volatile boolean fileReady;
     /** 日志开关：默认开，设置页里关掉之后日常流程不再写日志。 */
     private static volatile boolean verbose = true;
@@ -83,8 +88,21 @@ public final class Dydock {
                 if (dir != null) {
                     if (!dir.exists()) dir.mkdirs();
                     fallbackFile = new File(dir, "dydock-diagnostic.log");
+                    File sessions = new File(dir, "dydock-sessions");
+                    if (!sessions.exists() && !sessions.mkdirs()) {
+                        throw new IllegalStateException("Cannot create session log directory");
+                    }
+                    recoverInterruptedSessions(sessions);
+                    String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss-SSS", Locale.US).format(new Date());
+                    String base = "session-" + stamp + "-p" + android.os.Process.myPid();
+                    sessionFile = new File(sessions, base + ".log");
+                    sessionMarker = new File(sessions, base + ".active");
+                    if (!sessionMarker.createNewFile()) {
+                        throw new IllegalStateException("Cannot create active session marker");
+                    }
                 }
-            } catch (Throwable ignored) {
+            } catch (Throwable t) {
+                Log.e(TAG, "Unable to initialize session log", t);
             }
             try {
                 if (Build.VERSION.SDK_INT >= 29) {
@@ -96,13 +114,76 @@ public final class Dydock {
             fileReady = logUri != null || fallbackFile != null;
 
             if (fileReady) {
-                appendFile("===== Dydock diagnostic session started; module " + VER
-                        + " · host " + hostSignature() + " · Android " + Build.VERSION.RELEASE
-                        + " (API " + Build.VERSION.SDK_INT + ") =====");
+                appendFile("===== SESSION START: " + new Date()
+                        + " · module " + VER + " · host " + hostSignature()
+                        + " · Android " + Build.VERSION.RELEASE + " (API "
+                        + Build.VERSION.SDK_INT + ") · pid " + android.os.Process.myPid()
+                        + " · status RUNNING =====");
+                registerShutdownMarker();
                 synchronized (RING) {
                     for (String line : RING) appendFile(line);
                 }
             }
+        }
+    }
+
+
+    /**
+     * Force-stop may skip Android shutdown callbacks. On the next process start,
+     * close stale sessions with an explicitly unknown end time.
+     */
+    private static void recoverInterruptedSessions(File directory) {
+        File[] markers = directory.listFiles(new java.io.FilenameFilter() {
+            @Override public boolean accept(File dir, String name) { return name.endsWith(".active"); }
+        });
+        if (markers == null) return;
+        for (File marker : markers) {
+            String name = marker.getName();
+            File log = new File(directory, name.substring(0, name.length() - 7) + ".log");
+            try {
+                if (log.isFile()) {
+                    java.io.FileOutputStream out = new java.io.FileOutputStream(log, true);
+                    out.write(("\n===== SESSION END: UNKNOWN (previous process ended without a reliable shutdown callback) · recovered "
+                            + new Date() + " =====\n").getBytes(StandardCharsets.UTF_8));
+                    out.close();
+                }
+                marker.delete();
+            } catch (Throwable t) {
+                Log.e(TAG, "Unable to recover previous session " + name, t);
+            }
+        }
+    }
+
+    private static void registerShutdownMarker() {
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override public void run() {
+                    synchronized (FILE_LOCK) {
+                        try {
+                            if (sessionFile != null) {
+                                java.io.FileOutputStream out = new java.io.FileOutputStream(sessionFile, true);
+                                out.write(("\n===== SESSION END: graceful process shutdown · " + new Date() + " =====\n")
+                                        .getBytes(StandardCharsets.UTF_8));
+                                out.close();
+                            }
+                            if (sessionMarker != null) sessionMarker.delete();
+                        } catch (Throwable ignored) { }
+                    }
+                }
+            }, "dydock-session-close"));
+        } catch (Throwable ignored) {
+            // Force-stop and low-memory process reclaim do not guarantee shutdown hooks.
+        }
+    }
+
+    public static File sessionDirectory(Context context) {
+        if (context == null) return null;
+        try {
+            File documents = context.getApplicationContext()
+                    .getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+            return documents == null ? null : new File(documents, "dydock-sessions");
+        } catch (Throwable t) {
+            return null;
         }
     }
 
@@ -240,6 +321,16 @@ public final class Dydock {
                     any = true;
                 } catch (Throwable t) {
                     try { Log.e(TAG, "Diagnostic file write failed", t); } catch (Throwable ignored) { }
+                }
+            }
+            if (sessionFile != null) {
+                try {
+                    java.io.FileOutputStream out = new java.io.FileOutputStream(sessionFile, true);
+                    out.write(bytes);
+                    out.close();
+                    any = true;
+                } catch (Throwable t) {
+                    try { Log.e(TAG, "Session log write failed", t); } catch (Throwable ignored) { }
                 }
             }
             fileReady = any;
