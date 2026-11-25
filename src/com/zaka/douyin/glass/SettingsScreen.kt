@@ -1,6 +1,7 @@
 package com.zaka.douyin.glass
 
 import android.content.Context
+import android.widget.Toast
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -117,6 +118,12 @@ internal class SettingsState(context: Context) : SettingsModel {
         logEnabled.value = value
         DockPrefs.setLogEnabled(ctx, value)
         push()
+    }
+
+    // This standalone module-process screen cannot read the host app's private diagnostic file.
+    // The in-Douyin settings overlay provides the actual export action.
+    override fun exportLogs() {
+        Toast.makeText(ctx, "请从抖音内的 dydock 设置入口导出运行日志", Toast.LENGTH_LONG).show()
     }
 
     override fun setThemeMode(value: Int) {
@@ -334,9 +341,15 @@ internal fun SettingsScreen(
             GlassCard(scene) {
                 SwitchRow(
                     title = "记录日志",
-                    subtitle = "开启后到 LSPosed 里搜 tag「dydock」看过程",
+                    subtitle = "记录运行与图层诊断信息，可在下方导出完整日志",
                     checked = state.logEnabled.value,
                     onChange = state::setLogEnabled,
+                )
+                Divider()
+                TextRow(
+                    title = "导出完整日志",
+                    subtitle = "保存到 Download/Dydock，方便分享排查",
+                    onClick = state::exportLogs,
                 )
             }
 
