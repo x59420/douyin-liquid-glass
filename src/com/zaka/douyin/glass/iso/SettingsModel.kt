@@ -16,6 +16,18 @@ internal interface SettingsModel {
     val tabWidth: MutableState<Int>
     val sideMargin: MutableState<Int>
     val bottomGap: MutableState<Int>
+    val nativeTopEnabled: MutableState<Boolean>
+    val nativeTopAlpha: MutableState<Int>
+    val nativeControlsEnabled: MutableState<Boolean>
+    val nativeControlsAlpha: MutableState<Int>
+    val nativeBottomEnabled: MutableState<Boolean>
+    val nativeBottomAlpha: MutableState<Int>
+    val homeTopTransparent: MutableState<Boolean>
+    val homeBottomTransparent: MutableState<Boolean>
+    val navigationTransparent: MutableState<Boolean>
+    val hideNavigationBar: MutableState<Boolean>
+    val hideStatusBar: MutableState<Boolean>
+    val followNativeDockVisibility: MutableState<Boolean>
 
     fun setEnabled(value: Boolean)
     fun setShowPlus(value: Boolean)
@@ -26,5 +38,17 @@ internal interface SettingsModel {
     fun setTabWidth(value: Int)
     fun setSideMargin(value: Int)
     fun setBottomGap(value: Int)
+    fun setNativeTopEnabled(value: Boolean)
+    fun setNativeTopAlpha(value: Int)
+    fun setNativeControlsEnabled(value: Boolean)
+    fun setNativeControlsAlpha(value: Int)
+    fun setNativeBottomEnabled(value: Boolean)
+    fun setNativeBottomAlpha(value: Int)
+    fun setHomeTopTransparent(value: Boolean)
+    fun setHomeBottomTransparent(value: Boolean)
+    fun setNavigationTransparent(value: Boolean)
+    fun setHideNavigationBar(value: Boolean)
+    fun setHideStatusBar(value: Boolean)
+    fun setFollowNativeDockVisibility(value: Boolean)
     fun reset()
 }

@@ -45,6 +45,8 @@ public final class Backdrop {
     private static final long UI_GAP_MS = 80L;
     /** 视频层帧多久算过期。过期就不参与合成 —— 换页后残留的旧画面就是「别的界面」。 */
     private static final long LAYER_MAX_AGE_MS = 500L;
+    /** 最多采集的可见视频层数；仍只收集与 Dock 取景区域相交的层，避免无界占用位图。 */
+    private static final int MAX_VIDEO_LAYERS = 8;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -53,6 +55,8 @@ public final class Backdrop {
     private static final class Layer {
         View view;
         Bitmap frame;
+        /** PixelCopy 正在写入的独立缓冲，避免 compose 同时读取同一张 Bitmap。 */
+        Bitmap pendingFrame;
         Bitmap textureFull;
         Rect dst = new Rect();
         boolean pending;
@@ -134,8 +138,8 @@ public final class Backdrop {
     /**
      * 不属于「玻璃后面的画面」的视图：抖音原生底栏。
      *
-     * 正常情况下它已经被隐藏了，这里只是兜一层：万一宿主又把它设回可见，
-     * 宁可这一帧不画树，也不能把一条原生底栏画进玻璃里。
+     * dyDock 保留原生导航树用于布局与点击同步，只把它的绘制 alpha 压到近乎透明。
+     * 只有宿主真的把原生导航恢复为可见且不透明时，才跳过内容树以免重复采进原生底栏。
      */
     void setExcluded(View v) {
         excluded = v;
@@ -326,11 +330,14 @@ public final class Backdrop {
         // 2. 内容树。视频已经把这一条铺满的时候就不用画树了 ——
         //    抖音首页每 1.2 秒重画一遍整棵信息流，卡顿就是这么来的
         boolean covered = videoCoversAll(sw, sh);
-        boolean skipTree = excluded != null && excluded.isShown() && !covered;
+        boolean excludedActuallyVisible = excluded != null && excluded.isShown()
+                && excluded.getAlpha() > 0.05f;
+        boolean skipTree = excludedActuallyVisible && !covered;
         if (!covered && !skipTree) {
+            Canvas uc = new Canvas(ui);
+            uc.drawColor(0, PorterDuff.Mode.CLEAR);
+            int saveCount = uc.save();
             try {
-                Canvas uc = new Canvas(ui);
-                uc.drawColor(0, PorterDuff.Mode.CLEAR);
                 uc.scale(kx, ky);
                 int[] cl = new int[2];
                 c.getLocationInWindow(cl);
@@ -338,16 +345,18 @@ public final class Backdrop {
                 c.draw(uc);
                 uiValid = true;
             } catch (Throwable t) {
-                // 宿主树里常有 SurfaceView / 硬件位图，软件画布画到一半失败是常态
+                // 使用新 Canvas 清掉半帧，不能把上一次页面或本次局部绘制残留带进合成。
+                new Canvas(ui).drawColor(0, PorterDuff.Mode.CLEAR);
+                uiValid = false;
                 Dydock.warnOnce("ui-draw", "内容树绘制中断（通常无害）: " + t);
+            } finally {
+                uc.restoreToCount(saveCount);
             }
-        } else if (covered) {
-            try {
-                Canvas uc = new Canvas(ui);
-                uc.drawColor(0, PorterDuff.Mode.CLEAR);
-                uiValid = true;
-            } catch (Throwable ignored) {
-            }
+        } else {
+            // 视频已覆盖取景区，或原生底栏临时恢复而需跳过内容树；
+            // 两种情况都必须清空旧 UI 缓冲，不能沿用上一页的像素。
+            new Canvas(ui).drawColor(0, PorterDuff.Mode.CLEAR);
+            uiValid = false;
         }
 
         // 3. 请求新帧
@@ -358,8 +367,11 @@ public final class Backdrop {
         // 4. UI 层里视频所在的那块挖空，否则视频会被容器自己的深色底盖住 —— 就是黑块
         try {
             Canvas uc = new Canvas(ui);
+            long eraseNow = SystemClock.uptimeMillis();
             for (Layer l : layers) {
-                if (l.dst.isEmpty() || !l.usable) continue;
+                if (l.dst.isEmpty() || !l.usable || !l.valid
+                        || l.frame == null || l.frame.isRecycled()
+                        || eraseNow - l.stamp > LAYER_MAX_AGE_MS) continue;
                 uc.drawRect(l.dst.left, l.dst.top, l.dst.right, l.dst.bottom, clear);
             }
         } catch (Throwable t) {
@@ -373,19 +385,52 @@ public final class Backdrop {
         return true;
     }
 
-    /** 视频层是不是已经把这一条铺满了（以新鲜帧为准） */
+    /** 视频层是不是已经把这一条铺满了（按矩形并集计算，不能重复累计重叠区域）。 */
     private boolean videoCoversAll(int sw, int sh) {
         if (layers.isEmpty()) return false;
         long now = SystemClock.uptimeMillis();
-        long total = (long) sw * sh;
-        long sum = 0;
+        Rect[] rects = new Rect[layers.size()];
+        int[] xs = new int[layers.size() * 2];
+        int[] ys = new int[layers.size() * 2];
+        int count = 0;
         for (Layer l : layers) {
             if (!l.usable || !l.valid || l.dst.isEmpty()
-                    || l.frame == null || l.frame.isRecycled()) return false;
-            if (now - l.stamp > LAYER_MAX_AGE_MS) return false;
-            sum += (long) l.dst.width() * l.dst.height();
+                    || l.frame == null || l.frame.isRecycled()
+                    || now - l.stamp > LAYER_MAX_AGE_MS) continue;
+            rects[count] = l.dst;
+            xs[count * 2] = l.dst.left;
+            xs[count * 2 + 1] = l.dst.right;
+            ys[count * 2] = l.dst.top;
+            ys[count * 2 + 1] = l.dst.bottom;
+            count++;
         }
-        return sum >= total * 0.94f;
+        if (count == 0) return false;
+        java.util.Arrays.sort(xs, 0, count * 2);
+        java.util.Arrays.sort(ys, 0, count * 2);
+
+        long covered = 0L;
+        for (int xi = 0; xi < count * 2 - 1; xi++) {
+            int left = xs[xi];
+            int right = xs[xi + 1];
+            if (right <= left) continue;
+            for (int yi = 0; yi < count * 2 - 1; yi++) {
+                int top = ys[yi];
+                int bottom = ys[yi + 1];
+                if (bottom <= top) continue;
+                boolean cellCovered = false;
+                for (int ri = 0; ri < count; ri++) {
+                    Rect r = rects[ri];
+                    if (r.left <= left && r.right >= right
+                            && r.top <= top && r.bottom >= bottom) {
+                        cellCovered = true;
+                        break;
+                    }
+                }
+                if (cellCovered) covered += (long) (right - left) * (bottom - top);
+            }
+        }
+        long total = (long) sw * sh;
+        return total > 0L && covered >= total * 0.94f;
     }
 
     private void logCaptureState(long now) {
@@ -534,7 +579,7 @@ public final class Backdrop {
     }
 
     private void collect(View v, List<View> outList, int depth) {
-        if (v == null || depth > 40 || outList.size() >= 3) return;
+        if (v == null || depth > 40 || outList.size() >= MAX_VIDEO_LAYERS) return;
         if (v.getVisibility() != View.VISIBLE || !v.isShown()) return;
         if (v instanceof SurfaceView || v instanceof TextureView) {
             if (overlapsRegion(v)) outList.add(v);
@@ -576,6 +621,14 @@ public final class Backdrop {
         }
     }
 
+    private boolean isCurrentLayer(Layer target) {
+        if (target == null) return false;
+        for (Layer current : layers) {
+            if (current == target) return true;
+        }
+        return false;
+    }
+
     private void requestFrame(final Layer l) {
         try {
             if (l.dst.isEmpty()) return;
@@ -588,8 +641,11 @@ public final class Backdrop {
             if (l.view instanceof TextureView) {
                 TextureView tv = (TextureView) l.view;
                 if (!tv.isAvailable()) return;
-                int fullW = Math.max(4, Math.round(tv.getWidth() / downscaleFactor));
-                int fullH = Math.max(4, Math.round(tv.getHeight() / downscaleFactor));
+                // TextureView 只能整幅 getBitmap；中间图降到最多 1/3 尺寸，
+                // 最终仍裁成 Dock 取景分辨率，避免 1:1 全屏中间图占用大量内存。
+                float textureScale = Math.max(3f, downscaleFactor);
+                int fullW = Math.max(4, Math.round(tv.getWidth() / textureScale));
+                int fullH = Math.max(4, Math.round(tv.getHeight() / textureScale));
                 if (l.textureFull == null || l.textureFull.isRecycled()
                         || l.textureFull.getWidth() != fullW
                         || l.textureFull.getHeight() != fullH) {
@@ -633,14 +689,16 @@ public final class Backdrop {
 
             if (!(l.view instanceof SurfaceView)) return;
             SurfaceView sv = (SurfaceView) l.view;
-            if (!sv.getHolder().getSurface().isValid()) return;
+            if (!sv.getHolder().getSurface().isValid() || l.pending) return;
+            long nowMs = SystemClock.uptimeMillis();
+            if (inflight > 0 || nowMs - lastRequestAt < 8L) return;
 
             int w = Math.max(4, l.dst.width());
             int h = Math.max(4, l.dst.height());
-            if (l.frame == null || l.frame.isRecycled()
-                    || l.frame.getWidth() != w || l.frame.getHeight() != h) {
-                l.frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-                l.valid = false;
+            if (l.pendingFrame == null || l.pendingFrame.isRecycled()
+                    || l.pendingFrame.getWidth() != w || l.pendingFrame.getHeight() != h) {
+                l.pendingFrame = recycle(l.pendingFrame);
+                l.pendingFrame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
             }
 
             // 只抓「底栏那一条」在视频里的那一块
@@ -657,24 +715,33 @@ public final class Backdrop {
                 return;
             }
 
-            long nowMs = SystemClock.uptimeMillis();
-            if (inflight > 0 || nowMs - lastRequestAt < 8L) return;
             lastRequestAt = nowMs;
             inflight++;
             l.pending = true;
-            PixelCopy.request(sv, inter, l.frame, new PixelCopy.OnPixelCopyFinishedListener() {
+            final Bitmap requestedFrame = l.pendingFrame;
+            PixelCopy.request(sv, inter, requestedFrame, new PixelCopy.OnPixelCopyFinishedListener() {
                 @Override
                 public void onPixelCopyFinished(int result) {
                     l.pending = false;
+                    if (l.pendingFrame == requestedFrame) l.pendingFrame = null;
                     synchronized (Backdrop.this) {
                         if (inflight > 0) inflight--;
                     }
+                    // 页面切换/重扫后旧 Layer 可能已被释放；忽略迟到回调，避免旧帧刷新新页面。
+                    if (!isCurrentLayer(l)) {
+                        recycle(requestedFrame);
+                        return;
+                    }
                     if (result == PixelCopy.SUCCESS) {
+                        Bitmap previous = l.frame;
+                        l.frame = requestedFrame;
                         l.valid = true;
                         l.stamp = SystemClock.uptimeMillis();
+                        recycle(previous);
                         noteFrameLuma(l);
                         onVideoFrame();
                     } else {
+                        recycle(requestedFrame);
                         l.valid = false;
                         Dydock.warnOnce("pixelcopy", "抓视频画面失败 code=" + result
                                 + "（画面受保护时玻璃退回内容树采样）");
@@ -688,6 +755,7 @@ public final class Backdrop {
                     if (inflight > 0) inflight--;
                 }
             }
+            l.pendingFrame = recycle(l.pendingFrame);
             l.valid = false;
             Dydock.warnOnce("pixelcopy-err", "抓视频画面异常: " + t);
         }
@@ -717,9 +785,16 @@ public final class Backdrop {
 
     private void releaseLayers() {
         for (Layer l : layers) {
-            if (l.frame != null && !l.frame.isRecycled() && !l.pending) {
+            if (l.frame != null && !l.frame.isRecycled()) {
                 try {
                     l.frame.recycle();
+                } catch (Throwable ignored) {
+                }
+            }
+            // pendingFrame 正被 PixelCopy 写入时不能 recycle；迟到回调会负责释放它。
+            if (!l.pending && l.pendingFrame != null && !l.pendingFrame.isRecycled()) {
+                try {
+                    l.pendingFrame.recycle();
                 } catch (Throwable ignored) {
                 }
             }
@@ -730,6 +805,7 @@ public final class Backdrop {
                 }
             }
             l.frame = null;
+            if (!l.pending) l.pendingFrame = null;
             l.textureFull = null;
         }
         layers.clear();

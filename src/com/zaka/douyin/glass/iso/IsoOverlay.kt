@@ -490,7 +490,26 @@ private fun GlassSurface(
                     .clickable(onClick = onPlusClick),
                 contentAlignment = Alignment.Center
             ) {
-                Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
+                // Draw the plus from the exact center instead of relying on font baseline metrics.
+                // This keeps the glyph optically centered inside the circular publish button.
+                Canvas(modifier = Modifier.size(20.dp)) {
+                    val stroke = 2.5.dp.toPx()
+                    val arm = 8.dp.toPx()
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(center.x - arm, center.y),
+                        end = Offset(center.x + arm, center.y),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(center.x, center.y - arm),
+                        end = Offset(center.x, center.y + arm),
+                        strokeWidth = stroke,
+                        cap = StrokeCap.Round
+                    )
+                }
             }
         }
     }

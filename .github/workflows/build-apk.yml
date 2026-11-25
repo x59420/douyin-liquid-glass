@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/native-ui-transparency]
   workflow_dispatch:
 
 permissions:
@@ -50,7 +50,7 @@ jobs:
           retention-days: 14
 
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/native-ui-transparency'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -73,6 +73,12 @@ jobs:
           test -n "$APK"
           VER="$(basename "$APK" .apk | sed 's/^dydock-//')"
           TAG="v${VER}-build.${GITHUB_RUN_NUMBER}"
-          gh release create "$TAG" "$APK" \
-            --title "dydock ${VER} (build ${GITHUB_RUN_NUMBER})" \
-            --notes "自动构建发布。源码提交：${GITHUB_SHA}"
+          if [[ "$GITHUB_REF" == "refs/heads/feature/native-ui-transparency" ]]; then
+            gh release create "$TAG" "$APK" --prerelease \
+              --title "dydock ${VER} (测试版 build ${GITHUB_RUN_NUMBER})" \
+              --notes "自动构建的测试版，请先进行真机验证。源码提交：${GITHUB_SHA}"
+          else
+            gh release create "$TAG" "$APK" \
+              --title "dydock ${VER} (build ${GITHUB_RUN_NUMBER})" \
+              --notes "自动构建发布。源码提交：${GITHUB_SHA}"
+          fi

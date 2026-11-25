@@ -92,6 +92,18 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
     override val sideMargin = mutableStateOf(DockPrefs.sideMarginDp(ctx))
     override val bottomGap = mutableStateOf(DockPrefs.bottomGapDp(ctx))
+    override val nativeTopEnabled = mutableStateOf(DockPrefs.nativeTopEnabled(ctx))
+    override val nativeTopAlpha = mutableStateOf(DockPrefs.nativeTopAlpha(ctx))
+    override val nativeControlsEnabled = mutableStateOf(DockPrefs.nativeControlsEnabled(ctx))
+    override val nativeControlsAlpha = mutableStateOf(DockPrefs.nativeControlsAlpha(ctx))
+    override val nativeBottomEnabled = mutableStateOf(DockPrefs.nativeBottomEnabled(ctx))
+    override val nativeBottomAlpha = mutableStateOf(DockPrefs.nativeBottomAlpha(ctx))
+    override val homeTopTransparent = mutableStateOf(DockPrefs.homeTopTransparent(ctx))
+    override val homeBottomTransparent = mutableStateOf(DockPrefs.homeBottomTransparent(ctx))
+    override val navigationTransparent = mutableStateOf(DockPrefs.navigationTransparent(ctx))
+    override val hideNavigationBar = mutableStateOf(DockPrefs.hideNavigationBar(ctx))
+    override val hideStatusBar = mutableStateOf(DockPrefs.hideStatusBar(ctx))
+    override val followNativeDockVisibility = mutableStateOf(DockPrefs.followNativeDockVisibility(ctx))
 
     override fun setEnabled(value: Boolean) {
         enabled.value = value
@@ -147,6 +159,47 @@ internal class SettingsState(context: Context) : SettingsModel {
         push()
     }
 
+    override fun setNativeTopEnabled(value: Boolean) {
+        nativeTopEnabled.value = value
+        DockPrefs.setNativeTopEnabled(ctx, value)
+        push()
+    }
+    override fun setNativeTopAlpha(value: Int) {
+        nativeTopAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeTopAlpha(ctx, value)
+        push()
+    }
+    override fun setNativeControlsEnabled(value: Boolean) {
+        nativeControlsEnabled.value = value
+        DockPrefs.setNativeControlsEnabled(ctx, value)
+        push()
+    }
+    override fun setNativeControlsAlpha(value: Int) {
+        nativeControlsAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeControlsAlpha(ctx, value)
+        push()
+    }
+    override fun setNativeBottomEnabled(value: Boolean) {
+        nativeBottomEnabled.value = value
+        DockPrefs.setNativeBottomEnabled(ctx, value)
+        push()
+    }
+    override fun setNativeBottomAlpha(value: Int) {
+        nativeBottomAlpha.value = value.coerceIn(0, 100)
+        DockPrefs.setNativeBottomAlpha(ctx, value)
+        push()
+    }
+    override fun setHomeTopTransparent(value: Boolean) { homeTopTransparent.value = value; DockPrefs.setHomeTopTransparent(ctx,value); push() }
+    override fun setHomeBottomTransparent(value: Boolean) { homeBottomTransparent.value = value; DockPrefs.setHomeBottomTransparent(ctx,value); push() }
+    override fun setNavigationTransparent(value: Boolean) { navigationTransparent.value = value; DockPrefs.setNavigationTransparent(ctx,value); push() }
+    override fun setHideNavigationBar(value: Boolean) { hideNavigationBar.value = value; DockPrefs.setHideNavigationBar(ctx,value); push() }
+    override fun setHideStatusBar(value: Boolean) { hideStatusBar.value = value; DockPrefs.setHideStatusBar(ctx,value); push() }
+    override fun setFollowNativeDockVisibility(value: Boolean) {
+        followNativeDockVisibility.value = value
+        DockPrefs.setFollowNativeDockVisibility(ctx, value)
+        push()
+    }
+
     /**
      * 把当前这一份配置推给抖音进程。
      *
@@ -164,6 +217,18 @@ internal class SettingsState(context: Context) : SettingsModel {
             tabWidth.value,
             sideMargin.value,
             bottomGap.value,
+            nativeTopEnabled.value,
+            nativeTopAlpha.value,
+            nativeControlsEnabled.value,
+            nativeControlsAlpha.value,
+            nativeBottomEnabled.value,
+            nativeBottomAlpha.value,
+            homeTopTransparent.value,
+            homeBottomTransparent.value,
+            navigationTransparent.value,
+            hideNavigationBar.value,
+            hideStatusBar.value,
+            followNativeDockVisibility.value,
         )
     }
 
@@ -175,6 +240,18 @@ internal class SettingsState(context: Context) : SettingsModel {
         setTabWidth(DockPrefs.DEF_TAB_WIDTH)
         setSideMargin(DockPrefs.DEF_SIDE_MARGIN)
         setBottomGap(DockPrefs.DEF_BOTTOM_GAP)
+        setNativeTopEnabled(false)
+        setNativeTopAlpha(100)
+        setNativeControlsEnabled(false)
+        setNativeControlsAlpha(100)
+        setNativeBottomEnabled(false)
+        setNativeBottomAlpha(100)
+        setHomeTopTransparent(false)
+        setHomeBottomTransparent(false)
+        setNavigationTransparent(true)
+        setHideNavigationBar(false)
+        setHideStatusBar(false)
+        setFollowNativeDockVisibility(true)
     }
 }
 
@@ -302,6 +379,60 @@ internal fun SettingsScreen(
             }
 
             Spacer(Modifier.height(18.dp))
+            SectionTitle("原生界面透明度")
+            GlassCard(scene) {
+                SwitchRow(
+                    title = "顶部原生菜单透明",
+                    subtitle = "播放和暂停时使用同一透明度，不影响 dyDock",
+                    checked = state.nativeTopEnabled.value,
+                    onChange = state::setNativeTopEnabled,
+                )
+                Divider()
+                SliderRow("顶部菜单透明度", state.nativeTopAlpha.value,
+                    0, 100, 5, state::setNativeTopAlpha, "%")
+                Divider()
+                Divider()
+                SwitchRow(
+                    title = "原生视频控件透明",
+                    subtitle = "播放和暂停时使用同一透明度，不处理底部 Dock",
+                    checked = state.nativeControlsEnabled.value,
+                    onChange = state::setNativeControlsEnabled,
+                )
+                Divider()
+                SliderRow("视频控件透明度", state.nativeControlsAlpha.value,
+                    0, 100, 5, state::setNativeControlsAlpha, "%")
+                Divider()
+                Divider()
+                SwitchRow("底部原生菜单透明", "播放和暂停时使用同一透明度；dyDock 玻璃 Dock 保持原样",
+                    state.nativeBottomEnabled.value, state::setNativeBottomEnabled)
+                Divider()
+                SliderRow("底部菜单透明度", state.nativeBottomAlpha.value, 0, 100, 5, state::setNativeBottomAlpha, "%")
+                Divider()
+                Divider()
+                SwitchRow("主页顶部背景透明", "移除主页顶部原生菜单背景，不改变文字和点击区域",
+                    state.homeTopTransparent.value, state::setHomeTopTransparent)
+                Divider()
+                SwitchRow("主页底部背景透明", "Dock 开启时为玻璃采样清理背景；关闭 Dock 后按此开关控制原生底栏",
+                    state.homeBottomTransparent.value, state::setHomeBottomTransparent)
+                Divider()
+                SwitchRow(
+                    title = "Dock 跟随抖音原生底栏显隐",
+                    subtitle = "原生底栏被隐藏或移除时同步收起；恢复后再显示",
+                    checked = state.followNativeDockVisibility.value,
+                    onChange = state::setFollowNativeDockVisibility,
+                )
+                Divider()
+                SwitchRow("系统导航栏透明", "保留系统手势区域与手势操作",
+                    state.navigationTransparent.value, state::setNavigationTransparent)
+                Divider()
+                SwitchRow("隐藏系统导航栏", "系统可能会在边缘手势时临时显示导航提示",
+                    state.hideNavigationBar.value, state::setHideNavigationBar)
+                Divider()
+                SwitchRow("隐藏状态栏", "隐藏顶部系统状态信息",
+                    state.hideStatusBar.value, state::setHideStatusBar)
+            }
+
+            Spacer(Modifier.height(18.dp))
             SectionTitle("调试")
             GlassCard(scene) {
                 SwitchRow(
@@ -315,8 +446,8 @@ internal fun SettingsScreen(
             Spacer(Modifier.height(18.dp))
             GlassCard(scene) {
                 TextRow(
-                    title = "恢复默认尺寸",
-                    subtitle = "只重置尺寸和开关，不动别的",
+                    title = "恢复默认设置",
+                    subtitle = "恢复 Dock 外观、尺寸和原生透明度选项",
                     onClick = state::reset,
                 )
             }
@@ -566,12 +697,13 @@ private fun SliderRow(
     max: Int,
     step: Int,
     onChange: (Int) -> Unit,
+    suffix: String = "dp",
 ) {
     val palette = LocalSettingsPalette.current
     Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Label(title, palette.primary, 15.sp, modifier = Modifier.weight(1f))
-            Label("$value dp", LocalSettingsPalette.current.secondary, 12.5.sp)
+            Label("$value $suffix", LocalSettingsPalette.current.secondary, 12.5.sp)
         }
         Spacer(Modifier.height(10.dp))
         GlassSlider(value, min, max, step, onChange)

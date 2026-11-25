@@ -332,6 +332,65 @@ final class Shield {
 
 
     /**
+     * 返回展开菜单所在的边缘方向：1=左侧菜单（Dock 向右滑出），
+     * -1=右侧菜单（Dock 向左滑出），2=非边缘面板，0=没有展开面板。
+     * 通过真实面板边界判断，不根据页面文案猜测左右方向。
+     */
+    static int expandedOverlayDirection(View dock, View content, View decor) {
+        if (dock == null || content == null) return 0;
+        Rect page = rectOf(content);
+        if (page.isEmpty()) return 0;
+        Rect dockRect = rectOf(dock);
+        View panel = findExpandedOverlay(dock, content, decor, page, dockRect);
+        if (panel == null) return 0;
+
+        Rect bounds = rectOf(panel);
+        float leftInset = page.width() * 0.12f;
+        float rightInset = page.width() * 0.12f;
+        boolean leftPanel = bounds.left <= page.left + leftInset
+                && bounds.right < page.right - page.width() * 0.08f;
+        boolean rightPanel = bounds.right >= page.right - rightInset
+                && bounds.left > page.left + page.width() * 0.08f;
+        if (leftPanel && !rightPanel) return 1;
+        if (rightPanel && !leftPanel) return -1;
+        return 2;
+    }
+
+    private static View findExpandedOverlay(View dock, View content, View decor,
+                                            Rect page, Rect dockRect) {
+        View cur = dock;
+        for (int guard = 0; guard < 12 && cur != null && cur != content; guard++) {
+            ViewParent parent = cur.getParent();
+            if (!(parent instanceof ViewGroup)) break;
+            ViewGroup group = (ViewGroup) parent;
+            int index = group.indexOfChild(cur);
+            if (index < 0) break;
+            for (int i = index + 1; i < group.getChildCount(); i++) {
+                View found = findExpandedPanel(group.getChildAt(i), page, dockRect,
+                        true, 0, new int[]{220});
+                if (found != null) return found;
+            }
+            cur = group;
+        }
+
+        if (decor instanceof ViewGroup) {
+            ViewGroup root = (ViewGroup) decor;
+            int contentIndex = root.indexOfChild(content);
+            if (contentIndex >= 0) {
+                for (int i = contentIndex + 1; i < root.getChildCount(); i++) {
+                    View candidate = root.getChildAt(i);
+                    if (candidate == null
+                            || candidate.getClass().getName().startsWith("com.zaka.douyin.glass")) continue;
+                    View found = findExpandedPanel(candidate, page, dockRect,
+                            false, 0, new int[]{220});
+                    if (found != null) return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * 抖音长按视频进入倍速播放时会在页面层显示倍速提示。
      * 识别可见文案/无障碍描述，不把普通长按暂停当成倍速。
      */
@@ -383,9 +442,14 @@ final class Shield {
 
     private static boolean containsExpandedPanel(View view, Rect page, Rect dockRect,
                                                  boolean insidePage, int depth, int[] budget) {
+        return findExpandedPanel(view, page, dockRect, insidePage, depth, budget) != null;
+    }
+
+    private static View findExpandedPanel(View view, Rect page, Rect dockRect,
+                                          boolean insidePage, int depth, int[] budget) {
         if (view == null || depth > 8 || budget[0]-- <= 0
                 || view.getVisibility() != View.VISIBLE || view.getAlpha() < 0.08f
-                || !(view instanceof ViewGroup)) return false;
+                || !(view instanceof ViewGroup)) return null;
 
         // Small descendants cannot contain a qualifying expanded menu/profile panel.
         // Pruning them avoids repeatedly walking the entire feed tree on the UI thread.
@@ -395,18 +459,19 @@ final class Shield {
                 || visibleBounds.width() < page.width() * 0.20f
                 || visibleBounds.height() < page.height() * 0.20f
                 || bounds.width() < page.width() * 0.34f
-                || bounds.height() < page.height() * 0.28f) return false;
+                || bounds.height() < page.height() * 0.28f) return null;
 
         String className = view.getClass().getName();
-        if (className.startsWith("com.zaka.douyin.glass")) return false;
-        if (isExpandedPanel(view, page, dockRect, insidePage)) return true;
+        if (className.startsWith("com.zaka.douyin.glass")) return null;
+        if (isExpandedPanel(view, page, dockRect, insidePage)) return view;
 
         ViewGroup group = (ViewGroup) view;
         for (int i = 0; i < group.getChildCount() && budget[0] > 0; i++) {
-            if (containsExpandedPanel(group.getChildAt(i), page, dockRect, insidePage,
-                    depth + 1, budget)) return true;
+            View found = findExpandedPanel(group.getChildAt(i), page, dockRect, insidePage,
+                    depth + 1, budget);
+            if (found != null) return found;
         }
-        return false;
+        return null;
     }
 
     /**
