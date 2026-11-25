@@ -576,18 +576,26 @@ final class DockController {
      * 淡入淡出 + 6dp 的轻微上浮 + 0.985 的轻微缩放，所有隐藏理由共用。
      */
     private static void animateDock(final View view, final boolean show, final float dy) {
+        animateDock(view, show, dy, 0f);
+    }
+
+    /** Side menus move the independent Dock in the same horizontal direction as the host menu. */
+    private static void animateDock(final View view, final boolean show,
+                                    final float dy, final float exitX) {
         if (view == null) return;
         view.animate().cancel();
         if (show) {
             if (view.getVisibility() != View.VISIBLE) view.setVisibility(View.VISIBLE);
             view.setAlpha(0f);
+            view.setTranslationX(exitX);
             view.setTranslationY(dy);
             view.setScaleX(0.985f);
             view.setScaleY(0.985f);
-            view.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f)
+            view.animate().alpha(1f).translationX(0f).translationY(0f)
+                    .scaleX(1f).scaleY(1f)
                     .setDuration(SHOW_MS).setInterpolator(TRANSITION).start();
         } else {
-            view.animate().alpha(0f).translationY(dy * 0.7f)
+            view.animate().alpha(0f).translationX(exitX).translationY(dy * 0.7f)
                     .scaleX(0.99f).scaleY(0.99f)
                     .setDuration(HIDE_MS).setInterpolator(TRANSITION)
                     .withEndAction(new Runnable() {
@@ -877,6 +885,8 @@ final class DockController {
         final long[] lastFindAt = new long[]{0L};
         final long[] lastClearScanAt = new long[]{0L};
         final long[] lastTabRefreshAt = new long[]{0L};
+        final int[] expandedPanelDirection = new int[]{0};
+        final float[] dockExitTranslationX = new float[]{0f};
         final boolean[] clearScreenState = new boolean[]{false};
         final boolean[] speedPlaybackState = new boolean[]{false};
         final int[] lastBandSig = new int[]{0};
@@ -1076,6 +1086,8 @@ final class DockController {
                     if (now - lastClearScanAt[0] >= 80L) {
                         speedPlaybackState[0] = Shield.hasSpeedPlaybackOverlay(decor);
                         clearScreenState[0] = Shield.hasClearScreenState(decor);
+                        expandedPanelDirection[0] =
+                                Shield.expandedOverlayDirection(d, content, decor);
                         lastClearScanAt[0] = now;
                     }
                     boolean speedPlayback = speedPlaybackState[0];
@@ -1087,16 +1099,27 @@ final class DockController {
                     // attachment/ancestor visibility can change structural Dock visibility.
                     // Structural visibility is driven by the host's native pre-draw monitor.
                     // This loop remains for gesture state, settings synchronization and backdrop work.
+                    boolean expandedPanel = expandedPanelDirection[0] != 0;
                     boolean structuralHidden = dockMissingTicks[0] >= 12
-                            || hostHiddenTicks[0] >= 25;
+                            || hostHiddenTicks[0] >= 25 || expandedPanel;
                     boolean hidden = speedPlayback || longPress || clearScreen || structuralHidden;
                     if (hidden) {
                         revealTicks[0] = 0;
-                        // 手势类（倍速 / 清屏）抬手就恢复；结构类（覆盖页 / 浮层 / 底栏脱离）
+                        // 手势类（倍速 / 清屏）抬手就恢复；结构类（菜单 / 覆盖页 / 底栏脱离）
                         // 要连续干净地撑过一小段时间才恢复，转场里的那几帧空档就不会闪。
                         lastHideStructural[0] = !(speedPlayback || longPress || clearScreen);
+                        if (expandedPanelDirection[0] == 1) {
+                            dockExitTranslationX[0] = Math.max(1, decor.getWidth());
+                        } else if (expandedPanelDirection[0] == -1) {
+                            dockExitTranslationX[0] = -Math.max(1, decor.getWidth());
+                        } else if (expandedPanelDirection[0] == 2
+                                || speedPlayback || longPress || clearScreen
+                                || dockMissingTicks[0] >= 12 || hostHiddenTicks[0] >= 25) {
+                            dockExitTranslationX[0] = 0f;
+                        }
                         String why = hideReason(speedPlayback, longPress, clearScreen,
                                 dockMissingTicks[0], hostHiddenTicks[0]);
+                        if (expandedPanel) why += " 侧边菜单";
                         if (!why.equals(lastHideReason[0])) {
                             lastHideReason[0] = why;
                             Dydock.log("底栏隐藏：" + why);
@@ -1188,7 +1211,8 @@ final class DockController {
                     // The pre-draw monitor owns synchronization with the host's real state.
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
-                        animateDock(iso.view, show, 6f * densityPx);
+                        animateDock(iso.view, show, 6f * densityPx, dockExitTranslationX[0]);
+                        if (show) dockExitTranslationX[0] = 0f;
                     }
                 } catch (Throwable t) {
                     Dydock.warnOnce("visibility-poll", "Dock 显隐检查失败: " + t);
@@ -1693,7 +1717,8 @@ final class DockController {
 
             // 两个 dock 作为一整组水平居中；「＋」紧贴胶囊右边，只留 8dp。
             int groupLeft = Math.max(edge, (baseWidth - total) / 2);
-            int top = bandTop + band.height() - (int) (DockPrefs.bottomGapDp(ctx) * density) - pill;
+            // Keep the independent glass Dock above the native menu instead of covering its original slot.
+            int top = bandTop - (int) (DockPrefs.bottomGapDp(ctx) * density) - pill;
 
             // 位置兜底：不许压到系统导航条（手势条）上。
             // 全屏页面上底栏会贴到屏幕最底，量到的 band 就是「贴着边」的；
