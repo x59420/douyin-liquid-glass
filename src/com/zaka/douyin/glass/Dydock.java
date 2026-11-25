@@ -34,8 +34,8 @@ public final class Dydock {
     public static final String HOST = "com.ss.android.ugc.aweme";
     public static final String PKG = "com.zaka.douyin.glass";
 
-    private static final int MAX = 120;
-    private static final ArrayDeque<String> RING = new ArrayDeque<String>(MAX);
+    // Buffer only records emitted before the asynchronous file writer is ready; never truncate a session.
+    private static final ArrayDeque<String> RING = new ArrayDeque<String>();
     private static final HashSet<String> ONCE = new HashSet<String>();
     private static final Object FILE_LOCK = new Object();
 
@@ -278,7 +278,6 @@ public final class Dydock {
             line += "\n" + sw.toString();
         }
         synchronized (RING) {
-            if (RING.size() >= MAX) RING.pollFirst();
             RING.addLast(line);
         }
         try {
