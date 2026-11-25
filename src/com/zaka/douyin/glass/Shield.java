@@ -247,9 +247,13 @@ final class Shield {
         collectProfileMarkers(root, 0, markers, found, new int[]{6000});
         // 本人主页的「编辑资料」优先级最高，避免误隐藏「我」主 Tab。
         if (found[0]) return false;
-        // 他人主页必须同时出现资料页的粉丝/关注关系和私信操作。
-        return found[1] && (found[5] || found[6])
-                && (found[2] || found[3] || found[4]);
+        // 他人主页一定要有「只对别人显示」的操作按钮：私信 / 发消息 / 回关。
+        // 「关注 / 粉丝 / 获赞」自己主页上全都有份，只靠它们必然把「我」判成别人 ——
+        // 点「我的」Dock 直接消失就是这么来的。宁可漏判他人主页，也不要误杀自己的。
+        boolean othersAction = found[3] || found[4]
+                || containsVisibleMarker(root, "回关", 0, new int[]{6000});
+        if (!othersAction) return false;
+        return found[1] || found[5] || found[6];
     }
 
     /**
@@ -516,6 +520,10 @@ final class Shield {
             if (page.height() > 0 && bounds.width() >= page.width() * 0.55f
                     && bounds.height() >= page.height() * 0.12f
                     && bounds.height() <= page.height() * 0.80f
+                    // 面板必须真的还留在屏幕里。评论关掉之后抖音经常只是把它整体下滑出屏
+                    // （translationY），节点仍然 VISIBLE、尺寸也没变 —— 只看尺寸的话
+                    // 会一直判成「评论区还开着」，从评论区返回 Dock 就再也不出来了。
+                    && bounds.top < page.bottom - page.height() * 0.12f
                     && bounds.bottom >= page.bottom - page.height() * 0.45f) return true;
         }
         if (view instanceof ViewGroup) {

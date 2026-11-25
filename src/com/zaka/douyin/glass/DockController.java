@@ -272,8 +272,19 @@ final class DockController {
             float dx = event.getRawX() - start[1];
             float dy = event.getRawY() - start[2];
             if (dx * dx + dy * dy > slop * slop) {
-                synchronized (PRESS) { PRESS.remove(act); }
-                synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
+                // 已经在长按倍速里了：手指移动（包括按着拖进度）不该结束倍速。
+                // 以前这里一刀切，移动超过 18dp 就把按住态清掉 —— 表现就是
+                // 「长按倍速时手一动 Dock 就冒回来」。只有抬手 / 取消才结束。
+                long held = android.os.SystemClock.uptimeMillis() - start[0];
+                boolean longPressActive;
+                synchronized (LONG_PRESS_TARGETS) {
+                    longPressActive = LONG_PRESS_TARGETS.containsKey(act);
+                }
+                if (!longPressActive && held < PRESS_SPEED_DELAY_MS) {
+                    // 还没到长按判定线就移开了：这是滑动，不是长按。
+                    synchronized (PRESS) { PRESS.remove(act); }
+                    synchronized (PRESS_TARGET) { PRESS_TARGET.remove(act); }
+                }
             }
         } else if (action == android.view.MotionEvent.ACTION_UP
                 || action == android.view.MotionEvent.ACTION_CANCEL) {
@@ -847,6 +858,8 @@ final class DockController {
          * 当前不在四个主 tab 页面上。
          */
         final int[] dockMissingTicks = new int[]{0};
+        /** 底栏节点第一次找不到的时刻：用来做「识别跟不上宿主重建」的兜底复位。 */
+        final long[] dockMissingSince = new long[]{0L};
         /** 宿主把底栏容器真正隐藏了：持续约 400ms 才认，滚动动画那一小段不算。 */
         final int[] hostHiddenTicks = new int[]{0};
         /** 评论区是不是开着；开着的时候不参与「结构类」隐藏（抖音原生在评论区里不收底栏）。 */
@@ -1015,7 +1028,12 @@ final class DockController {
                     }
                     if (now - lastProfileScanAt[0] >= 240L) {
                         lastProfileScanAt[0] = now;
-                        otherProfileState[0] = Shield.isOtherProfilePage(content);
+                        // 底部选中的就是「我」这一格 —— 这必然是自己的主页，不是别人主页。
+                        // 抖音改版后自己主页上「编辑资料」的文字不一定扫得到（视图树预算、
+                        // 换了控件），光靠文案判就会把「我」当成别人，点进「我的」Dock 直接没了。
+                        // 选中态是宿主自己给的，比扫文字可靠。
+                        boolean onMyTab = myTabSelected(tabTargets[0]);
+                        otherProfileState[0] = !onMyTab && Shield.isOtherProfilePage(content);
                     }
                     boolean speedPlayback = speedPlaybackState[0];
                     boolean clearScreen = clearScreenState[0]
@@ -1047,6 +1065,21 @@ final class DockController {
                     boolean dockAttached = d != null && d.isAttachedToWindow();
                     dockMissingTicks[0] = dockAttached
                             ? 0 : Math.min(60, dockMissingTicks[0] + 1);
+                    if (dockAttached) {
+                        dockMissingSince[0] = 0L;
+                    } else if (dockMissingSince[0] == 0L) {
+                        dockMissingSince[0] = now;
+                    }
+                    // 识别兜底：主 tab 页面上底栏一定在。连续 3 秒找不到节点，又不是覆盖页、
+                    // 也不在评论区，那就是宿主重建底栏之后我们没跟上 —— 继续拿「找不到节点」
+                    // 当隐藏理由，Dock 会永远不出来。从评论区 / 主页返回时消失就是这个。
+                    if (!dockAttached && dockMissingTicks[0] >= 12
+                            && !coveredState[0] && !commentOpen[0]
+                            && now - dockMissingSince[0] > 3000L) {
+                        dockMissingTicks[0] = 0;
+                        dockMissingSince[0] = now;
+                        Dydock.warn("底栏:3 秒没找到底栏节点（非覆盖页 / 评论区），复位这条隐藏判据");
+                    }
                     boolean hostHidden = !chromeUntrusted[0] && chrome.isHiddenNow(d);
                     if (hostHidden) {
                         if (hostHiddenSince[0] == 0L) hostHiddenSince[0] = now;
@@ -1666,9 +1699,38 @@ final class DockController {
             cleared += clearMaskLayers(start, dock, dockRect, screenW, screenH, 0, budget);
         }
 
+        // 3) 底栏下面压着视频的时候，把窗口 / 内容树自己那层不透明底也去掉。
+        //    视频是 SurfaceView，像素在窗口「下面」；窗口或内容树只要有一层不透明底挡着，
+        //    视频就透不到底栏这一条来 —— 这就是「底部背景怎么都透明不了」的硬原因。
+        if (Shield.hasVideoSurface(root)) {
+            if (clearWindowBackdrop(dock)) cleared++;
+        }
+
         if (cleared > 0) {
             Dydock.log("底栏:已去掉 " + cleared + " 层原生底栏 / 边缘遮罩的背景");
         }
+    }
+
+    /** 去掉窗口和根视图自身的不透明背景，让下层视频透上来。 */
+    private static boolean clearWindowBackdrop(View dock) {
+        boolean changed = false;
+        try {
+            View root = dock.getRootView();
+            if (root != null && root.getBackground() != null) {
+                root.setBackground(null);
+                changed = true;
+            }
+            Activity act = Shield.activityOf(dock);
+            if (act != null && act.getWindow() != null) {
+                android.graphics.drawable.Drawable bg = act.getWindow().getDecorView().getBackground();
+                if (bg != null) {
+                    act.getWindow().getDecorView().setBackground(null);
+                    changed = true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return changed;
     }
 
     /** 只处理「够宽、不高、落在屏幕下半部、不是我们自己画的」那几层。 */
@@ -1728,9 +1790,17 @@ final class DockController {
                 boolean hasBg = child.getBackground() != null;
                 boolean hasFg = hasForeground(child);
                 boolean coversDock = Rect.intersects(r, dockRect);
-                if (coversDock && (hasBg || hasFg)
+                // 两种都清：
+                //  ① 盖住底栏这一条的整条遮罩（宽、扁、没有内容）；
+                //  ② 完全落在底栏区域里的装饰层 —— 底栏设成 GONE 之后，抖音经常还留着一块
+                //     纯色/渐变的底垫着，不清它就是「底部背景透明没生效」。
+                // 判据里都要求「没有可见文字、没有可点控件」，视频封面（用 src 不是 background）、
+                // 图标、按钮都不会被碰到。
+                boolean bigMask = coversDock
                         && r.width() >= screenW * 0.8f
-                        && r.height() <= screenH * 0.35f
+                        && r.height() <= screenH * 0.35f;
+                boolean insideBand = dockRect.contains(r);
+                if ((hasBg || hasFg) && (bigMask || insideBand)
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)) {
                     if (hasBg) child.setBackground(null);
@@ -2114,6 +2184,21 @@ final class DockController {
             }
         }
         return false;
+    }
+
+    /**
+     * 底部当前选中的是不是「我」这一格（第四格）。
+     *
+     * 选中态是宿主自己给的，比自己主页上扫文字可靠 —— 抖音改版之后「编辑资料」
+     * 未必扫得到，只靠文案判就会把「我的」当成别人主页，点进去 Dock 直接没了。
+     */
+    private static boolean myTabSelected(List<View> tabs) {
+        try {
+            if (tabs == null || tabs.size() < 4) return false;
+            return isSelectedDeep(tabs.get(3), 0);
+        } catch (Throwable t) {
+            return false;
+        }
     }
 
     /** 一次性提示：只在本次进程里弹一次，用来一眼确认模块到底有没有接管到。 */
