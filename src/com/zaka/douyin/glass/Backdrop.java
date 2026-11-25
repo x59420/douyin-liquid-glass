@@ -470,7 +470,9 @@ public final class Backdrop {
         long now = SystemClock.uptimeMillis();
         for (Layer l : layers) {
             if (l.usable && l.valid && l.frame != null && !l.frame.isRecycled()
-                    && (l.luma >= 14 || l.opaque >= 40)
+                    // 暗场视频（夜景/黑背景）也是真实画面：只要不是整帧全透明就算可用，
+                    // 阈值和 noteFrameLuma 里判断「抓取失败」的阈值保持一致。
+                    && (l.luma >= 14 || l.opaque >= 12)
                     && now - l.stamp <= LAYER_MAX_AGE_MS) {
                 return true;
             }
