@@ -50,7 +50,7 @@ jobs:
           retention-days: 14
 
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/settings-full-log-export'
     needs: build
     runs-on: ubuntu-latest
     permissions:
