@@ -2,9 +2,7 @@ package com.zaka.douyin.glass
 
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.material.AlertDialog
-import androidx.compose.material.Text
-import androidx.compose.material.TextButton
+import androidx.compose.ui.window.Dialog
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -416,13 +414,21 @@ internal fun SettingsScreen(
             }
         }
         state.selectedLog.value?.let { selected ->
-            AlertDialog(
-                onDismissRequest = state::closeLogViewer,
-                title = { Text(selected.title) },
-                text = {
-                    Column(
-                        Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())
-                    ) {
+            Dialog(onDismissRequest = state::closeLogViewer) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(LocalSettingsPalette.current.panel)
+                        .border(1.dp, LocalSettingsPalette.current.border, RoundedCornerShape(22.dp))
+                        .padding(16.dp)
+                ) {
+                    BasicText(selected.title, style = TextStyle(
+                        color = LocalSettingsPalette.current.primary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ))
+                    Spacer(Modifier.height(12.dp))
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                         BasicText(
                             state.selectedLogContent.value,
                             style = TextStyle(
@@ -432,34 +438,61 @@ internal fun SettingsScreen(
                             ),
                         )
                     }
-                },
-                confirmButton = {
-                    Row {
-                        TextButton(onClick = { state.exportLog(selected.fileName) }) { Text("导出") }
-                        TextButton(onClick = { state.deleteLog(selected.fileName) }) { Text("删除") }
-                        TextButton(onClick = state::closeLogViewer) { Text("关闭") }
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.weight(1f))
+                        DialogAction("导出") { state.exportLog(selected.fileName) }
+                        DialogAction("删除") { state.deleteLog(selected.fileName) }
+                        DialogAction("关闭", state::closeLogViewer)
                     }
-                },
-            )
+                }
+            }
         }
         if (showClearLogsConfirm) {
-            AlertDialog(
-                onDismissRequest = { showClearLogsConfirm = false },
-                title = { Text("清除全部历史日志？") },
-                text = { Text("此操作会删除已保存的会话日志，无法恢复。") },
-                confirmButton = {
-                    TextButton(onClick = {
-                        state.clearLogs()
-                        showClearLogsConfirm = false
-                    }) { Text("清除") }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showClearLogsConfirm = false }) { Text("取消") }
-                },
-            )
+            Dialog(onDismissRequest = { showClearLogsConfirm = false }) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(LocalSettingsPalette.current.panel)
+                        .border(1.dp, LocalSettingsPalette.current.border, RoundedCornerShape(22.dp))
+                        .padding(20.dp)
+                ) {
+                    BasicText("清除全部历史日志？", style = TextStyle(
+                        color = LocalSettingsPalette.current.primary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ))
+                    Spacer(Modifier.height(10.dp))
+                    BasicText("此操作会删除已保存的会话日志，无法恢复。当前正在记录的会话会保留。",
+                        style = TextStyle(color = LocalSettingsPalette.current.secondary, fontSize = 13.sp))
+                    Spacer(Modifier.height(16.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.weight(1f))
+                        DialogAction("取消") { showClearLogsConfirm = false }
+                        DialogAction("清除") {
+                            state.clearLogs()
+                            showClearLogsConfirm = false
+                        }
+                    }
+                }
+            }
         }
     }
 }
+
+@Composable
+private fun DialogAction(label: String, onClick: () -> Unit) {
+    BasicText(
+        label,
+        modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        style = TextStyle(
+            color = LocalSettingsPalette.current.accent,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+        ),
+    )
+}
+
 @Composable
 private fun TopBar(version: String, onBack: () -> Unit) {
     val palette = LocalSettingsPalette.current
