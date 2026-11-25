@@ -87,6 +87,12 @@ final class DockController {
     /** 见过的宿主页面：设置里重新打开开关时，要能把它们重新接管一遍。 */
     private static final WeakHashMap<Activity, Boolean> KNOWN =
             new WeakHashMap<Activity, Boolean>();
+    /** 宿主自己那份状态栏颜色：进全屏前记下来，退出来要还回去。 */
+    private static final WeakHashMap<Activity, Integer> ORIGINAL_STATUS_BAR =
+            new WeakHashMap<Activity, Integer>();
+    /** LAYOUT_FULLSCREEN 是不是我们自己加的：退出全屏时要主动收掉，不能赖在宿主头上。 */
+    private static final WeakHashMap<Activity, Boolean> OURS_LAYOUT_FULLSCREEN =
+            new WeakHashMap<Activity, Boolean>();
     /** 手指按住视频的起点，用来判断「长按倍速」——抖音自己不一定走 performLongClick。 */
     private static final WeakHashMap<Activity, long[]> PRESS =
             new WeakHashMap<Activity, long[]>();
@@ -594,6 +600,8 @@ final class DockController {
         synchronized (DONE) {
             DONE.remove(act);
         }
+        ORIGINAL_STATUS_BAR.remove(act);
+        OURS_LAYOUT_FULLSCREEN.remove(act);
     }
 
     static void onActivity(final Activity act) {
@@ -941,6 +949,9 @@ final class DockController {
                                     View p = Finder.pickPlus(its);
                                     List<View> lf = new ArrayList<View>(its);
                                     if (p != null) lf.remove(p);
+                                    // 先把位置量下来：设成 GONE 之后自己就量不到了，
+                                    // 底栏区域和遮罩匹配都要用这份坐标。
+                                    Rect freshBand = rectInWindow(fresh);
                                     fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
                                     backdrop.setExcluded(fresh);
@@ -952,10 +963,10 @@ final class DockController {
                                     synchronized (DOCKS) {
                                         DOCKS.put(act, fresh);
                                     }
-                                    stripDockBackground(fresh);
+                                    stripDockBackground(fresh, freshBand);
                                     refreshTabs(iso, lf, p);
                                     applyGeometry(iso, backdrop, fresh, lf.size());
-                                    bandRect[0] = rectInWindow(fresh);
+                                    bandRect[0] = freshBand.isEmpty() ? rectInWindow(fresh) : freshBand;
                                     synchronized (BANDS) { BANDS.put(act, bandRect[0]); }
                                     lastAccountedBandW[0] = fresh.getWidth();
                                     lastAccountedBandH[0] = fresh.getHeight();
@@ -1165,7 +1176,7 @@ final class DockController {
                     // 底栏那条深色底 + 上方的渐变压暗层：宿主重建底栏时会重新铺上，同样要复查。
                     if (now - lastStripAt[0] >= 1200L) {
                         lastStripAt[0] = now;
-                        stripDockBackground(d != null ? d : dockRef[0]);
+                        stripDockBackground(d != null ? d : dockRef[0], bandRect[0]);
                         // 状态栏被宿主隐藏时，顶部那条黑色色带也要一起去掉，否则就是「黑一条」。
                         if (hostHidesStatusBar(act)) {
                             stripStatusBand(d != null ? d : dockRef[0]);
@@ -1606,13 +1617,22 @@ final class DockController {
      * 只处理「够宽、且不高于屏幕 40%」的那几层，避免误伤整页容器。
      */
     private static void stripDockBackground(View dock) {
+        stripDockBackground(dock, null);
+    }
+
+    /**
+     * @param band 底栏所在的那一条（窗口坐标）。底栏被我们设成 GONE 之后自己量不到位置，
+     *             所以复查时要把它传进来 —— 否则遮罩层会因为「盖住底栏」这一条算不出来而全部漏掉。
+     */
+    private static void stripDockBackground(View dock, Rect band) {
         if (dock == null) return;
         View root = dock.getRootView();
         int screenW = root == null ? 0 : root.getWidth();
         int screenH = root == null ? 0 : root.getHeight();
         if (screenW <= 0 || screenH <= 0) return;
 
-        Rect dockRect = rectInWindow(dock);
+        Rect dockRect = (band != null && !band.isEmpty()) ? new Rect(band) : rectInWindow(dock);
+        if (dockRect.isEmpty()) return;
         int cleared = 0;
 
         // 1) 底栏本身和它的外壳容器。抖音的底栏壳通常自己铺一层深色 + 顶部渐变，
@@ -1627,10 +1647,21 @@ final class DockController {
 
         // 2) 盖在底栏这一条上的渐变压暗层。它一般不在父链上（是兄弟层或更外层的浮层），
         //    所以按「位置 + 形状 + 纯装饰」来找，宁可漏掉也不误伤列表和评论区。
-        if (root instanceof ViewGroup) {
-            int[] budget = new int[]{220};
-            cleared += clearMaskLayers((ViewGroup) root, dock, dockRect,
-                    screenW, screenH, 0, budget);
+        //
+        //    起点用底栏的祖父容器：遮罩层通常就在这一层里当兄弟节点。从窗口根节点开始扫的话，
+        //    有限的节点预算会先被别的分支吃掉，轮不到底栏这一块。
+        ViewGroup start = null;
+        try {
+            ViewParent up1 = dock.getParent();
+            ViewParent up2 = up1 instanceof View ? ((View) up1).getParent() : null;
+            if (up2 instanceof ViewGroup) start = (ViewGroup) up2;
+            else if (up1 instanceof ViewGroup) start = (ViewGroup) up1;
+        } catch (Throwable ignored) {
+        }
+        if (start == null && root instanceof ViewGroup) start = (ViewGroup) root;
+        if (start != null) {
+            int[] budget = new int[]{260};
+            cleared += clearMaskLayers(start, dock, dockRect, screenW, screenH, 0, budget);
         }
 
         if (cleared > 0) {
@@ -1642,16 +1673,35 @@ final class DockController {
     private static boolean clearBandBackground(View v, int screenW, int screenH, Rect dockRect) {
         try {
             if (v == null || isOursView(v)) return false;
-            if (v.getBackground() == null) return false;
+            // 抖音的底栏渐变有时候不挂在 background 上，而是 foreground（叠在子内容上面那一层）。
+            boolean hasBg = v.getBackground() != null;
+            boolean hasFg = hasForeground(v);
+            if (!hasBg && !hasFg) return false;
             if (v.getWidth() < screenW * 0.6f) return false;
             if (v.getHeight() > screenH * 0.45f) return false;
             Rect r = rectInWindow(v);
             // 只认底栏这一带：整块都在屏幕上半部的不碰（那是顶部标题栏的地盘）。
             if (r.bottom < screenH * 0.5f) return false;
-            v.setBackground(null);
+            if (hasBg) v.setBackground(null);
+            if (hasFg) clearForeground(v);
             return true;
         } catch (Throwable t) {
             return false;
+        }
+    }
+
+    private static boolean hasForeground(View v) {
+        try {
+            return v.getForeground() != null;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static void clearForeground(View v) {
+        try {
+            v.setForeground(null);
+        } catch (Throwable ignored) {
         }
     }
 
@@ -1673,13 +1723,16 @@ final class DockController {
             try {
                 if (child.getVisibility() != View.VISIBLE || child.getAlpha() < 0.05f) continue;
                 Rect r = rectInWindow(child);
+                boolean hasBg = child.getBackground() != null;
+                boolean hasFg = hasForeground(child);
                 boolean coversDock = Rect.intersects(r, dockRect);
-                if (coversDock && child.getBackground() != null
+                if (coversDock && (hasBg || hasFg)
                         && r.width() >= screenW * 0.8f
                         && r.height() <= screenH * 0.35f
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)) {
-                    child.setBackground(null);
+                    if (hasBg) child.setBackground(null);
+                    if (hasFg) clearForeground(child);
                     cleared++;
                 }
                 if (child instanceof ViewGroup) {
@@ -1770,12 +1823,15 @@ final class DockController {
             try {
                 if (child.getVisibility() != View.VISIBLE || child.getAlpha() < 0.05f) continue;
                 Rect r = rectInWindow(child);
+                boolean hasBg = child.getBackground() != null;
+                boolean hasFg = hasForeground(child);
                 if (r.top <= limit && r.width() >= screenW * 0.8f
                         && r.height() <= screenH * 0.25f
-                        && child.getBackground() != null
+                        && (hasBg || hasFg)
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)) {
-                    child.setBackground(null);
+                    if (hasBg) child.setBackground(null);
+                    if (hasFg) clearForeground(child);
                     cleared++;
                 }
                 if (child instanceof ViewGroup) {
@@ -1793,10 +1849,22 @@ final class DockController {
         try {
             if (act == null || act.getWindow() == null) return false;
             android.view.Window window = act.getWindow();
-            int flags = window.getDecorView().getSystemUiVisibility();
+            View decor = window.getDecorView();
+            if (decor == null) return false;
+            int flags = decor.getSystemUiVisibility();
             if ((flags & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0) return true;
-            return (window.getAttributes().flags
-                    & android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+            if ((window.getAttributes().flags
+                    & android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0) return true;
+            // 新版抖音是用 WindowInsetsController.hide(statusBars()) 藏的，
+            // 上面两个老 flag 都看不见，只能问 insets。
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowInsets insets = decor.getRootWindowInsets();
+                if (insets != null
+                        && !insets.isVisible(android.view.WindowInsets.Type.statusBars())) {
+                    return true;
+                }
+            }
+            return false;
         } catch (Throwable t) {
             return false;
         }
@@ -1877,28 +1945,52 @@ final class DockController {
                 changed = true;
             }
 
-            // 状态栏：同样透明。抖音在视频页会把它写成黑色，那就是「隐藏状态栏后黑一条」的底色。
-            if (window.getStatusBarColor() != android.graphics.Color.TRANSPARENT) {
-                window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
-                changed = true;
-            }
-            if (android.os.Build.VERSION.SDK_INT >= 29 && window.isStatusBarContrastEnforced()) {
-                window.setStatusBarContrastEnforced(false);
-                changed = true;
-            }
-
             int flags = decor.getSystemUiVisibility();
             int next = flags;
             next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
             // 主动清掉：0.3.3 打开过，残留会让底栏坐标一直偏低。
             next &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
 
-            boolean hostHidesStatus = (flags & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0
-                    || (window.getAttributes().flags
-                        & android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+            boolean hostHidesStatus = hostHidesStatusBar(act);
+
+            // 状态栏：只在宿主自己已经把它隐藏（全屏播放 / 沉浸式）的时候处理。
+            //
+            // 为什么不一刀切：状态栏还在的时候，decor 并没有铺到那一块，设成透明之后
+            // 露出来的是窗口底色（黑）—— 那不是修好，而是凭空多一条黑边。
+            // 宿主隐藏了状态栏，那块本来就是空的，透明 + 内容延伸过去才真的透出画面。
             if (hostHidesStatus) {
+                Integer original = ORIGINAL_STATUS_BAR.get(act);
+                if (original == null) {
+                    // 记下抖音自己那份颜色，退出全屏时还回去。
+                    original = window.getStatusBarColor();
+                    ORIGINAL_STATUS_BAR.put(act, original);
+                }
+                if (window.getStatusBarColor() != android.graphics.Color.TRANSPARENT) {
+                    window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                    changed = true;
+                }
+                if (android.os.Build.VERSION.SDK_INT >= 29
+                        && window.isStatusBarContrastEnforced()) {
+                    window.setStatusBarContrastEnforced(false);
+                    changed = true;
+                }
                 next |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+                OURS_LAYOUT_FULLSCREEN.put(act, Boolean.TRUE);
+            } else {
+                // 退出全屏（回到主界面）：把我们加的东西收回去。
+                // 不收的话状态栏那块会一直透明 —— 主界面的 decor 没铺到那里，
+                // 露出来是窗口底色，看着就是「从视频页退回来以后顶部黑一条」。
+                Integer original = ORIGINAL_STATUS_BAR.remove(act);
+                if (original != null
+                        && window.getStatusBarColor() == android.graphics.Color.TRANSPARENT) {
+                    window.setStatusBarColor(original);
+                    changed = true;
+                }
+                if (Boolean.TRUE.equals(OURS_LAYOUT_FULLSCREEN.remove(act))) {
+                    next &= ~View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+                }
             }
+
             if (next != flags) {
                 decor.setSystemUiVisibility(next);
                 changed = true;
