@@ -350,20 +350,31 @@ final class DockController {
         private final View decor;
         private final int[] baseVis = new int[DEPTH];
         private final float[] baseAlpha = new float[DEPTH];
+        private final int[] baseW = new int[DEPTH];
+        private final int[] baseH = new int[DEPTH];
 
         ChromeSnapshot(View dock, View content, View decor) {
             this.content = content;
             this.decor = decor;
+            refresh(dock);
+        }
+
+        /** 重新拍一次基线：宿主换了底栏节点、或者误报排除之后要恢复判据时用。 */
+        void refresh(View dock) {
             View v = dock;
             for (int i = 0; i < DEPTH; i++) {
                 ViewParent parent = v == null ? null : v.getParent();
                 if (!(parent instanceof View)) {
                     baseVis[i] = -1;
+                    baseAlpha[i] = 0f;
+                    v = null;
                     continue;
                 }
                 v = (View) parent;
                 baseVis[i] = v.getVisibility();
                 baseAlpha[i] = v.getAlpha();
+                baseW[i] = v.getWidth();
+                baseH[i] = v.getHeight();
             }
         }
 
@@ -378,7 +389,14 @@ final class DockController {
                 if (v == content || v == decor || isOursGlass(v)) continue;
                 // 接管前它就是隐藏/透明的，这层没有参考价值。
                 if (baseVis[i] != View.VISIBLE || baseAlpha[i] < 0.05f) continue;
-                if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) return true;
+                if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) {
+                    // 尺寸塌陷但自己还标着「可见」：外壳跟着我们 GONE 掉的底栏缩了，
+                    // 这是我们自己干的事，不是宿主在藏底栏 —— 不能拿它当隐藏理由，
+                    // 否则 Dock 刚出来就被自己收掉。
+                    if (v.getVisibility() == View.VISIBLE
+                            && baseH[i] > 0 && v.getHeight() * 3 < baseH[i]) continue;
+                    return true;
+                }
             }
             return false;
         }
@@ -806,6 +824,10 @@ final class DockController {
         final long[] lastBackdropPumpAt = new long[]{0L};
         /** 模块设置页（桌面图标）改配置的同步节流。 */
         final long[] lastPrefsSyncAt = new long[]{0L};
+        /** 状态栏 / 导航栏透明复查的节流：宿主会把自己的栏色整段写回去。 */
+        final long[] lastChromeAt = new long[]{0L};
+        /** 底栏那条深色底 / 边缘遮罩的复查节流：抖音重建底栏时会重新铺一层。 */
+        final long[] lastStripAt = new long[]{0L};
         /**
          * 原生底栏连续几帧不在窗口里。
          *
@@ -922,6 +944,9 @@ final class DockController {
                                     fresh.setVisibility(View.GONE);
                                     dockRef[0] = fresh;
                                     backdrop.setExcluded(fresh);
+                                    // 底栏节点换了，父链的显隐基线也得跟着换，否则
+                                    // 「跟随宿主底栏显隐」这条判据会一直拿旧节点比对。
+                                    chrome.refresh(fresh);
                                     tabTargets[0] = lf;
                                     plusTarget[0] = p;
                                     synchronized (DOCKS) {
@@ -1019,8 +1044,7 @@ final class DockController {
                             ? Math.min(60, hostHiddenTicks[0] + 1) : 0;
                     // 误报兜底：宿主那条底栏还好端端挂在窗口里、页面也没被整屏盖住、
                     // 既不在清屏也不在倍速，只是某个祖先报了不可见 —— 这不是「进会话页」。
-                    // 撑过 3.5 秒还是这样，就把这条理由在本 Activity 里彻底关掉，
-                    // 保证玻璃不会因为一条判据错到底而永远出不来。
+                    // 撑过 3.5 秒还是这样，先把这条理由关掉，保证玻璃不会因为一条判据错到底而永远出不来。
                     if (hostHidden && dockAttached
                             && !coveredState[0] && !clearScreen && !speedPlayback
                             && now - hostHiddenSince[0] > 3500L) {
@@ -1028,7 +1052,17 @@ final class DockController {
                         hostHiddenTicks[0] = 0;
                         hostHiddenSince[0] = 0L;
                         Dydock.warn("底栏:祖先层报不可见但底栏仍在窗口内，判定为误报，"
-                                + "本次运行不再用这条理由隐藏 Dock");
+                                + "暂时不用这条理由隐藏 Dock");
+                    }
+                    // 误报排除要能自己退出来：底栏真的脱离过窗口、或者页面被整屏盖住，
+                    // 就说明宿主确实会藏底栏 —— 重新拍基线继续跟。
+                    // （以前这里是「本次运行永久关闭」，结果就是「宿主把底栏藏了，Dock 还杵在那儿」）
+                    if (chromeUntrusted[0] && (!dockAttached || coveredState[0])) {
+                        chromeUntrusted[0] = false;
+                        chrome.refresh(d);
+                        hostHiddenSince[0] = 0L;
+                        hostHiddenTicks[0] = 0;
+                        Dydock.log("底栏:恢复「跟随宿主底栏显隐」判据");
                     }
                     // 评论区开着时，结构类理由（覆盖 / 浮层 / 底栏脱离 / 宿主隐藏）一律不算：
                     // 评论面板弹上来会让宿主重新排布底栏，跟着判就是「收起又冒出」。
@@ -1039,7 +1073,9 @@ final class DockController {
                             || coveredTicks[0] >= COVER_CONFIRM_TICKS
                             || expandedTicks[0] >= COVER_CONFIRM_TICKS
                             || dockMissingTicks[0] >= 12
-                            || hostHiddenTicks[0] >= 25;
+                            // 宿主把底栏藏起来就跟上：约 160ms（10 帧）。以前是 400ms，
+                            // 手感上就是「底栏早没了，Dock 还挂在那儿一会儿」。
+                            || hostHiddenTicks[0] >= 10;
                     boolean hidden = speedPlayback || longPress || clearScreen
                             || structuralHidden || otherProfileState[0];
                     if (hidden) {
@@ -1115,6 +1151,24 @@ final class DockController {
                         if (DockPrefs.syncFromModule(act)) {
                             Dydock.log("设置:已同步桌面设置页的改动");
                             applySettingsNow(act);
+                        }
+                    }
+
+                    // 状态栏 / 导航栏透明：抖音在切页、进出全屏、重获焦点之后会把自己的
+                    // 栏色整段写回去，只设一次必被盖掉。这里低频复查，被改回去就重贴。
+                    if (now - lastChromeAt[0] >= 600L) {
+                        lastChromeAt[0] = now;
+                        if (applyWindowChrome(act)) {
+                            Dydock.log("窗口:状态栏 / 导航栏被宿主改回不透明，已重新设为透明");
+                        }
+                    }
+                    // 底栏那条深色底 + 上方的渐变压暗层：宿主重建底栏时会重新铺上，同样要复查。
+                    if (now - lastStripAt[0] >= 1200L) {
+                        lastStripAt[0] = now;
+                        stripDockBackground(d != null ? d : dockRef[0]);
+                        // 状态栏被宿主隐藏时，顶部那条黑色色带也要一起去掉，否则就是「黑一条」。
+                        if (hostHidesStatusBar(act)) {
+                            stripStatusBand(d != null ? d : dockRef[0]);
                         }
                     }
 
@@ -1557,21 +1611,205 @@ final class DockController {
         int screenW = root == null ? 0 : root.getWidth();
         int screenH = root == null ? 0 : root.getHeight();
         if (screenW <= 0 || screenH <= 0) return;
+
+        Rect dockRect = rectInWindow(dock);
+        int cleared = 0;
+
+        // 1) 底栏本身和它的外壳容器。抖音的底栏壳通常自己铺一层深色 + 顶部渐变，
+        //    只把底栏设成 GONE 是拿不掉这层的 —— 玻璃隔着它采样就是一块黑。
         View v = dock;
-        for (int i = 0; i < 4 && v != null; i++) {
-            try {
-                if (v.getBackground() != null
-                        && v.getWidth() >= screenW * 0.7f
-                        && v.getHeight() <= screenH * 0.4f) {
-                    v.setBackground(null);
-                }
-            } catch (Throwable ignored) {
-            }
+        for (int i = 0; i < 6 && v != null; i++) {
+            if (clearBandBackground(v, screenW, screenH, dockRect)) cleared++;
             ViewParent parent = v.getParent();
             v = parent instanceof View ? (View) parent : null;
             if (v != null && v.getId() == android.R.id.content) break;
         }
-        Dydock.log("底栏:已去掉原生底栏区域的背景色");
+
+        // 2) 盖在底栏这一条上的渐变压暗层。它一般不在父链上（是兄弟层或更外层的浮层），
+        //    所以按「位置 + 形状 + 纯装饰」来找，宁可漏掉也不误伤列表和评论区。
+        if (root instanceof ViewGroup) {
+            int[] budget = new int[]{220};
+            cleared += clearMaskLayers((ViewGroup) root, dock, dockRect,
+                    screenW, screenH, 0, budget);
+        }
+
+        if (cleared > 0) {
+            Dydock.log("底栏:已去掉 " + cleared + " 层原生底栏 / 边缘遮罩的背景");
+        }
+    }
+
+    /** 只处理「够宽、不高、落在屏幕下半部、不是我们自己画的」那几层。 */
+    private static boolean clearBandBackground(View v, int screenW, int screenH, Rect dockRect) {
+        try {
+            if (v == null || isOursView(v)) return false;
+            if (v.getBackground() == null) return false;
+            if (v.getWidth() < screenW * 0.6f) return false;
+            if (v.getHeight() > screenH * 0.45f) return false;
+            Rect r = rectInWindow(v);
+            // 只认底栏这一带：整块都在屏幕上半部的不碰（那是顶部标题栏的地盘）。
+            if (r.bottom < screenH * 0.5f) return false;
+            v.setBackground(null);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 找底栏上方的渐变遮罩。
+     *
+     * 判据卡得比较死：盖住底栏那一块、宽度接近整屏、高度不超过屏高 35%、
+     * 里面没有可见文字、也没有可点控件。抖音的评论区、列表、面板都带这些东西，
+     * 所以不会被误伤；纯装饰的渐变压暗层正好一条都不占。
+     */
+    private static int clearMaskLayers(ViewGroup parent, View dock, Rect dockRect,
+                                       int screenW, int screenH, int depth, int[] budget) {
+        if (parent == null || depth > 8 || budget[0] <= 0) return 0;
+        int cleared = 0;
+        for (int i = 0; i < parent.getChildCount() && budget[0] > 0; i++) {
+            View child = parent.getChildAt(i);
+            if (child == null || child == dock || isOursView(child)) continue;
+            budget[0]--;
+            try {
+                if (child.getVisibility() != View.VISIBLE || child.getAlpha() < 0.05f) continue;
+                Rect r = rectInWindow(child);
+                boolean coversDock = Rect.intersects(r, dockRect);
+                if (coversDock && child.getBackground() != null
+                        && r.width() >= screenW * 0.8f
+                        && r.height() <= screenH * 0.35f
+                        && !hasVisibleTextIn(child, 0)
+                        && !hasClickableIn(child, 0)) {
+                    child.setBackground(null);
+                    cleared++;
+                }
+                if (child instanceof ViewGroup) {
+                    cleared += clearMaskLayers((ViewGroup) child, dock, dockRect,
+                            screenW, screenH, depth + 1, budget);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return cleared;
+    }
+
+    private static boolean hasVisibleTextIn(View v, int depth) {
+        if (v == null || depth > 10) return false;
+        try {
+            if (!v.isShown()) return false;
+            if (v instanceof android.widget.TextView) {
+                CharSequence text = ((android.widget.TextView) v).getText();
+                if (text != null && text.toString().trim().length() > 0) return true;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    if (hasVisibleTextIn(g.getChildAt(i), depth + 1)) return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean hasClickableIn(View v, int depth) {
+        if (v == null || depth > 10) return false;
+        try {
+            if (v.isClickable() && v.isShown()) return true;
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    if (hasClickableIn(g.getChildAt(i), depth + 1)) return true;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return false;
+    }
+
+    private static boolean isOursView(View v) {
+        try {
+            return v.getClass().getName().startsWith("com.zaka.douyin.glass");
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 状态栏那一块的黑色色带。
+     *
+     * 抖音全屏播放时会在状态栏区域铺一层从黑到透明的渐变；状态栏一旦隐藏，
+     * 那一层就是「黑一条」。只在宿主自己隐藏了状态栏（FULLSCREEN）时处理 ——
+     * 状态栏还在的时候这层是给系统图标垫底的，动了会让时间和电量看不清。
+     *
+     * 判据和底部那套一致：盖住状态栏那一带、几乎整屏宽、不高、没有可见文字、没有可点控件。
+     */
+    private static void stripStatusBand(View dock) {
+        if (dock == null) return;
+        View root = dock.getRootView();
+        if (!(root instanceof ViewGroup)) return;
+        int screenW = root.getWidth();
+        int screenH = root.getHeight();
+        if (screenW <= 0 || screenH <= 0) return;
+        int statusH = statusBarHeight(dock);
+        int limit = Math.max(statusH * 2, (int) (screenH * 0.08f));
+        int[] budget = new int[]{220};
+        int cleared = clearTopLayers((ViewGroup) root, screenW, screenH, limit, 0, budget);
+        if (cleared > 0) {
+            Dydock.log("状态栏:已去掉 " + cleared + " 层顶部黑色色带");
+        }
+    }
+
+    private static int clearTopLayers(ViewGroup parent, int screenW, int screenH, int limit,
+                                      int depth, int[] budget) {
+        if (parent == null || depth > 8 || budget[0] <= 0) return 0;
+        int cleared = 0;
+        for (int i = 0; i < parent.getChildCount() && budget[0] > 0; i++) {
+            View child = parent.getChildAt(i);
+            if (child == null || isOursView(child)) continue;
+            budget[0]--;
+            try {
+                if (child.getVisibility() != View.VISIBLE || child.getAlpha() < 0.05f) continue;
+                Rect r = rectInWindow(child);
+                if (r.top <= limit && r.width() >= screenW * 0.8f
+                        && r.height() <= screenH * 0.25f
+                        && child.getBackground() != null
+                        && !hasVisibleTextIn(child, 0)
+                        && !hasClickableIn(child, 0)) {
+                    child.setBackground(null);
+                    cleared++;
+                }
+                if (child instanceof ViewGroup) {
+                    cleared += clearTopLayers((ViewGroup) child, screenW, screenH, limit,
+                            depth + 1, budget);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return cleared;
+    }
+
+    /** 宿主自己是不是已经把状态栏隐藏了（全屏播放、沉浸式）。 */
+    private static boolean hostHidesStatusBar(Activity act) {
+        try {
+            if (act == null || act.getWindow() == null) return false;
+            android.view.Window window = act.getWindow();
+            int flags = window.getDecorView().getSystemUiVisibility();
+            if ((flags & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0) return true;
+            return (window.getAttributes().flags
+                    & android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    private static int statusBarHeight(View v) {
+        try {
+            android.content.Context ctx = v.getContext();
+            int id = ctx.getResources().getIdentifier("status_bar_height", "dimen", "android");
+            if (id > 0) return ctx.getResources().getDimensionPixelSize(id);
+        } catch (Throwable ignored) {
+        }
+        return (int) (24 * v.getResources().getDisplayMetrics().density);
     }
 
     /**
@@ -1586,30 +1824,89 @@ final class DockController {
      * 另外 GlassEntry.makeNavigationAreaTransparent 里也是这么处理的，两处必须同一个口径。
      */
     private static void applyImmersiveNavigation(Activity act) {
+        if (applyWindowChrome(act)) {
+            Dydock.log("窗口:状态栏 / 导航栏已设为透明");
+        }
+    }
+
+    /**
+     * 状态栏 + 导航栏一起处理，**幂等**：每帧调都安全，没被改回去就什么也不做。
+     *
+     * 为什么必须是幂等的：抖音在 onResume、切 tab、进出全屏、重建窗口之后，
+     * 会把自己的栏色和 ui flags 整段写回去 —— 只设一次必然被它盖掉。
+     * 「导航栏透明不生效」「隐藏状态栏以后那条是黑的」都是这么来的。
+     *
+     * 两条老规矩照旧：
+     *  - 不打开 LAYOUT_HIDE_NAVIGATION。内容延伸进手势区会把原生底栏整体下移，Dock 跟着偏。
+     *  - 不主动隐藏状态栏。只有宿主**自己已经在隐藏**（FULLSCREEN）时才补 LAYOUT_FULLSCREEN，
+     *    因为透明的状态栏只有内容真的画到那一块才透得出来；不补的话露出来的是窗口底色，
+     *    也就是那条黑边。
+     *
+     * @return 这次有没有真的改动过窗口（用来只在变化时打日志）
+     */
+    static boolean applyWindowChrome(Activity act) {
+        if (act == null) return false;
         try {
             android.view.Window window = act.getWindow();
-            if (window == null) return;
-            if (android.os.Build.VERSION.SDK_INT >= 29) {
-                window.setNavigationBarContrastEnforced(false);
-            }
-            try {
-                window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
-                if (android.os.Build.VERSION.SDK_INT >= 28) {
-                    window.setNavigationBarDividerColor(android.graphics.Color.TRANSPARENT);
-                }
-            } catch (Throwable ignored) {
-            }
+            if (window == null) return false;
             View decor = window.getDecorView();
-            if (decor != null) {
-                int flags = decor.getSystemUiVisibility();
-                flags |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-                // 主动清掉：0.3.3 打开过，残留会让底栏坐标一直偏低。
-                flags &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
-                decor.setSystemUiVisibility(flags);
+            if (decor == null) return false;
+            boolean changed = false;
+
+            // setStatusBarColor / setNavigationBarColor 在 Android 5+ 有个前提：
+            // 窗口必须带 FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS，否则系统直接忽略这两个调用 ——
+            // 这条就是「设了透明但一点效果都没有」的根本原因。
+            if ((window.getAttributes().flags
+                    & android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS) == 0) {
+                window.addFlags(
+                        android.view.WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+                changed = true;
             }
-            Dydock.log("系统导航栏:背景透明，布局范围保持与宿主一致（Dock 贴原生底栏位置）");
+
+            // 导航栏：透明。手势导航下系统默认还要在背后铺一层对比度灰底，不关掉就还是灰的。
+            if (window.getNavigationBarColor() != android.graphics.Color.TRANSPARENT) {
+                window.setNavigationBarColor(android.graphics.Color.TRANSPARENT);
+                changed = true;
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                window.setNavigationBarDividerColor(android.graphics.Color.TRANSPARENT);
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 29
+                    && window.isNavigationBarContrastEnforced()) {
+                window.setNavigationBarContrastEnforced(false);
+                changed = true;
+            }
+
+            // 状态栏：同样透明。抖音在视频页会把它写成黑色，那就是「隐藏状态栏后黑一条」的底色。
+            if (window.getStatusBarColor() != android.graphics.Color.TRANSPARENT) {
+                window.setStatusBarColor(android.graphics.Color.TRANSPARENT);
+                changed = true;
+            }
+            if (android.os.Build.VERSION.SDK_INT >= 29 && window.isStatusBarContrastEnforced()) {
+                window.setStatusBarContrastEnforced(false);
+                changed = true;
+            }
+
+            int flags = decor.getSystemUiVisibility();
+            int next = flags;
+            next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+            // 主动清掉：0.3.3 打开过，残留会让底栏坐标一直偏低。
+            next &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+
+            boolean hostHidesStatus = (flags & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0
+                    || (window.getAttributes().flags
+                        & android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN) != 0;
+            if (hostHidesStatus) {
+                next |= View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+            }
+            if (next != flags) {
+                decor.setSystemUiVisibility(next);
+                changed = true;
+            }
+            return changed;
         } catch (Throwable t) {
-            Dydock.warnOnce("immersive-nav", "设置导航栏透明度失败: " + t);
+            Dydock.warnOnce("window-chrome", "状态栏 / 导航栏透明设置失败: " + t);
+            return false;
         }
     }
 
