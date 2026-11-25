@@ -395,6 +395,8 @@ final class DockController {
                 if (v == content || v == decor || isOursGlass(v)) continue;
                 // 接管前它就是隐藏/透明的，这层没有参考价值。
                 if (baseVis[i] != View.VISIBLE || baseAlpha[i] < 0.05f) continue;
+                // 接管那一刻这层还没布局（宽高为 0），也拿来比就没有意义了。
+                if (baseW[i] <= 0 || baseH[i] <= 0) continue;
                 if (v.getVisibility() != View.VISIBLE || v.getAlpha() < 0.05f) {
                     // 尺寸塌陷但自己还标着「可见」：外壳跟着我们 GONE 掉的底栏缩了，
                     // 这是我们自己干的事，不是宿主在藏底栏 —— 不能拿它当隐藏理由，
