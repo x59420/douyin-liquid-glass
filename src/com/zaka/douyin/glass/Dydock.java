@@ -75,25 +75,30 @@ public final class Dydock {
 
     private static void initFile() {
         synchronized (FILE_LOCK) {
+            // 两条路都铺上：MediaStore 的 Download/Dydock（文件管理器直接能看到），
+            // 以及宿主自己的外部目录 Android/data/<宿主>/files/Documents（MediaStore 被挡时兜底）。
+            // 少一条都可能变成「用户那边根本找不到日志」。
+            try {
+                File dir = appContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
+                if (dir != null) {
+                    if (!dir.exists()) dir.mkdirs();
+                    fallbackFile = new File(dir, "dydock-diagnostic.log");
+                }
+            } catch (Throwable ignored) {
+            }
             try {
                 if (Build.VERSION.SDK_INT >= 29) {
                     logUri = findOrCreateDownloadLog(appContext);
-                    fileReady = logUri != null;
-                } else {
-                    File dir = appContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS);
-                    if (dir != null) {
-                        if (!dir.exists()) dir.mkdirs();
-                        fallbackFile = new File(dir, "dydock-diagnostic.log");
-                        fileReady = true;
-                    }
                 }
             } catch (Throwable t) {
-                fileReady = false;
-                Log.e(TAG, "Unable to initialize diagnostic file", t);
+                Log.e(TAG, "Unable to initialize MediaStore log", t);
             }
+            fileReady = logUri != null || fallbackFile != null;
 
             if (fileReady) {
-                appendFile("===== Dydock diagnostic session started; version " + VER + " =====");
+                appendFile("===== Dydock diagnostic session started; module " + VER
+                        + " · host " + hostSignature() + " · Android " + Build.VERSION.RELEASE
+                        + " (API " + Build.VERSION.SDK_INT + ") =====");
                 synchronized (RING) {
                     for (String line : RING) appendFile(line);
                 }
@@ -211,24 +216,45 @@ public final class Dydock {
     }
 
     private static void appendFile(String line) {
+        byte[] bytes = (line + "\n").getBytes(StandardCharsets.UTF_8);
+        boolean any = false;
         synchronized (FILE_LOCK) {
-            try {
-                if (logUri != null && appContext != null) {
-                    ContentResolver resolver = appContext.getContentResolver();
-                    OutputStream out = resolver.openOutputStream(logUri, "wa");
+            if (logUri != null && appContext != null) {
+                try {
+                    OutputStream out = appContext.getContentResolver().openOutputStream(logUri, "wa");
                     if (out != null) {
-                        out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                        out.write(bytes);
                         out.close();
+                        any = true;
                     }
-                } else if (fallbackFile != null) {
-                    java.io.FileOutputStream out = new java.io.FileOutputStream(fallbackFile, true);
-                    out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                    out.close();
+                } catch (Throwable t) {
+                    logUri = null;
+                    try { Log.e(TAG, "Diagnostic MediaStore write failed", t); } catch (Throwable ignored) { }
                 }
-            } catch (Throwable t) {
-                fileReady = false;
-                try { Log.e(TAG, "Diagnostic file write failed", t); } catch (Throwable ignored) { }
             }
+            if (fallbackFile != null) {
+                try {
+                    java.io.FileOutputStream out = new java.io.FileOutputStream(fallbackFile, true);
+                    out.write(bytes);
+                    out.close();
+                    any = true;
+                } catch (Throwable t) {
+                    try { Log.e(TAG, "Diagnostic file write failed", t); } catch (Throwable ignored) { }
+                }
+            }
+            fileReady = any;
+        }
+    }
+
+    /** 宿主包名 + 版本，日志里一眼能看出装的是哪个抖音。 */
+    private static String hostSignature() {
+        try {
+            android.content.pm.PackageInfo info = appContext.getPackageManager()
+                    .getPackageInfo(appContext.getPackageName(), 0);
+            return appContext.getPackageName() + " " + info.versionName
+                    + "(" + info.getLongVersionCode() + ")";
+        } catch (Throwable t) {
+            return appContext == null ? "?" : appContext.getPackageName();
         }
     }
 

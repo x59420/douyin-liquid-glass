@@ -229,6 +229,30 @@ final class Shield {
     }
 
     /**
+     * 原生底栏为什么算「不该显示」——写进诊断日志用。
+     * 只给排错看，判断本身还是 nativeBarVisible()。
+     */
+    static String explainNativeBar(View dock, Rect band, View content) {
+        if (dock == null) return "底栏节点:无（还没认出来 / 已脱离窗口）";
+        StringBuilder sb = new StringBuilder();
+        try {
+            Rect visible = new Rect();
+            boolean gotRect = dock.getGlobalVisibleRect(visible);
+            sb.append("attached=").append(dock.isAttachedToWindow())
+              .append(" vis=").append(dock.getVisibility())
+              .append(" shown=").append(dock.isShown())
+              .append(" size=").append(dock.getWidth()).append("x").append(dock.getHeight())
+              .append(" ancestorAlpha=").append(String.format(java.util.Locale.US, "%.2f", ancestorAlpha(dock)))
+              .append(" 可见区=").append(gotRect ? visible.toShortString() : "无")
+              .append(" 被整页盖住=").append(content != null && pageCoversDock(dock, band, content))
+              .append(" 类=").append(dock.getClass().getName());
+        } catch (Throwable t) {
+            sb.append("取状态失败:").append(t);
+        }
+        return sb.toString();
+    }
+
+    /**
      * 父链上所有层的 alpha 乘积。
      *
      * 从**父节点**开始算：底栏自己那一层的 alpha 是模块设的（显示玻璃时归零），

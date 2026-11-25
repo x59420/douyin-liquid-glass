@@ -844,6 +844,8 @@ final class DockController {
         final int[] revealTicks = new int[]{FAST_REVEAL_TICKS};
         /** 原生底栏连续几帧「该显示」：显隐镜像它的可见性，0 帧就是不可见。 */
         final int[] nativeVisibleTicks = new int[]{0};
+        /** 底栏图层诊断的节流（每 8 秒一次，诊断日志里就能看到到底哪层还在铺底）。 */
+        final long[] lastDumpAt = new long[]{SystemClock.uptimeMillis()};
         /** 上一次隐藏是不是「结构类」理由（覆盖页/浮层/底栏脱离），决定恢复要等几帧。 */
         final boolean[] lastHideStructural = new boolean[]{false};
         final long[] lastFailLogAt = new long[]{0L};
@@ -1066,6 +1068,10 @@ final class DockController {
                         if (!why.equals(lastHideReason[0])) {
                             lastHideReason[0] = why;
                             Dydock.log("底栏隐藏：" + why);
+                            if (nativeHidden) {
+                                Dydock.log("底栏:原生底栏判定 → "
+                                        + Shield.explainNativeBar(d, bandRect[0], content));
+                            }
                         }
                     } else {
                         if (revealTicks[0] < FAST_REVEAL_TICKS) revealTicks[0]++;
@@ -1133,6 +1139,11 @@ final class DockController {
                         if (applyWindowChrome(act)) {
                             Dydock.log("窗口:状态栏 / 导航栏被宿主改回不透明，已重新设为透明");
                         }
+                    }
+                    // 底栏带图层诊断：只在日志开关打开时写，8 秒一次。
+                    if (now - lastDumpAt[0] >= 8000L) {
+                        lastDumpAt[0] = now;
+                        if (Dydock.verbose()) dumpBandLayers(act);
                     }
                     // 底栏那条深色底 + 上方的渐变压暗层：宿主重建底栏时会重新铺上，同样要复查。
                     if (now - lastStripAt[0] >= 1200L) {
@@ -1797,6 +1808,68 @@ final class DockController {
             }
         }
         return cleared;
+    }
+
+    /**
+     * 把底栏那一带的图层信息写进诊断日志（Download/Dydock/dydock-diagnostic.log）。
+     *
+     * 排「底部背景不透明」这种问题时，光看「清掉了几层」不够 —— 得知道到底哪一层还在铺底。
+     * 这里把压在底栏带上的每一层都列出来（类名 / 位置 / alpha / 背景 / 有没有文字和点击），
+     * 日志发过来就能直接定位，不用再一轮轮试。
+     */
+    static void dumpBandLayers(Activity act) {
+        if (act == null || act.isFinishing() || act.isDestroyed()) return;
+        try {
+            View decor = act.getWindow() == null ? null : act.getWindow().peekDecorView();
+            if (decor == null) return;
+            View content = act.findViewById(android.R.id.content);
+            View dock;
+            synchronized (DOCKS) { dock = DOCKS.get(act); }
+            Rect band;
+            synchronized (BANDS) { band = BANDS.get(act); }
+            if (band == null && dock != null) band = rectInWindow(dock);
+            Dydock.log("诊断:底栏带=" + (band == null ? "未量到" : band.toShortString())
+                    + " 原生底栏[" + Shield.explainNativeBar(dock, band, content) + "]");
+            if (band == null || band.isEmpty() || !(decor instanceof ViewGroup)) return;
+            StringBuilder sb = new StringBuilder();
+            int[] out = new int[]{0};
+            collectBandLayers((ViewGroup) decor, band, sb, 0, new int[]{1500}, out);
+            if (sb.length() > 0) Dydock.log("诊断:压在底栏带上的层\n" + sb);
+        } catch (Throwable t) {
+            Dydock.warnOnce("dump-band", "底栏图层诊断失败: " + t);
+        }
+    }
+
+    private static void collectBandLayers(ViewGroup parent, Rect band, StringBuilder sb,
+                                          int depth, int[] budget, int[] out) {
+        if (parent == null || depth > 14 || budget[0] <= 0 || out[0] >= 24) return;
+        for (int i = 0; i < parent.getChildCount() && budget[0] > 0 && out[0] < 24; i++) {
+            View child = parent.getChildAt(i);
+            if (child == null) continue;
+            budget[0]--;
+            try {
+                if (child.getVisibility() != View.VISIBLE || child.getAlpha() < 0.02f) continue;
+                Rect r = rectInWindow(child);
+                if (!Rect.intersects(r, band)) continue;
+                boolean hasBg = child.getBackground() != null;
+                boolean hasFg = hasForeground(child);
+                boolean ours = isOursView(child);
+                sb.append("  ·").append(child.getClass().getName())
+                        .append(" [").append(r.toShortString()).append("]")
+                        .append(" a=").append(String.format(java.util.Locale.US, "%.2f", child.getAlpha()))
+                        .append(hasBg ? " bg=" + child.getBackground().getClass().getSimpleName() : "")
+                        .append(hasFg ? " fg=有" : "")
+                        .append(hasVisibleTextIn(child, 0) ? " 文字" : "")
+                        .append(hasClickableIn(child, 0) ? " 可点" : "")
+                        .append(ours ? " (ours)" : "")
+                        .append("\n");
+                out[0]++;
+            } catch (Throwable ignored) {
+            }
+            if (child instanceof ViewGroup) {
+                collectBandLayers((ViewGroup) child, band, sb, depth + 1, budget, out);
+            }
+        }
     }
 
     /** 这块区域压住了底栏那一条的多少（0..1）：按宽度、高度各自的重叠比例取小的那个。 */
