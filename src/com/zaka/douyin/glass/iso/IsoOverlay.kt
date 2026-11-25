@@ -432,6 +432,12 @@ private fun GlassSurface(
                 ),
                 filterQuality = FilterQuality.Low,
             )
+        } else if (size.width > 0f && size.height > 0f) {
+            // 一帧画面都没有（视频受保护抓不到 / 刚进页面）：先垫一层中性深色。
+            // 以前这里什么都不画，玻璃背后就是宿主的窗口底色 —— 看起来就是「一片黑」。
+            // 垫一层之后，玻璃自己的模糊和折射还在，观感是磨砂深灰，不是死黑。
+            // 有画面的正常情况完全走上面那条分支，外观一点不变。
+            drawRect(color = Color(0xFF1C1D22), size = size)
         }
     })
     val density = LocalDensity.current

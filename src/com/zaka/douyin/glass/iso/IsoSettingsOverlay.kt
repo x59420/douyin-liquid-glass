@@ -131,6 +131,9 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override val themeMode = mutableStateOf(prefs.getInt("theme_mode", 0).coerceIn(0, 2))
     override val glassAlpha = mutableStateOf(prefs.getInt("glass_alpha", 100).coerceIn(0, 100))
     override val hideBackground = mutableStateOf(prefs.getBoolean("hide_glass_background", false))
+    override val bottomTransparent = mutableStateOf(prefs.getBoolean("bottom_transparent", true))
+    override val menuTransparent = mutableStateOf(prefs.getBoolean("menu_transparent", true))
+    override val videoTint = mutableStateOf(prefs.getBoolean("video_tint_fallback", true))
     override val height = mutableStateOf(prefs.getInt("dock_height_dp", 64).coerceIn(52, 88))
     override val tabWidth = mutableStateOf(prefs.getInt("tab_width_dp", 76).coerceIn(60, 100))
     override val sideMargin = mutableStateOf(prefs.getInt("side_margin_dp", 24).coerceIn(12, 40))
@@ -160,6 +163,21 @@ private class IsoSettingsState(context: Context) : SettingsModel {
         persistAndPush()
     }
 
+    override fun setBottomTransparent(value: Boolean) {
+        bottomTransparent.value = value
+        persistAndPush()
+    }
+
+    override fun setMenuTransparent(value: Boolean) {
+        menuTransparent.value = value
+        persistAndPush()
+    }
+
+    override fun setVideoTint(value: Boolean) {
+        videoTint.value = value
+        persistAndPush()
+    }
+
     override fun reset() {
         enabled.value = true
         showPlus.value = true
@@ -184,6 +202,9 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putInt("theme_mode", themeMode.value)
             .putInt("glass_alpha", glassAlpha.value)
             .putBoolean("hide_glass_background", hideBackground.value)
+            .putBoolean("bottom_transparent", bottomTransparent.value)
+            .putBoolean("menu_transparent", menuTransparent.value)
+            .putBoolean("video_tint_fallback", videoTint.value)
             .putLong("settings_rev", System.currentTimeMillis())
             .commit()
 
@@ -198,6 +219,9 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             .putExtra("side_margin", sideMargin.value)
             .putExtra("bottom_gap", bottomGap.value)
             .putExtra("theme_mode", themeMode.value)
+            .putExtra("bottom_transparent", bottomTransparent.value)
+            .putExtra("menu_transparent", menuTransparent.value)
+            .putExtra("video_tint", videoTint.value)
             .putExtra("glass_alpha", glassAlpha.value)
             .putExtra("hide_glass_background", hideBackground.value)
         app.sendBroadcast(intent)

@@ -60,6 +60,8 @@ public final class Backdrop {
         long stamp;
         /** 连续抓到几帧「整片黑」。有些机型/播放器上 PixelCopy 抓 SurfaceView 就是黑的。 */
         int blackHits;
+        /** 这一帧的亮度（0-255）。黑帧不能算「可用画面」，否则兜底永远不触发。 */
+        int luma = 255;
         /** 这一层还能不能用来做背景：抓到黑帧到一定次数就放弃它。 */
         boolean usable = true;
     }
@@ -447,6 +449,7 @@ public final class Backdrop {
         long now = SystemClock.uptimeMillis();
         for (Layer l : layers) {
             if (l.usable && l.valid && l.frame != null && !l.frame.isRecycled()
+                    && l.luma >= 14
                     && now - l.stamp <= LAYER_MAX_AGE_MS) {
                 return true;
             }
@@ -513,8 +516,8 @@ public final class Backdrop {
             int cr = (int) (r / n), cg = (int) (g / n), cb = (int) (b / n);
             // 太暗的界面（纯黑视频页）抬一点亮度，别让兜底色看起来还是一块黑。
             int luma = (cr * 299 + cg * 587 + cb * 114) / 1000;
-            if (luma < 22) {
-                int lift = 22 - luma;
+            if (luma < 30) {
+                int lift = 30 - luma;
                 cr = Math.min(255, cr + lift);
                 cg = Math.min(255, cg + lift);
                 cb = Math.min(255, cb + lift);
@@ -797,7 +800,8 @@ public final class Backdrop {
      */
     private static void noteFrameLuma(Layer l) {
         if (l == null || l.frame == null) return;
-        if (quickLuma(l.frame) < 12) {
+        l.luma = quickLuma(l.frame);
+        if (l.luma < 12) {
             l.blackHits++;
             if (l.blackHits >= 8 && l.usable) {
                 l.usable = false;

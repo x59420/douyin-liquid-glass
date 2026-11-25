@@ -5,7 +5,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -286,11 +285,14 @@ internal fun SettingsScreen(
     onBack: () -> Unit,
     overlay: Boolean = false,
 ) {
+    // 跟随系统：直接读 Configuration，不调 isSystemInDarkTheme() ——
+    // Compose 不允许把 composable 调用包在 try/catch 里（编译直接报错）。
+    val nightMode = LocalConfiguration.current.uiMode and
+        android.content.res.Configuration.UI_MODE_NIGHT_MASK
     val dark = when (state.themeMode.value) {
         1 -> false
         2 -> true
-        // 跟随系统：读 Configuration 失败（个别 ROM 换主题的瞬间）时按深色走，不让整页崩。
-        else -> try { isSystemInDarkTheme() } catch (_: Throwable) { true }
+        else -> nightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES
     }
     val palette = if (dark) DarkSettingsPalette else LightSettingsPalette
     CompositionLocalProvider(LocalSettingsPalette provides palette, LocalSettingsOverlay provides overlay) {
