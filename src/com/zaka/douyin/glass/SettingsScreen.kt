@@ -68,6 +68,7 @@ import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import com.zaka.douyin.glass.ksu.liquid.vibrancy
 import com.zaka.douyin.glass.iso.SettingsModel
+import com.zaka.douyin.glass.iso.LogSession
 
 /**
  * dydock 设置界面。
@@ -95,6 +96,20 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
     override val sideMargin = mutableStateOf(DockPrefs.sideMarginDp(ctx))
     override val bottomGap = mutableStateOf(DockPrefs.bottomGapDp(ctx))
+
+    override val logSessions = mutableStateOf<List<LogSession>>(emptyList())
+    override val selectedLog = mutableStateOf<LogSession?>(null)
+    override val selectedLogContent = mutableStateOf("")
+    override fun refreshLogs() {}
+    override fun viewLog(fileName: String) {
+        Toast.makeText(ctx, "请从抖音内的 dydock 设置入口查看日志", Toast.LENGTH_LONG).show()
+    }
+    override fun closeLogViewer() { selectedLog.value = null; selectedLogContent.value = "" }
+    override fun exportLog(fileName: String) { exportLogs() }
+    override fun deleteLog(fileName: String) {}
+    override fun clearLogs() {
+        Toast.makeText(ctx, "请从抖音内的 dydock 设置入口清理日志", Toast.LENGTH_LONG).show()
+    }
 
     override fun setEnabled(value: Boolean) {
         enabled.value = value
