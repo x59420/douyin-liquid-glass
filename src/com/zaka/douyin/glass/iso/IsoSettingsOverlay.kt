@@ -181,7 +181,7 @@ private class IsoSettingsState(context: Context) : SettingsModel {
             }
             val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
                 .format(Date(file.lastModified()))
-            LogSession(file.name, date, "$state · \${formatSize(file.length())}")
+            LogSession(file.name, date, "$state · ${formatSize(file.length())}")
         }
     }
 
@@ -195,7 +195,7 @@ private class IsoSettingsState(context: Context) : SettingsModel {
         selectedLog.value = logSessions.value.firstOrNull { it.fileName == fileName }
             ?: LogSession(fileName, file.name, formatSize(file.length()))
         selectedLogContent.value = try { file.readText(Charsets.UTF_8) }
-            catch (error: Throwable) { "读取日志失败：\${error.message}" }
+            catch (error: Throwable) { "读取日志失败：${error.message}" }
     }
 
     override fun closeLogViewer() {
@@ -236,12 +236,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
                     FileInputStream(source).use { input ->
                         FileOutputStream(output).use { input.copyTo(it) }
                     }
-                    message = "日志已导出：\${output.absolutePath}"
+                    message = "日志已导出：${output.absolutePath}"
                 }
             } catch (error: Throwable) {
                 try { destination?.let { context.contentResolver.delete(it, null, null) } }
                 catch (_: Throwable) { }
-                message = "导出失败：\${error.message ?: error.javaClass.simpleName}"
+                message = "导出失败：${error.message ?: error.javaClass.simpleName}"
             }
             Handler(Looper.getMainLooper()).post {
                 Toast.makeText(context, message, Toast.LENGTH_LONG).show()
