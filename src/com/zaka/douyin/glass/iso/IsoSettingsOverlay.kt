@@ -3,13 +3,28 @@ package com.zaka.douyin.glass.iso
 import android.app.Activity
 import android.app.Dialog
 import android.content.Context
+import android.content.ContentValues
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
 import android.view.Gravity
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.Toast
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.InputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.AndroidUiDispatcher
@@ -25,6 +40,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.zaka.douyin.glass.SettingsScreen
 import com.zaka.douyin.glass.iso.SettingsModel
+import com.zaka.douyin.glass.iso.LogSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -136,10 +152,152 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override val sideMargin = mutableStateOf(prefs.getInt("side_margin_dp", 24).coerceIn(12, 40))
     override val bottomGap = mutableStateOf(prefs.getInt("bottom_gap_dp", 8).coerceIn(0, 28))
 
+    override val logSessions = mutableStateOf<List<LogSession>>(emptyList())
+    override val selectedLog = mutableStateOf<LogSession?>(null)
+    override val selectedLogContent = mutableStateOf("")
+
+    init { refreshLogs() }
+
     override fun setEnabled(value: Boolean) { enabled.value = value; persistAndPush() }
     override fun setShowPlus(value: Boolean) { showPlus.value = value; persistAndPush() }
     override fun setShowLabels(value: Boolean) { showLabels.value = value; persistAndPush() }
     override fun setLogEnabled(value: Boolean) { logEnabled.value = value; persistAndPush() }
+
+    override fun refreshLogs() {
+        val directory = sessionDirectory()
+        val files = directory?.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".log") }
+            ?.sortedByDescending { it.name }
+            .orEmpty()
+        logSessions.value = files.map { file ->
+            val marker = File(directory, file.name.removeSuffix(".log") + ".active")
+            val header = try { file.bufferedReader().use { it.readLine().orEmpty() } }
+                catch (_: Throwable) { "" }
+            val state = when {
+                marker.exists() -> "正在记录"
+                header.contains("SESSION END: UNKNOWN") || file.readText().contains("SESSION END: UNKNOWN") ->
+                    "结束时间未知（下次启动时封存）"
+                else -> "已结束"
+            }
+            val date = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                .format(Date(file.lastModified()))
+            LogSession(file.name, date, "$state · ${formatSize(file.length())}")
+        }
+    }
+
+    override fun viewLog(fileName: String) {
+        val file = sessionFile(fileName)
+        if (file == null || !file.isFile) {
+            refreshLogs()
+            Toast.makeText(app, "这段日志不存在或已被清除", Toast.LENGTH_LONG).show()
+            return
+        }
+        selectedLog.value = logSessions.value.firstOrNull { it.fileName == fileName }
+            ?: LogSession(fileName, file.name, formatSize(file.length()))
+        selectedLogContent.value = try { file.readText(Charsets.UTF_8) }
+            catch (error: Throwable) { "读取日志失败：${error.message}" }
+    }
+
+    override fun closeLogViewer() {
+        selectedLog.value = null
+        selectedLogContent.value = ""
+    }
+
+    override fun exportLog(fileName: String) {
+        val context = app
+        Thread({
+            var destination: Uri? = null
+            var message: String
+            try {
+                val source = sessionFile(fileName)
+                    ?: throw IllegalStateException("找不到这段日志")
+                if (!source.isFile) throw IllegalStateException("这段日志已被清除")
+                val exportName = "dydock-" + source.name
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.Downloads.DISPLAY_NAME, exportName)
+                        put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                        put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Dydock/")
+                        put(MediaStore.Downloads.IS_PENDING, 1)
+                    }
+                    destination = context.contentResolver.insert(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, values
+                    ) ?: throw IllegalStateException("无法在下载目录创建文件")
+                    context.contentResolver.openOutputStream(destination!!, "w")?.use { output ->
+                        FileInputStream(source).use { input -> input.copyTo(output) }
+                    } ?: throw IllegalStateException("无法写入导出文件")
+                    context.contentResolver.update(destination!!,
+                        ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
+                    message = "已导出到 Download/Dydock/$exportName"
+                } else {
+                    val directory = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
+                        ?: context.filesDir
+                    val output = File(directory, exportName)
+                    FileInputStream(source).use { input ->
+                        FileOutputStream(output).use { input.copyTo(it) }
+                    }
+                    message = "日志已导出：${output.absolutePath}"
+                }
+            } catch (error: Throwable) {
+                try { destination?.let { context.contentResolver.delete(it, null, null) } }
+                catch (_: Throwable) { }
+                message = "导出失败：${error.message ?: error.javaClass.simpleName}"
+            }
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            }
+        }, "dydock-session-export").start()
+    }
+
+    override fun deleteLog(fileName: String) {
+        val file = sessionFile(fileName) ?: return
+        val marker = File(file.parentFile, file.nameWithoutExtension + ".active")
+        if (marker.exists()) {
+            Toast.makeText(app, "当前抖音会话仍在记录，暂不能删除", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val deleted = (!file.exists() || file.delete())
+        if (selectedLog.value?.fileName == fileName) closeLogViewer()
+        refreshLogs()
+        Toast.makeText(app, if (deleted) "已删除这段日志" else "删除失败", Toast.LENGTH_SHORT).show()
+    }
+
+    override fun clearLogs() {
+        val directory = sessionDirectory()
+        val files = directory?.listFiles().orEmpty()
+        var failed = 0
+        files.filter { it.isFile && it.name.endsWith(".log") }
+            .forEach { file ->
+                val active = File(file.parentFile, file.nameWithoutExtension + ".active").exists()
+                if (!active && file.exists() && !file.delete()) failed++
+            }
+        // 保留正在写入的会话及其 marker，避免删除后日志重新生成却失去会话状态。
+        closeLogViewer()
+        refreshLogs()
+        Toast.makeText(app, if (failed == 0) "历史日志已清除（当前会话保留）"
+            else "有 $failed 个文件未能删除", Toast.LENGTH_LONG).show()
+    }
+
+    override fun exportLogs() {
+        val latest = logSessions.value.firstOrNull()
+        if (latest == null) {
+            Toast.makeText(app, "目前还没有运行会话日志", Toast.LENGTH_SHORT).show()
+        } else exportLog(latest.fileName)
+    }
+
+    private fun sessionDirectory(): File? {
+        val documents = app.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: return null
+        return File(documents, "dydock-sessions")
+    }
+
+    private fun sessionFile(fileName: String): File? {
+        if (fileName.contains("/") || fileName.contains("\\")) return null
+        return sessionDirectory()?.let { File(it, fileName) }
+    }
+
+    private fun formatSize(bytes: Long): String =
+        if (bytes < 1024) "$bytes B" else String.format(Locale.getDefault(), "%.1f KB", bytes / 1024.0)
+
     override fun setHeight(value: Int) { height.value = value.coerceIn(52, 88); persistAndPush() }
     override fun setTabWidth(value: Int) { tabWidth.value = value.coerceIn(60, 100); persistAndPush() }
     override fun setSideMargin(value: Int) { sideMargin.value = value.coerceIn(12, 40); persistAndPush() }

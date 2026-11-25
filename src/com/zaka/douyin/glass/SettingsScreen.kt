@@ -1,6 +1,8 @@
 package com.zaka.douyin.glass
 
 import android.content.Context
+import android.widget.Toast
+import androidx.compose.ui.window.Dialog
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -67,6 +69,7 @@ import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import com.zaka.douyin.glass.ksu.liquid.vibrancy
 import com.zaka.douyin.glass.iso.SettingsModel
+import com.zaka.douyin.glass.iso.LogSession
 
 /**
  * dydock 设置界面。
@@ -95,6 +98,20 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val sideMargin = mutableStateOf(DockPrefs.sideMarginDp(ctx))
     override val bottomGap = mutableStateOf(DockPrefs.bottomGapDp(ctx))
 
+    override val logSessions = mutableStateOf<List<LogSession>>(emptyList())
+    override val selectedLog = mutableStateOf<LogSession?>(null)
+    override val selectedLogContent = mutableStateOf("")
+    override fun refreshLogs() {}
+    override fun viewLog(fileName: String) {
+        Toast.makeText(ctx, "请从抖音内的 dydock 设置入口查看日志", Toast.LENGTH_LONG).show()
+    }
+    override fun closeLogViewer() { selectedLog.value = null; selectedLogContent.value = "" }
+    override fun exportLog(fileName: String) { exportLogs() }
+    override fun deleteLog(fileName: String) {}
+    override fun clearLogs() {
+        Toast.makeText(ctx, "请从抖音内的 dydock 设置入口清理日志", Toast.LENGTH_LONG).show()
+    }
+
     override fun setEnabled(value: Boolean) {
         enabled.value = value
         DockPrefs.setEnabled(ctx, value)
@@ -117,6 +134,12 @@ internal class SettingsState(context: Context) : SettingsModel {
         logEnabled.value = value
         DockPrefs.setLogEnabled(ctx, value)
         push()
+    }
+
+    // This standalone module-process screen cannot read the host app's private diagnostic file.
+    // The in-Douyin settings overlay provides the actual export action.
+    override fun exportLogs() {
+        Toast.makeText(ctx, "请从抖音内的 dydock 设置入口导出运行日志", Toast.LENGTH_LONG).show()
     }
 
     override fun setThemeMode(value: Int) {
@@ -245,6 +268,7 @@ internal fun SettingsScreen(
     onBack: () -> Unit,
     overlay: Boolean = false,
 ) {
+    var showClearLogsConfirm by remember { mutableStateOf(false) }
     val dark = when (state.themeMode.value) {
         1 -> false
         2 -> true
@@ -334,9 +358,29 @@ internal fun SettingsScreen(
             GlassCard(scene) {
                 SwitchRow(
                     title = "记录日志",
-                    subtitle = "开启后到 LSPosed 里搜 tag「dydock」看过程",
+                    subtitle = "记录运行与图层诊断信息，可在下方导出完整日志",
                     checked = state.logEnabled.value,
                     onChange = state::setLogEnabled,
+                )
+                Divider()
+                TextRow(
+                    title = "刷新会话列表",
+                    subtitle = "每次启动抖音都会单独记录一段",
+                    onClick = state::refreshLogs,
+                )
+                state.logSessions.value.forEach { session ->
+                    Divider()
+                    TextRow(
+                        title = session.title,
+                        subtitle = "${session.subtitle} · 点击查看完整内容",
+                        onClick = { state.viewLog(session.fileName) },
+                    )
+                }
+                Divider()
+                TextRow(
+                    title = "清除全部历史日志",
+                    subtitle = "删除已保存的会话日志文件",
+                    onClick = { showClearLogsConfirm = true },
                 )
             }
 
@@ -369,8 +413,86 @@ internal fun SettingsScreen(
             )
             }
         }
+        state.selectedLog.value?.let { selected ->
+            Dialog(onDismissRequest = state::closeLogViewer) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(LocalSettingsPalette.current.panel)
+                        .border(1.dp, LocalSettingsPalette.current.border, RoundedCornerShape(22.dp))
+                        .padding(16.dp)
+                ) {
+                    BasicText(selected.title, style = TextStyle(
+                        color = LocalSettingsPalette.current.primary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ))
+                    Spacer(Modifier.height(12.dp))
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        BasicText(
+                            state.selectedLogContent.value,
+                            style = TextStyle(
+                                color = LocalSettingsPalette.current.primary,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
+                            ),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.weight(1f))
+                        DialogAction("导出") { state.exportLog(selected.fileName) }
+                        DialogAction("删除") { state.deleteLog(selected.fileName) }
+                        DialogAction("关闭", state::closeLogViewer)
+                    }
+                }
+            }
+        }
+        if (showClearLogsConfirm) {
+            Dialog(onDismissRequest = { showClearLogsConfirm = false }) {
+                Column(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(LocalSettingsPalette.current.panel)
+                        .border(1.dp, LocalSettingsPalette.current.border, RoundedCornerShape(22.dp))
+                        .padding(20.dp)
+                ) {
+                    BasicText("清除全部历史日志？", style = TextStyle(
+                        color = LocalSettingsPalette.current.primary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    ))
+                    Spacer(Modifier.height(10.dp))
+                    BasicText("此操作会删除已保存的会话日志，无法恢复。当前正在记录的会话会保留。",
+                        style = TextStyle(color = LocalSettingsPalette.current.secondary, fontSize = 13.sp))
+                    Spacer(Modifier.height(16.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.weight(1f))
+                        DialogAction("取消") { showClearLogsConfirm = false }
+                        DialogAction("清除") {
+                            state.clearLogs()
+                            showClearLogsConfirm = false
+                        }
+                    }
+                }
+            }
+        }
     }
 }
+
+@Composable
+private fun DialogAction(label: String, onClick: () -> Unit) {
+    BasicText(
+        label,
+        modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        style = TextStyle(
+            color = LocalSettingsPalette.current.accent,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+        ),
+    )
+}
+
 @Composable
 private fun TopBar(version: String, onBack: () -> Unit) {
     val palette = LocalSettingsPalette.current

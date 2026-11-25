@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/settings-full-log-export]
   workflow_dispatch:
 
 permissions:

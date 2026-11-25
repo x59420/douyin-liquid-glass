@@ -6,7 +6,23 @@ import androidx.compose.runtime.MutableState
  * SettingsScreen 与配置存储之间的窄接口。
  * 让隔离渲染器不必加载带有 Xposed API 引用的宿主配置类。
  */
+internal data class LogSession(
+    val fileName: String,
+    val title: String,
+    val subtitle: String,
+)
+
 internal interface SettingsModel {
+    val logSessions: MutableState<List<LogSession>>
+    val selectedLog: MutableState<LogSession?>
+    val selectedLogContent: MutableState<String>
+    fun refreshLogs()
+    fun viewLog(fileName: String)
+    fun closeLogViewer()
+    fun exportLog(fileName: String)
+    fun deleteLog(fileName: String)
+    fun clearLogs()
+
     val enabled: MutableState<Boolean>
     val showPlus: MutableState<Boolean>
     val showLabels: MutableState<Boolean>
@@ -30,5 +46,7 @@ internal interface SettingsModel {
     fun setTabWidth(value: Int)
     fun setSideMargin(value: Int)
     fun setBottomGap(value: Int)
+    /** Export the complete host diagnostic log to a user-accessible file. */
+    fun exportLogs()
     fun reset()
 }
