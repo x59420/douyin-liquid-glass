@@ -470,6 +470,12 @@ final class DockController {
             synchronized (CLEAR_CONFIRMED) { CLEAR_CONFIRMED.put(act, confirmed); }
         }
 
+        // 双指外扩被识别成清屏，但宿主一直没把界面藏起来 —— 说明这是个普通缩放手势。
+        // 以前这里会一直等下去，Dock 就再也不回来（只能点屏幕或返回才解）。
+        if (!confirmed[0] && android.os.SystemClock.uptimeMillis() - enteredAt[0] > 6000L) {
+            exitGestureClearMode(act, "宿主一直没隐藏界面，按误识别处理");
+            return false;
+        }
         synchronized (confirmed) {
             if (hidden) {
                 confirmed[0] = true;
@@ -577,6 +583,7 @@ final class DockController {
         synchronized (LONG_PRESS_LATCH) { LONG_PRESS_LATCH.remove(act); }
         synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
         synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
+        synchronized (LONG_PRESS_LATCH) { LONG_PRESS_LATCH.remove(act); }
     }
 
     /** 宿主 Activity 回到前台：抖掉转场的影响，按当前底栏重新贴一次位置。 */
@@ -1253,7 +1260,10 @@ final class DockController {
                     // 这也让「原生底栏该不该显示」这条判断始终读得到，不会被我们自己破坏。
                     if (d != null) {
                         if (show) {
-                            if (!SelfMask.masked(d)) SelfMask.mask(d);
+                            // 每次都要确认它还是 0：宿主重建底栏 / 重设 alpha 之后会把它变回 1，
+                            // 只判「登记过没有」就会漏掉，结果是原生底栏和玻璃叠在一起。
+                            // mask() 本身幂等：已经登记过就不再覆盖最早记下的原值。
+                            if (d.getAlpha() > 0.01f) SelfMask.mask(d);
                         } else {
                             if (SelfMask.masked(d)) SelfMask.restore(d);
                         }
@@ -1821,6 +1831,8 @@ final class DockController {
                 android.graphics.drawable.Drawable bg = child.getBackground();
                 if (!(bg instanceof android.graphics.drawable.ColorDrawable)) continue;
                 if (hasInputField(child, 0)) continue;
+                // 评论区 / 列表页一定有滚动容器，菜单和分享面板基本没有 —— 用这条把它们分开。
+                if (hasScrollableList(child, 0)) continue;
                 child.setBackground(null);
                 cleared++;
                 Dydock.log("底栏:清掉一层弹层纯色底（" + child.getClass().getName() + "）");
@@ -1832,6 +1844,24 @@ final class DockController {
             }
         }
         return cleared;
+    }
+
+    /** 里面有没有滚动列表：评论区、信息流面板靠这一条排除在「菜单透明」之外。 */
+    private static boolean hasScrollableList(View v, int depth) {
+        if (v == null || depth > 8) return false;
+        // 用类名判断 RecyclerView：模块不直接依赖 recyclerview，写死类型会编译不过。
+        String cn = v.getClass().getName();
+        if (cn.contains("RecyclerView")
+                || v instanceof android.widget.ListView
+                || v instanceof android.widget.GridView
+                || v instanceof android.widget.ScrollView
+                || v instanceof android.widget.HorizontalScrollView) return true;
+        if (!(v instanceof ViewGroup)) return false;
+        ViewGroup g = (ViewGroup) v;
+        for (int i = 0; i < g.getChildCount(); i++) {
+            if (hasScrollableList(g.getChildAt(i), depth + 1)) return true;
+        }
+        return false;
     }
 
     /** 弹层里有没有输入框：评论区就是靠这一条被排除在外的。 */

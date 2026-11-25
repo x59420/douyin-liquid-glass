@@ -62,6 +62,8 @@ public final class Backdrop {
         int blackHits;
         /** 这一帧的亮度（0-255）。黑帧不能算「可用画面」，否则兜底永远不触发。 */
         int luma = 255;
+        /** 这一帧的不透明比例（0-100）。用来区分「抓取失败（全透明）」和「真的是暗场视频」。 */
+        int opaque = 100;
         /** 这一层还能不能用来做背景：抓到黑帧到一定次数就放弃它。 */
         boolean usable = true;
     }
@@ -178,6 +180,25 @@ public final class Backdrop {
         if (out == null || out.isRecycled()) return null;
         if (meanAlpha < 8 && !hasVideo()) return null;
         return out;
+    }
+
+    /** 抽 8x8 个点估「有多少像素是不透明的」（0-100）。抓取失败的帧是全透明的。 */
+    private static int quickOpaque(Bitmap b) {
+        if (b == null || b.isRecycled()) return 0;
+        int w = b.getWidth();
+        int h = b.getHeight();
+        if (w <= 0 || h <= 0) return 0;
+        int solid = 0;
+        int count = 0;
+        int stepX = Math.max(1, w / 8);
+        int stepY = Math.max(1, h / 8);
+        for (int y = 0; y < h; y += stepY) {
+            for (int x = 0; x < w; x += stepX) {
+                if (((b.getPixel(x, y) >>> 24) & 0xFF) >= 64) solid++;
+                count++;
+            }
+        }
+        return count == 0 ? 0 : solid * 100 / count;
     }
 
     /** 快速估一张图黑不黑（抽 8x8 个点，别用 getPixels 整张读）。 */
@@ -449,7 +470,7 @@ public final class Backdrop {
         long now = SystemClock.uptimeMillis();
         for (Layer l : layers) {
             if (l.usable && l.valid && l.frame != null && !l.frame.isRecycled()
-                    && l.luma >= 14
+                    && (l.luma >= 14 || l.opaque >= 40)
                     && now - l.stamp <= LAYER_MAX_AGE_MS) {
                 return true;
             }
@@ -801,7 +822,11 @@ public final class Backdrop {
     private static void noteFrameLuma(Layer l) {
         if (l == null || l.frame == null) return;
         l.luma = quickLuma(l.frame);
-        if (l.luma < 12) {
+        l.opaque = quickOpaque(l.frame);
+        // 真正抓取失败的帧是「全透明」；暗场视频（夜景、黑屏画面）是「黑但有不透明像素」，
+        // 后者属于真实画面，不能当成失败，否则玻璃会拿界面主色把用户的视频盖掉。
+        boolean captureFailed = l.opaque < 12;
+        if (l.luma < 12 && captureFailed) {
             l.blackHits++;
             if (l.blackHits >= 8 && l.usable) {
                 l.usable = false;
