@@ -93,6 +93,9 @@ final class DockController {
     /** LAYOUT_FULLSCREEN 是不是我们自己加的：退出全屏时要主动收掉，不能赖在宿主头上。 */
     private static final WeakHashMap<Activity, Boolean> OURS_LAYOUT_FULLSCREEN =
             new WeakHashMap<Activity, Boolean>();
+    /** 已经把 window 背景设成透明过的页面（window 背景没有 getter，只能记标记）。 */
+    private static final WeakHashMap<Activity, Boolean> WINDOW_BG_CLEARED =
+            new WeakHashMap<Activity, Boolean>();
     /** 手指按住视频的起点，用来判断「长按倍速」——抖音自己不一定走 performLongClick。 */
     private static final WeakHashMap<Activity, long[]> PRESS =
             new WeakHashMap<Activity, long[]>();
@@ -615,6 +618,7 @@ final class DockController {
         }
         ORIGINAL_STATUS_BAR.remove(act);
         OURS_LAYOUT_FULLSCREEN.remove(act);
+        WINDOW_BG_CLEARED.remove(act);
     }
 
     static void onActivity(final Activity act) {
@@ -1712,21 +1716,42 @@ final class DockController {
     }
 
     /** 去掉窗口和根视图自身的不透明背景，让下层视频透上来。 */
+    /**
+     * 让系统栏和底栏那一块真正透出画面。
+     *
+     * 关键点：视频是 SurfaceView，它的像素在应用窗口**下面**。所以只把系统栏颜色设成透明
+     * 根本不够 —— 窗口自己那层不透明底（decor / content 的 background、以及 window 背景）
+     * 会把视频整个挡在下面，透明区域露出来的仍然是黑。
+     * 这三层一起清掉，透明区域才能真的透出视频。这也是「透明设了一直没效果」的最后一环。
+     */
     private static boolean clearWindowBackdrop(View dock) {
         boolean changed = false;
         try {
+            Activity act = Shield.activityOf(dock);
+            if (act == null || act.getWindow() == null) return false;
+            android.view.Window window = act.getWindow();
+
             View root = dock.getRootView();
             if (root != null && root.getBackground() != null) {
                 root.setBackground(null);
                 changed = true;
             }
-            Activity act = Shield.activityOf(dock);
-            if (act != null && act.getWindow() != null) {
-                android.graphics.drawable.Drawable bg = act.getWindow().getDecorView().getBackground();
-                if (bg != null) {
-                    act.getWindow().getDecorView().setBackground(null);
-                    changed = true;
-                }
+            View decor = window.getDecorView();
+            if (decor != null && decor.getBackground() != null) {
+                decor.setBackground(null);
+                changed = true;
+            }
+            View content = act.findViewById(android.R.id.content);
+            if (content != null && content.getBackground() != null) {
+                content.setBackground(null);
+                changed = true;
+            }
+            // window 背景没有 getter，只能用标记保证只设一次。
+            if (!WINDOW_BG_CLEARED.containsKey(act)) {
+                window.setBackgroundDrawable(
+                        new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+                WINDOW_BG_CLEARED.put(act, Boolean.TRUE);
+                changed = true;
             }
         } catch (Throwable ignored) {
         }
