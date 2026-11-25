@@ -29,6 +29,12 @@ final class DockPrefs {
     private static final String KEY_GLASS_ALPHA = "glass_alpha";
     /** 隐藏玻璃背景：只留图标，不画那块玻璃。 */
     private static final String KEY_HIDE_BG = "hide_glass_background";
+    /** 底部背景透明：清掉原生底栏那一条的底色 / 渐变压暗层。 */
+    private static final String KEY_BOTTOM_TRANSPARENT = "bottom_transparent";
+    /** 原生弹层 / 菜单背景透明：底部菜单、分享面板这类宿主自己铺的那层底。 */
+    private static final String KEY_MENU_TRANSPARENT = "menu_transparent";
+    /** 抓不到视频画面时，用界面主色垫底（不开就是原来的纯黑玻璃）。 */
+    private static final String KEY_VIDEO_TINT = "video_tint_fallback";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -150,6 +156,33 @@ final class DockPrefs {
         writeBool(context, KEY_HIDE_BG, value);
     }
 
+    /** 底部背景透明。默认开；关掉就保留抖音原生那条底色。 */
+    static boolean bottomTransparent(Context context) {
+        return readBool(context, KEY_BOTTOM_TRANSPARENT, true);
+    }
+
+    static void setBottomTransparent(Context context, boolean value) {
+        writeBool(context, KEY_BOTTOM_TRANSPARENT, value);
+    }
+
+    /** 原生弹层 / 菜单背景透明。默认开。 */
+    static boolean menuTransparent(Context context) {
+        return readBool(context, KEY_MENU_TRANSPARENT, true);
+    }
+
+    static void setMenuTransparent(Context context, boolean value) {
+        writeBool(context, KEY_MENU_TRANSPARENT, value);
+    }
+
+    /** 视频画面抓不到时的主色兜底。默认开；关掉就是原来的黑玻璃。 */
+    static boolean videoTintFallback(Context context) {
+        return readBool(context, KEY_VIDEO_TINT, true);
+    }
+
+    static void setVideoTintFallback(Context context, boolean value) {
+        writeBool(context, KEY_VIDEO_TINT, value);
+    }
+
     static void setLogEnabled(Context context, boolean value) {
         writeBool(context, KEY_LOG, value);
     }
@@ -222,6 +255,11 @@ final class DockPrefs {
             editor.putInt(KEY_THEME_MODE, remote.getInt(KEY_THEME_MODE, 0));
             editor.putInt(KEY_GLASS_ALPHA, remote.getInt(KEY_GLASS_ALPHA, 100));
             editor.putBoolean(KEY_HIDE_BG, remote.getBoolean(KEY_HIDE_BG, false));
+            editor.putBoolean(KEY_BOTTOM_TRANSPARENT,
+                    remote.getBoolean(KEY_BOTTOM_TRANSPARENT, true));
+            editor.putBoolean(KEY_MENU_TRANSPARENT,
+                    remote.getBoolean(KEY_MENU_TRANSPARENT, true));
+            editor.putBoolean(KEY_VIDEO_TINT, remote.getBoolean(KEY_VIDEO_TINT, true));
             editor.putLong(KEY_REV, remoteRev);
             editor.apply();
             Dydock.setVerbose(remote.getBoolean(KEY_LOG, true));

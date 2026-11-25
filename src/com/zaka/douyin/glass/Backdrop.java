@@ -81,6 +81,15 @@ public final class Backdrop {
     private int lastLoggedLayerCount = -1;
     private int meanAlpha;
     private int meanLuma = 255;
+    /**
+     * 内容树的主色。
+     *
+     * 抖音的视频是 SurfaceView，画面受保护时 PixelCopy 直接失败（日志里的 code=1），
+     * 内容树把视频那一块挖空之后，合成出来的图 alpha 只有 70 多、luma≈0 —— 玻璃后面
+     * 就是一块死黑。这张图从内容树本身取平均色，只在「确实没有任何可用视频帧」时垫底，
+     * 让玻璃透出界面自身的颜色，而不是黑。开关：设置里的「视频背景兜底」。
+     */
+    private int uiTint = 0xFF16171B;
     /** 当前这一帧的采样指纹：像素没变就别再往玻璃层推，省一次拷贝也省一次重绘。 */
     private long frameSignature;
     private long lastNotifiedSignature;
@@ -425,7 +434,94 @@ public final class Backdrop {
         }
 
         measure();
+        // 抓不到任何视频帧、合成结果又几乎透明/全黑：用内容树主色垫一层不透明底。
+        // 只在「没有可用视频帧」时做，正常能抓到画面的页面完全不受影响（外观不变）。
+        if (needsTint() && tintEnabled() && tintUnderlay()) {
+            measure();
+        }
         frameStamp = System.nanoTime();
+    }
+
+    /** 有没有一帧真正可用、且不是黑的视频画面。 */
+    private boolean hasUsableVideoFrame() {
+        long now = SystemClock.uptimeMillis();
+        for (Layer l : layers) {
+            if (l.usable && l.valid && l.frame != null && !l.frame.isRecycled()
+                    && now - l.stamp <= LAYER_MAX_AGE_MS) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 该不该垫底色：没有可用视频帧，而且合成出来又透又黑。 */
+    private boolean needsTint() {
+        if (hasUsableVideoFrame()) return false;
+        return meanAlpha < 160 || meanLuma < 18;
+    }
+
+    private boolean tintEnabled() {
+        try {
+            if (content == null) return true;
+            return DockPrefs.videoTintFallback(content.getContext());
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    /** 用内容树主色重新合成一版，返回是否真的改了。 */
+    private boolean tintUnderlay() {
+        if (ui == null || ui.isRecycled() || out == null || out.isRecycled()) return false;
+        try {
+            updateUiTint();
+            Canvas oc = new Canvas(out);
+            oc.drawColor(0, PorterDuff.Mode.CLEAR);
+            oc.drawColor(uiTint);
+            oc.drawBitmap(ui, 0f, 0f, paint);
+            if (vid != null && !vid.isRecycled()) oc.drawBitmap(vid, 0f, 0f, paint);
+            return true;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 从内容树那一层估一个主色（抽 10x8 个点，跳过完全透明的像素）。
+     * 估不出来就沿用上一次的值，至少不是纯黑。
+     */
+    private void updateUiTint() {
+        if (ui == null || ui.isRecycled()) return;
+        try {
+            int w = ui.getWidth();
+            int h = ui.getHeight();
+            if (w <= 0 || h <= 0) return;
+            int stepX = Math.max(1, w / 10);
+            int stepY = Math.max(1, h / 8);
+            long r = 0, g = 0, b = 0;
+            int n = 0;
+            for (int y = 0; y < h; y += stepY) {
+                for (int x = 0; x < w; x += stepX) {
+                    int p = ui.getPixel(x, y);
+                    if (((p >>> 24) & 0xFF) < 24) continue;
+                    r += (p >> 16) & 0xFF;
+                    g += (p >> 8) & 0xFF;
+                    b += p & 0xFF;
+                    n++;
+                }
+            }
+            if (n < 4) return;
+            int cr = (int) (r / n), cg = (int) (g / n), cb = (int) (b / n);
+            // 太暗的界面（纯黑视频页）抬一点亮度，别让兜底色看起来还是一块黑。
+            int luma = (cr * 299 + cg * 587 + cb * 114) / 1000;
+            if (luma < 22) {
+                int lift = 22 - luma;
+                cr = Math.min(255, cr + lift);
+                cg = Math.min(255, cg + lift);
+                cb = Math.min(255, cb + lift);
+            }
+            uiTint = 0xFF000000 | (cr << 16) | (cg << 8) | cb;
+        } catch (Throwable ignored) {
+        }
     }
 
     private void onVideoFrame() {

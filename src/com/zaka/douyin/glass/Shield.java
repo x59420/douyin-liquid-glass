@@ -213,12 +213,18 @@ final class Shield {
             if (dock.getWidth() <= 0 || dock.getHeight() <= 0) return false;
             // 自己（含祖先）显式不可见：GONE / INVISIBLE / 祖先被藏。
             if (!dock.isShown()) return false;
-            if (ancestorAlpha(dock) < 0.35f) return false;
+            // 注意：用「还原过我们自己遮罩」的 alpha。玻璃显示时原生底栏被本模块 alpha=0
+            // 让位，以前这里读到 0 就当成宿主藏了底栏，玻璃收起来、alpha 还原、再判可见 ——
+            // 一帧来回一次，就是日志里 68 次隐藏 / 53 次恢复的抖动。
+            if (ancestorAlpha(dock) < 0.20f) return false;
             // 被下滑出屏、被裁掉一半：以实际可见区域为准，不看布局 rect。
             Rect visible = new Rect();
             if (!dock.getGlobalVisibleRect(visible)) return false;
-            if (visible.height() < dock.getHeight() * 0.55f) return false;
-            if (visible.width() < dock.getWidth() * 0.5f) return false;
+            // 阈值放宽：侧栏/个人主页滑动时宿主会把底栏横向平移，可见宽度只剩两百多像素，
+            // 以前按 50% 判就是「一滑就没了」；只要还贴着底、竖向基本完整，就算它该显示。
+            if (visible.height() < dock.getHeight() * 0.40f) return false;
+            if (visible.width() < dock.getWidth() * 0.26f
+                    && visible.width() < dock.getWidth() / 2) return false;
             // 会话页、聊天框里点开的视频这类「同一 Activity 里的整页」不改底栏 visibility，
             // 只是把它盖住 —— 这一条必须留着，否则玻璃会浮在聊天页上。
             if (content != null && pageCoversDock(dock, band, content)) return false;
@@ -264,7 +270,8 @@ final class Shield {
             ViewParent parent = v == null ? null : v.getParent();
             View cur = parent instanceof View ? (View) parent : null;
             for (int guard = 0; guard < 24 && cur != null; guard++) {
-                a *= cur.getAlpha();
+                // 本模块自己为了清遮罩/让位而设成 0 的层，按原值算 —— 不然就是自己判自己。
+                a *= SelfMask.effectiveAlpha(cur);
                 if (a <= 0.01f) return 0f;
                 ViewParent up = cur.getParent();
                 cur = up instanceof View ? (View) up : null;

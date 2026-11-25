@@ -81,6 +81,8 @@ import com.zaka.douyin.glass.iso.SettingsModel
 internal class SettingsState(context: Context) : SettingsModel {
 
     private val ctx = context.applicationContext
+    /** 真正承载设置页的 Activity（切换主题时要用它的 DecorView 排一帧）。 */
+    private val activity: android.app.Activity? = context as? android.app.Activity
 
     override val enabled = mutableStateOf(DockPrefs.enabled(ctx))
     override val showPlus = mutableStateOf(DockPrefs.showPlusButton(ctx))
@@ -89,6 +91,9 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val themeMode = mutableStateOf(DockPrefs.themeMode(ctx))
     override val glassAlpha = mutableStateOf(DockPrefs.glassAlpha(ctx))
     override val hideBackground = mutableStateOf(DockPrefs.hideGlassBackground(ctx))
+    override val bottomTransparent = mutableStateOf(DockPrefs.bottomTransparent(ctx))
+    override val menuTransparent = mutableStateOf(DockPrefs.menuTransparent(ctx))
+    override val videoTint = mutableStateOf(DockPrefs.videoTintFallback(ctx))
 
     override val height = mutableStateOf(DockPrefs.heightDp(ctx))
     override val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
@@ -121,9 +126,24 @@ internal class SettingsState(context: Context) : SettingsModel {
 
     override fun setThemeMode(value: Int) {
         val mode = value.coerceIn(0, 2)
-        themeMode.value = mode
+        if (themeMode.value == mode) return
         DockPrefs.setThemeMode(ctx, mode)
         push()
+        // 主题一换，整棵子树（palette、玻璃卡片、图层背板）要在同一帧里重画。
+        // 直接在点击回调里改快照，部分机型上旧的图层背板正好在绘制中被回收，
+        // 会崩在渲染线程 —— 这就是「设置里切深浅色闪退」。推到下一帧，等这一帧画完再换。
+        val act = activity
+        val decor = act?.window?.decorView
+        if (decor == null) {
+            themeMode.value = mode
+        } else {
+            decor.post {
+                try {
+                    themeMode.value = mode
+                } catch (_: Throwable) {
+                }
+            }
+        }
     }
 
     override fun setGlassAlpha(value: Int) {
@@ -136,6 +156,24 @@ internal class SettingsState(context: Context) : SettingsModel {
     override fun setHideBackground(value: Boolean) {
         hideBackground.value = value
         DockPrefs.setHideGlassBackground(ctx, value)
+        push()
+    }
+
+    override fun setBottomTransparent(value: Boolean) {
+        bottomTransparent.value = value
+        DockPrefs.setBottomTransparent(ctx, value)
+        push()
+    }
+
+    override fun setMenuTransparent(value: Boolean) {
+        menuTransparent.value = value
+        DockPrefs.setMenuTransparent(ctx, value)
+        push()
+    }
+
+    override fun setVideoTint(value: Boolean) {
+        videoTint.value = value
+        DockPrefs.setVideoTintFallback(ctx, value)
         push()
     }
 
@@ -180,6 +218,9 @@ internal class SettingsState(context: Context) : SettingsModel {
             tabWidth.value,
             sideMargin.value,
             bottomGap.value,
+            bottomTransparent.value,
+            menuTransparent.value,
+            videoTint.value,
         )
     }
 
@@ -248,7 +289,8 @@ internal fun SettingsScreen(
     val dark = when (state.themeMode.value) {
         1 -> false
         2 -> true
-        else -> isSystemInDarkTheme()
+        // 跟随系统：读 Configuration 失败（个别 ROM 换主题的瞬间）时按深色走，不让整页崩。
+        else -> try { isSystemInDarkTheme() } catch (_: Throwable) { true }
     }
     val palette = if (dark) DarkSettingsPalette else LightSettingsPalette
     CompositionLocalProvider(LocalSettingsPalette provides palette, LocalSettingsOverlay provides overlay) {
@@ -310,6 +352,31 @@ internal fun SettingsScreen(
                     subtitle = "关掉只留图标，图标会自动居中",
                     checked = state.showLabels.value,
                     onChange = state::setShowLabels,
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+            SectionTitle("行为")
+            GlassCard(scene) {
+                SwitchRow(
+                    title = "底部背景透明",
+                    subtitle = "清掉原生底栏那一条的底色和上方渐变压暗层",
+                    checked = state.bottomTransparent.value,
+                    onChange = state::setBottomTransparent,
+                )
+                Divider()
+                SwitchRow(
+                    title = "弹层 / 菜单背景透明",
+                    subtitle = "底部菜单、分享面板这类宿主自己铺的纯色底也一起清掉",
+                    checked = state.menuTransparent.value,
+                    onChange = state::setMenuTransparent,
+                )
+                Divider()
+                SwitchRow(
+                    title = "视频背景兜底",
+                    subtitle = "抓不到视频画面时用界面主色垫底，避免玻璃变黑",
+                    checked = state.videoTint.value,
+                    onChange = state::setVideoTint,
                 )
             }
 

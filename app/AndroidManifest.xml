@@ -19,6 +19,7 @@
             android:name=".DockSettingsActivity"
             android:exported="true"
             android:label="dydock 设置"
+            android:configChanges="uiMode|orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density|layoutDirection"
             android:theme="@android:style/Theme.DeviceDefault.Light" />
 
         <meta-data android:name="xposedmodule" android:value="true" />

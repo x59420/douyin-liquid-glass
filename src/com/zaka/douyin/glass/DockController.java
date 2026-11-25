@@ -107,8 +107,15 @@ final class DockController {
      */
     private static final WeakHashMap<Activity, long[]> PRESS_ALIVE =
             new WeakHashMap<Activity, long[]>();
-    /** 按住状态只剩下最后一道保险：一分钟没有任何触摸事件才认为状态失效。 */
-    private static final long PRESS_ABANDON_MS = 60_000L;
+    /**
+     * 按住状态只剩最后一道保险。
+     *
+     * 以前是一分钟：宿主吞掉 UP 之后，这条「长按中」会一直挂着一分钟 —— 用户从评论区
+     * 返回、或者抬手之后 Dock 迟迟不回来，就是它。实测日志里「底栏隐藏：长按」出现了
+     * 十几次，而真正按住的只有那么几下。现在 2.5 秒没有任何触摸事件就当作已经松手；
+     * 真按住倍速时每帧都有触摸事件进来，不会误清。
+     */
+    private static final long PRESS_ABANDON_MS = 2_500L;
     /** 记录这条按住状态是由哪个 View 起的头，别的 View 收到的同一串事件不参与判定。 */
     private static final WeakHashMap<Activity, View> PRESS_TARGET =
             new WeakHashMap<Activity, View>();
@@ -135,6 +142,19 @@ final class DockController {
     /** 清屏态下手指落点，用来识别「左上角关闭」和「上/下滑到别的视频」。 */
     private static final WeakHashMap<Activity, float[]> CLEAR_TOUCH =
             new WeakHashMap<Activity, float[]>();
+    /**
+     * 长按倍速的锁存。
+     *
+     * 长按状态有两个来源：宿主的长按回调，和「按住超过 240ms」的触摸判定。这两个源
+     * 在真机上会交替成立/不成立（尤其页面里视频层的扫描是 240ms 一次，偶尔某一次扫
+     * 不到视频层），一交替 Dock 就被放出来一帧又收回去 —— 用户看到的就是「长按倍速
+     * 时闪一下」。
+     *
+     * 进过一次倍速就锁住，只认三件事来解除：抬手 / 取消、返回、或者 2.5 秒没有任何
+     * 触摸事件（手已经离开但宿主吞了 UP）。锁住期间不再看页面扫描结果。
+     */
+    private static final WeakHashMap<Activity, long[]> LONG_PRESS_LATCH =
+            new WeakHashMap<Activity, long[]>();
 
     private DockController() {
     }
@@ -152,6 +172,9 @@ final class DockController {
         }
         synchronized (LONG_PRESS_AT) {
             LONG_PRESS_AT.put(act, new long[]{android.os.SystemClock.uptimeMillis()});
+        }
+        synchronized (LONG_PRESS_LATCH) {
+            LONG_PRESS_LATCH.put(act, new long[]{android.os.SystemClock.uptimeMillis()});
         }
         Dydock.log("宿主视频长按已识别，隐藏 Dock");
     }
@@ -310,6 +333,7 @@ final class DockController {
     /** 系统侧边返回：宿主处理返回键时，清屏态一并结束。 */
     static void onHostBack(Activity act) {
         if (act == null) return;
+        releaseLongPress(act);
         exitGestureClearMode(act, "返回");
     }
 
@@ -474,28 +498,46 @@ final class DockController {
         boolean removed = false;
         synchronized (LONG_PRESS_TARGETS) {
             if (LONG_PRESS_TARGETS.get(act) == view) {
-                LONG_PRESS_TARGETS.remove(act);
-                synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
                 removed = true;
             }
         }
+        // 抬手就是抬手：锁存、按住态、时间戳一起清，下一帧立刻把 Dock 放回来。
+        releaseLongPress(act);
         if (removed) Dydock.log("宿主视频长按结束，检查其他隐藏状态");
     }
 
     private static boolean isHostLongPressActive(Activity act, boolean pageHasVideo) {
-        synchronized (LONG_PRESS_TARGETS) {
-            if (LONG_PRESS_TARGETS.containsKey(act)) {
-                // 兜底：宿主吞掉那次 UP 的话状态会一直留着；只有「手上彻底没有触摸事件」
-                // 超过一分钟才当它结束。按住期间不设时间上限。
+        long now = android.os.SystemClock.uptimeMillis();
+
+        // ① 已经锁存：只认「手彻底没了」这一条来解除，不再看页面扫描结果。
+        //    以前每次轮询都重新问一遍 pageHasVideo，某一个 240ms 采样没扫到视频层，
+        //    这里就返回 false，Dock 被放出来一帧又收回去 —— 就是长按倍速时的「闪一下」。
+        synchronized (LONG_PRESS_LATCH) {
+            long[] latched = LONG_PRESS_LATCH.get(act);
+            if (latched != null) {
                 long[] alive;
                 synchronized (PRESS_ALIVE) { alive = PRESS_ALIVE.get(act); }
-                boolean abandoned = alive == null
-                        || android.os.SystemClock.uptimeMillis() - alive[0] > PRESS_ABANDON_MS;
+                boolean abandoned = alive == null || now - alive[0] > PRESS_ABANDON_MS;
+                if (abandoned) {
+                    LONG_PRESS_LATCH.remove(act);
+                } else {
+                    return true;
+                }
+            }
+        }
+
+        synchronized (LONG_PRESS_TARGETS) {
+            if (LONG_PRESS_TARGETS.containsKey(act)) {
+                // 兜底：宿主吞掉那次 UP 的话状态会一直留着。
+                long[] alive;
+                synchronized (PRESS_ALIVE) { alive = PRESS_ALIVE.get(act); }
+                boolean abandoned = alive == null || now - alive[0] > PRESS_ABANDON_MS;
                 if (abandoned) {
                     LONG_PRESS_TARGETS.remove(act);
                     synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
                 } else {
-                    return pageHasVideo;
+                    seize(act, now);
+                    return true;
                 }
             }
         }
@@ -504,9 +546,7 @@ final class DockController {
         if (start == null) return false;
         // 当前页面没有视频层（消息列表、我的页、设置页）：按住不放不是倍速，不参与隐藏。
         if (!pageHasVideo) return false;
-        long now = android.os.SystemClock.uptimeMillis();
         // 兜底只认「手彻底没消息」：按住期间只要还有触摸事件，就一直算按住。
-        // （长按倍速经常一按十几秒，以前 4 秒一刀切，Dock 会自己冒回来。）
         long[] alive;
         synchronized (PRESS_ALIVE) { alive = PRESS_ALIVE.get(act); }
         if (alive == null || now - alive[0] > PRESS_ABANDON_MS) {
@@ -516,12 +556,35 @@ final class DockController {
             return false;
         }
         long held = now - start[0];
-        return held >= PRESS_SPEED_DELAY_MS;
+        if (held >= PRESS_SPEED_DELAY_MS) {
+            seize(act, now);
+            return true;
+        }
+        return false;
+    }
+
+    /** 进入长按倍速：锁存住，后面几帧不管扫描结果如何都保持收起。 */
+    private static void seize(Activity act, long now) {
+        synchronized (LONG_PRESS_LATCH) {
+            long[] latched = LONG_PRESS_LATCH.get(act);
+            if (latched == null) LONG_PRESS_LATCH.put(act, new long[]{now});
+            else latched[0] = now;
+        }
+    }
+
+    /** 抬手 / 取消 / 返回：解除长按锁存。 */
+    private static void releaseLongPress(Activity act) {
+        synchronized (LONG_PRESS_LATCH) { LONG_PRESS_LATCH.remove(act); }
+        synchronized (LONG_PRESS_TARGETS) { LONG_PRESS_TARGETS.remove(act); }
+        synchronized (LONG_PRESS_AT) { LONG_PRESS_AT.remove(act); }
     }
 
     /** 宿主 Activity 回到前台：抖掉转场的影响，按当前底栏重新贴一次位置。 */
     static void onHostResume(Activity act) {
         if (act == null) return;
+        // 从评论区 / 他人主页回来：这些页面里不会还在长按倍速，残留状态要清干净，
+        // 否则返回主界面后「长按中」这条隐藏理由一直占着，Dock 就不回来。
+        releaseLongPress(act);
         final Runnable refresh;
         synchronized (REFRESHERS) { refresh = REFRESHERS.get(act); }
         if (refresh == null) return;
@@ -806,7 +869,9 @@ final class DockController {
         // 用 alpha 归零而不是 GONE：GONE 会触发宿主重新布局（底栏一消失，宿主自己
         // 又会补一层底、位置也可能重算），而且「原生底栏此刻该不该显示」这条判断
         // 就再也读不到了 —— 玻璃的显隐正是要跟着它走。
-        dock.setAlpha(0f);
+        // 用 SelfMask 记下原值再归零：判定「原生底栏可不可见」时必须用原值，
+        // 否则就是拿自己写的 0 去判宿主藏了底栏，玻璃会一帧收一帧放地抖。
+        SelfMask.mask(dock);
         Finder.hiddenByUs = new java.lang.ref.WeakReference<View>(dock);
         try {
             backdrop.capture();
@@ -860,6 +925,7 @@ final class DockController {
         final long[] lastPrefsSyncAt = new long[]{0L};
         /** 状态栏 / 导航栏透明复查的节流：宿主会把自己的栏色整段写回去。 */
         final long[] lastChromeAt = new long[]{0L};
+        final long[] lastChromeLogAt = new long[]{0L};
         /** 底栏那条深色底 / 边缘遮罩的复查节流：抖音重建底栏时会重新铺一层。 */
         final long[] lastStripAt = new long[]{0L};
         /**
@@ -1137,7 +1203,12 @@ final class DockController {
                     if (now - lastChromeAt[0] >= 600L) {
                         lastChromeAt[0] = now;
                         if (applyWindowChrome(act)) {
-                            Dydock.log("窗口:状态栏 / 导航栏被宿主改回不透明，已重新设为透明");
+                            // 宿主会在播放/切页时反复写回栏色，这里可能每分钟几十次。
+                            // 日志按 5 秒一条记，别把诊断文件刷爆。
+                            if (now - lastChromeLogAt[0] >= 5000L) {
+                                lastChromeLogAt[0] = now;
+                                Dydock.log("窗口:状态栏 / 导航栏被宿主改回不透明，已重新设为透明");
+                            }
                         }
                     }
                     // 底栏带图层诊断：只在日志开关打开时写，8 秒一次。
@@ -1146,7 +1217,9 @@ final class DockController {
                         if (Dydock.verbose()) dumpBandLayers(act);
                     }
                     // 底栏那条深色底 + 上方的渐变压暗层：宿主重建底栏时会重新铺上，同样要复查。
-                    if (now - lastStripAt[0] >= 1200L) {
+                    // 400ms：抖音 41 重建底栏很勤，1.2 秒的间隔会让「底部背景透明」肉眼可见地
+                    // 慢一拍、甚至一直不生效。这一步只读背景引用，开销很小。
+                    if (now - lastStripAt[0] >= 400L) {
                         lastStripAt[0] = now;
                         stripDockBackground(d != null ? d : dockRef[0], bandRect[0]);
                         // 状态栏被宿主隐藏时，顶部那条黑色色带也要一起去掉，否则就是「黑一条」。
@@ -1179,8 +1252,11 @@ final class DockController {
                     // 玻璃收起时把它还原 —— 任何时刻用户都只看得到一条「底栏」。
                     // 这也让「原生底栏该不该显示」这条判断始终读得到，不会被我们自己破坏。
                     if (d != null) {
-                        float want = show ? 0f : 1f;
-                        if (Math.abs(d.getAlpha() - want) > 0.01f) d.setAlpha(want);
+                        if (show) {
+                            if (!SelfMask.masked(d)) SelfMask.mask(d);
+                        } else {
+                            if (SelfMask.masked(d)) SelfMask.restore(d);
+                        }
                     }
                     if (show != overlayTargetVisible[0]) {
                         overlayTargetVisible[0] = show;
@@ -1470,7 +1546,7 @@ final class DockController {
         try {
             if (dock != null) {
                 dock.setVisibility(View.VISIBLE);
-                dock.setAlpha(1f);
+                SelfMask.restore(dock);
             }
             Finder.hiddenByUs = null;
         } catch (Throwable ignored) {
@@ -1610,6 +1686,9 @@ final class DockController {
      */
     private static void stripDockBackground(View dock, Rect band) {
         if (dock == null) return;
+        // 设置里的「底部背景透明」关掉就完全不动宿主的底色。
+        Activity owner = Shield.activityOf(dock);
+        if (owner != null && !DockPrefs.bottomTransparent(owner)) return;
         View root = dock.getRootView();
         int screenW = root == null ? 0 : root.getWidth();
         int screenH = root == null ? 0 : root.getHeight();
@@ -1647,6 +1726,11 @@ final class DockController {
         if (start != null) {
             int[] budget = new int[]{260};
             cleared += clearMaskLayers(start, dock, dockRect, screenW, screenH, 0, budget);
+            // 3) 设置里的「弹层 / 菜单背景透明」：底部弹出来的菜单、分享面板自己铺的那层纯色底。
+            //    只清 background，不动内容、不动透明度、不碰带输入框的评论区。
+            if (owner != null && DockPrefs.menuTransparent(owner)) {
+                cleared += clearMenuBackgrounds(start, dockRect, screenW, screenH, 0, new int[]{220});
+            }
         }
 
         // 3) 底栏下面压着视频的时候，把窗口 / 内容树自己那层不透明底也去掉。
@@ -1705,6 +1789,64 @@ final class DockController {
     }
 
     /** 只处理「够宽、不高、落在屏幕下半部、不是我们自己画的」那几层。 */
+    /**
+     * 清掉底部弹层 / 菜单自己铺的那层纯色底（设置里的「弹层 / 菜单背景透明」）。
+     *
+     * 判据刻意保守，宁可漏也不误伤：
+     *   · 贴底、宽度 ≥ 屏宽 90%、高度在屏高 18%~62% 之间（菜单 / 分享面板的典型形状）；
+     *   · 背景是纯色（ColorDrawable），图片/渐变不碰；
+     *   · 里面没有输入框（评论输入条有 EditText，清掉会很难看）；
+     *   · 不碰底栏自己的祖先链，也不碰我们自己的层。
+     * 只把 background 置空，别的属性一律不动。
+     */
+    private static int clearMenuBackgrounds(ViewGroup parent, Rect band, int screenW,
+                                            int screenH, int depth, int[] budget) {
+        if (parent == null || depth > 6 || budget[0] <= 0) return 0;
+        int cleared = 0;
+        for (int i = 0; i < parent.getChildCount() && budget[0] > 0; i++) {
+            View child = parent.getChildAt(i);
+            if (child == null || isOursView(child)) continue;
+            budget[0]--;
+            try {
+                if (child.getVisibility() != View.VISIBLE || child.getAlpha() < 0.2f
+                        || !child.isShown()) continue;
+                Rect r = rectInWindow(child);
+                if (r.width() < screenW * 0.9f) continue;
+                int hh = r.height();
+                if (hh < screenH * 0.18f || hh > screenH * 0.62f) continue;
+                // 必须贴底（菜单从底部弹出），并且盖住底栏那一条。
+                if (r.bottom < screenH - (int) (24f * child.getResources()
+                        .getDisplayMetrics().density)) continue;
+                if (!Rect.intersects(r, band)) continue;
+                android.graphics.drawable.Drawable bg = child.getBackground();
+                if (!(bg instanceof android.graphics.drawable.ColorDrawable)) continue;
+                if (hasInputField(child, 0)) continue;
+                child.setBackground(null);
+                cleared++;
+                Dydock.log("底栏:清掉一层弹层纯色底（" + child.getClass().getName() + "）");
+                if (child instanceof ViewGroup) {
+                    cleared += clearMenuBackgrounds((ViewGroup) child, band, screenW, screenH,
+                            depth + 1, budget);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return cleared;
+    }
+
+    /** 弹层里有没有输入框：评论区就是靠这一条被排除在外的。 */
+    private static boolean hasInputField(View v, int depth) {
+        if (v == null || depth > 8) return false;
+        if (v instanceof android.widget.EditText
+                || v instanceof android.widget.AutoCompleteTextView) return true;
+        if (!(v instanceof ViewGroup)) return false;
+        ViewGroup g = (ViewGroup) v;
+        for (int i = 0; i < g.getChildCount(); i++) {
+            if (hasInputField(g.getChildAt(i), depth + 1)) return true;
+        }
+        return false;
+    }
+
     private static boolean clearBandBackground(View v, int screenW, int screenH, Rect dockRect) {
         try {
             if (v == null || isOursView(v)) return false;
@@ -1749,13 +1891,28 @@ final class DockController {
      * 里面没有可见文字、也没有可点控件。抖音的评论区、列表、面板都带这些东西，
      * 所以不会被误伤；纯装饰的渐变压暗层正好一条都不占。
      */
+    /** candidate 是不是 dock 自己或者它的某一层祖先（这条链上的东西一律不许动）。 */
+    private static boolean isAncestorOf(View candidate, View dock) {
+        if (candidate == null || dock == null) return false;
+        View cur = dock;
+        for (int guard = 0; guard < 24 && cur != null; guard++) {
+            if (cur == candidate) return true;
+            android.view.ViewParent up = cur.getParent();
+            cur = up instanceof View ? (View) up : null;
+        }
+        return false;
+    }
+
     private static int clearMaskLayers(ViewGroup parent, View dock, Rect dockRect,
-                                       int screenW, int screenH, int depth, int[] budget) {
-        if (parent == null || depth > 8 || budget[0] <= 0) return 0;
+                                       int screenW, int screenH, int depth, int[] budget) {        if (parent == null || depth > 8 || budget[0] <= 0) return 0;
         int cleared = 0;
         for (int i = 0; i < parent.getChildCount() && budget[0] > 0; i++) {
             View child = parent.getChildAt(i);
             if (child == null || child == dock || isOursView(child)) continue;
+            // 绝不能碰底栏自己的祖先链：把祖先 alpha 归零 = 整条底栏跟着消失，
+            // 而且我们自己的可见性判据会把这个 0 读成「宿主藏了底栏」，玻璃马上收。
+            // 这就是日志里 ancestorAlpha=0.00 → 底栏隐藏 → 恢复 → 再隐藏 的死循环来源。
+            if (isAncestorOf(child, dock)) continue;
             budget[0]--;
             try {
                 if (child.getVisibility() != View.VISIBLE || child.getAlpha() < 0.05f) continue;
@@ -1795,7 +1952,7 @@ final class DockController {
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)
                         && child.getAlpha() > 0.02f) {
-                    child.setAlpha(0f);
+                    SelfMask.mask(child);
                     cleared++;
                     Dydock.log("底栏:已隐藏绘制出来的渐变遮罩（"
                             + child.getClass().getName() + "）");
