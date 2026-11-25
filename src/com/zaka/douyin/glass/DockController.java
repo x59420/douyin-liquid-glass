@@ -1046,7 +1046,7 @@ final class DockController {
                                     // 先把位置量下来：设成 GONE 之后自己就量不到了，
                                     // 底栏区域和遮罩匹配都要用这份坐标。
                                     Rect freshBand = rectInWindow(fresh);
-                                    fresh.setAlpha(0f);
+                                    SelfMask.mask(fresh);
                                     Finder.hiddenByUs =
                                             new java.lang.ref.WeakReference<View>(fresh);
                                     dockRef[0] = fresh;

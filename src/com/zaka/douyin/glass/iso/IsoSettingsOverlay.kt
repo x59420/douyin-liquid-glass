@@ -149,8 +149,29 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     override fun setBottomGap(value: Int) { bottomGap.value = value.coerceIn(0, 28); persistAndPush() }
 
     override fun setThemeMode(value: Int) {
-        themeMode.value = value.coerceIn(0, 2)
-        persistAndPush()
+        val mode = value.coerceIn(0, 2)
+        if (themeMode.value == mode) return
+        // 和模块进程那一份设置页同样的处理：主题一换，整棵子树的 palette / 玻璃卡片 /
+        // 图层背板都要重画。直接在点击回调里改快照，部分机型上会在绘制线程崩掉
+        // （旧的背板正好被回收）。这里先落盘 + 广播给宿主，界面状态推到下一帧再改。
+        prefs.edit()
+            .putInt("theme_mode", mode)
+            .putLong("settings_rev", System.currentTimeMillis())
+            .commit()
+        try {
+            app.sendBroadcast(
+                Intent("com.zaka.douyin.glass.SETTINGS_CHANGED")
+                    .setPackage("com.ss.android.ugc.aweme")
+                    .putExtra("theme_mode", mode)
+                    .putExtra("bottom_transparent", bottomTransparent.value)
+                    .putExtra("menu_transparent", menuTransparent.value)
+                    .putExtra("video_tint", videoTint.value)
+            )
+        } catch (_: Throwable) {
+        }
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            themeMode.value = mode
+        }
     }
 
     override fun setGlassAlpha(value: Int) {
