@@ -251,8 +251,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
 
     override fun deleteLog(fileName: String) {
         val file = sessionFile(fileName) ?: return
+        val marker = File(file.parentFile, file.nameWithoutExtension + ".active")
+        if (marker.exists()) {
+            Toast.makeText(app, "当前抖音会话仍在记录，暂不能删除", Toast.LENGTH_SHORT).show()
+            return
+        }
         val deleted = (!file.exists() || file.delete())
-        File(file.parentFile, file.nameWithoutExtension + ".active").delete()
         if (selectedLog.value?.fileName == fileName) closeLogViewer()
         refreshLogs()
         Toast.makeText(app, if (deleted) "已删除这段日志" else "删除失败", Toast.LENGTH_SHORT).show()
@@ -262,12 +266,16 @@ private class IsoSettingsState(context: Context) : SettingsModel {
         val directory = sessionDirectory()
         val files = directory?.listFiles().orEmpty()
         var failed = 0
-        files.filter { it.isFile && (it.name.endsWith(".log") || it.name.endsWith(".active")) }
-            .forEach { if (it.exists() && !it.delete()) failed++ }
+        files.filter { it.isFile && it.name.endsWith(".log") }
+            .forEach { file ->
+                val active = File(file.parentFile, file.nameWithoutExtension + ".active").exists()
+                if (!active && file.exists() && !file.delete()) failed++
+            }
+        // 保留正在写入的会话及其 marker，避免删除后日志重新生成却失去会话状态。
         closeLogViewer()
         refreshLogs()
-        Toast.makeText(app, if (failed == 0) "历史日志已清除" else "有 $failed 个文件未能删除",
-            Toast.LENGTH_LONG).show()
+        Toast.makeText(app, if (failed == 0) "历史日志已清除（当前会话保留）"
+            else "有 $failed 个文件未能删除", Toast.LENGTH_LONG).show()
     }
 
     override fun exportLogs() {
