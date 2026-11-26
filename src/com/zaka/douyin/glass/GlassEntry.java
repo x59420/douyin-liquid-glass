@@ -2,7 +2,6 @@ package com.zaka.douyin.glass;
 
 import android.app.Activity;
 import android.app.Application;
-import android.app.Instrumentation;
 import android.graphics.Color;
 import android.view.View;
 import android.view.MotionEvent;
@@ -125,26 +124,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
             Dydock.warn("挂 Activity.dispatchKeyEvent 失败: " + t);
         }
 
-        try {
-            XposedHelpers.findAndHookMethod(Instrumentation.class, "callActivityOnResume",
-                    Activity.class, new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam param) {
-                            try {
-                                Object a = param.args[0];
-                                if (a instanceof Activity) {
-                                    installDock((Activity) a);
-                                }
-                            } catch (Throwable t) {
-                                Dydock.error("resume 钩子", t);
-                            }
-                        }
-                    });
-        } catch (Throwable t) {
-            Dydock.error("挂 callActivityOnResume", t);
-        }
-
-        // 兜底：部分机型上 callActivityOnResume 的签名可能被改过。
+        // 统一只在 Activity.onResume 完成后处理，避免 Instrumentation 与 onResume 双重入口。
         try {
             XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {
                 @Override
@@ -213,6 +193,7 @@ public final class GlassEntry implements IXposedHookLoadPackage {
     /** 只安装底部 Dock，其他区域不再添加液态玻璃。 */
     private static void installDock(Activity act) {
         try {
+            if (act == null || act.isFinishing() || act.isDestroyed()) return;
             makeNavigationAreaTransparent(act);
             DockController.onActivity(act);
             // 从聊天框 / 会话页退回来时重新量一次底栏位置，Dock 不会偏到左边。
