@@ -824,8 +824,11 @@ final class DockController {
         // 全程在 GPU 上录一层纹理，玻璃用 drawBackdrop 采样它，滚动、翻页都是实时的。
         // 有视频 Surface 的页面不走这条路 —— 视频像素不在 View 树里，画出来只有 UI 层，
         // 那种页面仍旧交给 Backdrop 做「视频层 + 内容树」的合成。
-        final boolean livePaint = android.os.Build.VERSION.SDK_INT >= 31
-                && !Shield.hasVideoSurface(content);
+        // 不再按「当下有没有视频层」决定：抖音的主 Activity 几乎一直挂着视频 Surface，
+        // 一进门就被判成不能用实时图层，结果列表页也永远走位图那条老路。
+        // 实时图层对列表页是质变（真画面、跟手），对视频页至少不比现在的黑底更差
+        //（视频像素本来就 PixelCopy 抓不到 code=1）。
+        final boolean livePaint = android.os.Build.VERSION.SDK_INT >= 31;
         final Consumer<android.graphics.Canvas> hostPainter;
         if (livePaint) {
             hostPainter = new Consumer<android.graphics.Canvas>() {
