@@ -59,6 +59,9 @@ final class DockController {
     /** 只弹一次的提示文案，避免每个页面都提示一遍。 */
     private static final java.util.HashSet<String> TOASTED = new java.util.HashSet<String>();
 
+    /** Dock 相对系统导航条再上抬多少 dp，用来给宿主自己的进度条 / 弹幕栏让位。 */
+    private static final float NAV_CLEAR_DP = 14f;
+
     /** 每个 Activity 识别出的官方 Dock。 */
     private static final WeakHashMap<Activity, View> DOCKS = new WeakHashMap<Activity, View>();
     /** Host video view currently holding a recognized long press. */
@@ -815,6 +818,37 @@ final class DockController {
         final List<View>[] tabTargets = new List[]{initialTabs};
         final View[] plusTarget = new View[]{plus};
 
+        // 背景：Android 12+ 直接把这一页的内容树画进玻璃自己的图层（KernelSU / wxglass 同款做法）。
+        //
+        // 和「每隔几十毫秒回读一次位图」的区别就是「真透明」和「一张旧截图」的区别：
+        // 全程在 GPU 上录一层纹理，玻璃用 drawBackdrop 采样它，滚动、翻页都是实时的。
+        // 有视频 Surface 的页面不走这条路 —— 视频像素不在 View 树里，画出来只有 UI 层，
+        // 那种页面仍旧交给 Backdrop 做「视频层 + 内容树」的合成。
+        final boolean livePaint = android.os.Build.VERSION.SDK_INT >= 31
+                && !Shield.hasVideoSurface(content);
+        final Consumer<android.graphics.Canvas> hostPainter;
+        if (livePaint) {
+            hostPainter = new Consumer<android.graphics.Canvas>() {
+                @Override
+                public void accept(android.graphics.Canvas canvas) {
+                    try {
+                        if (!content.isAttachedToWindow() || !content.isShown()) return;
+                        int[] loc = new int[2];
+                        content.getLocationInWindow(loc);
+                        int save = canvas.save();
+                        canvas.translate(loc[0], loc[1]);
+                        content.draw(canvas);
+                        canvas.restoreToCount(save);
+                    } catch (Throwable t) {
+                        Dydock.warnOnce("host-painter", "内容画进玻璃图层失败: " + t);
+                    }
+                }
+            };
+            Dydock.log("背景:实时图层绘制已启用（玻璃里是这一页的实时画面）");
+        } else {
+            hostPainter = null;
+        }
+
         // 关键：玻璃层跑在独立类加载器里，不跟抖音自己的 androidx / compose 抢类。
         final IsoDock iso = IsoDock.create(act,
                 new Consumer<String>() {
@@ -847,7 +881,8 @@ final class DockController {
                 new Runnable() {
                     @Override public void run() {
                     }
-                });
+                },
+                hostPainter);
 
         if (iso == null) {
             // 隔离加载都起不来的话，宁可不接管，也不在宿主进程里硬塞一套会和抖音撞版本的 Compose。
@@ -1676,7 +1711,11 @@ final class DockController {
             int overlayHeight = iso.view.getHeight();
             int navBottom = navigationBarInsetBottom(dock);
             if (overlayHeight > 0 && navBottom > 0) {
-                int limit = overlayHeight - navBottom - (int) (2f * density) - pill;
+                // NAV_CLEAR_DP：给抖音自己的底部控件（视频进度条、弹幕栏）让出的高度。
+                // 窗口铺到手势条后面之后，这些控件整体下移了 navBottom，
+                // 落点如果还按「贴着导航条」算，Dock 就会正压在它们身上，点不到。
+                int limit = overlayHeight - navBottom
+                        - (int) ((2f + NAV_CLEAR_DP) * density) - pill;
                 if (top > limit) top = limit;
             }
 
@@ -2401,13 +2440,12 @@ final class DockController {
             int flags = decor.getSystemUiVisibility();
             int next = flags;
             next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-            // 主动清掉 LAYOUT_HIDE_NAVIGATION。
+            // 系统导航栏要真透明，窗口就必须画到手势条后面 —— 这一条绕不过去：
+            // 不开这个 flag 的话 decor 在导航条上沿就截止，那一条永远是窗口底色（黑）。
             //
-            // 0.6.0 打开过一版，结果抖音自己的控件整体下移：视频页的进度条、弹幕栏
-            // 被顶到系统手势条那一带，正好压在玻璃 Dock 底下 —— 点不到，等于把功能废了。
-            // 「画面延伸到底」改成不动宿主布局的做法（采样窗口上移，见 applyGeometryInBand），
-            // 控件位置一个都不变。
-            next &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            // 代价是抖音自己的控件会跟着往下移。所以 Dock 的落点上抬了
+            // NAV_CLEAR_DP（见 applyGeometryInBand），把进度条 / 弹幕栏那一带让出来。
+            next |= View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
 
             boolean hostHidesStatus = hostHidesStatusBar(act);
 

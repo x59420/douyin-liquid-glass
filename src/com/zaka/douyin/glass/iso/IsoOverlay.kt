@@ -37,6 +37,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
@@ -101,7 +102,12 @@ class IsoOverlay private constructor(
     private val onLog: Consumer<String>,
     private val onTabClick: IntConsumer,
     private val onPlusClick: Runnable,
-    private val onLongPress: Runnable
+    private val onLongPress: Runnable,
+    /**
+     * 宿主把这一页的内容树画进玻璃图层的回调（Android 12+，KernelSU / wxglass 同款）。
+     * 有它就不再用「隔几十毫秒回读一次的位图」当背景：玻璃里是实时画面，滚动跟手。
+     */
+    private val hostPainter: Consumer<android.graphics.Canvas>?
 ) : FrameLayout(context) {
 
     private val overlayOwner = OverlayLifecycleOwner()
@@ -196,6 +202,7 @@ class IsoOverlay private constructor(
             }
             MiuixTheme(controller = controller) {
                 GlassSurface(
+                    hostPainter = hostPainter,
                     image = backdropImage,
                     region = region,
                     tabsRect = tabsRect,
@@ -236,9 +243,10 @@ class IsoOverlay private constructor(
             onLog: Consumer<String>,
             onTabClick: IntConsumer,
             onPlusClick: Runnable,
-            onLongPress: Runnable
+            onLongPress: Runnable,
+            hostPainter: Consumer<android.graphics.Canvas>?
         ): IsoOverlay = IsoOverlay(
-            GlassEnv.wrap(context), onLog, onTabClick, onPlusClick, onLongPress
+            GlassEnv.wrap(context), onLog, onTabClick, onPlusClick, onLongPress, hostPainter
         )
     }
 
@@ -417,6 +425,7 @@ private fun LineTabIcon(index: Int, color: Color) {
 
 @Composable
 private fun GlassSurface(
+    hostPainter: Consumer<android.graphics.Canvas>?,
     image: MutableState<ImageBitmap?>,
     region: Rect,
     tabsRect: Rect,
@@ -435,8 +444,23 @@ private fun GlassSurface(
     // 背景层只做记录，不负责显示：画面由宿主采集好之后交给这里，
     // 玻璃（drawBackdrop）自己去采样。界面上不会再画一份副本。
     val backdrop = rememberLayerBackdrop(onDraw = {
+        val painter = hostPainter
         val frame = image.value
-        if (frame != null && size.width > 0f && size.height > 0f) {
+        if (painter != null && size.width > 0f && size.height > 0f) {
+            // 实时路径：把宿主这一页的内容树按窗口坐标画进玻璃图层。
+            // 图层原点就是玻璃区域左上角，所以先按 region 左上角平移回窗口坐标。
+            try {
+                drawIntoCanvas { canvas ->
+                    val native = canvas.nativeCanvas
+                    val save = native.save()
+                    native.translate(-region.left.toFloat(), -region.top.toFloat())
+                    painter.accept(native)
+                    native.restoreToCount(save)
+                }
+            } catch (_: Throwable) {
+                drawRect(color = Color(0xFF1C1D22), size = size)
+            }
+        } else if (frame != null && size.width > 0f && size.height > 0f) {
             drawImage(
                 image = frame,
                 dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
