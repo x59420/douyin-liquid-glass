@@ -2325,10 +2325,9 @@ final class DockController {
      *
      * 只做两件事：导航栏背景透明、关掉系统的对比度强制灰底。
      *
-     * 这里**绝不能**再打开 LAYOUT_HIDE_NAVIGATION —— 0.3.3 就是为了消掉导航栏那条灰底
-     * 打开了它，结果应用内容整体被顶进手势区，抖音自己的底栏跟着往下移，
-     * 我们算出来的玻璃位置也一起下移，看上去就是「Dock 跑到手势条上去了」。
-     * 位置要贴在原生底栏所在的这一条上，所以布局范围保持和宿主一致。
+     * LAYOUT_HIDE_NAVIGATION 现在是打开的（画面要延伸到底），
+     * 0.3.3 那次「Dock 跑到手势条上」的问题改由 applyGeometryInBand 的 navBottom 夹紧处理，
+     * 玻璃位置不再跟着原生底栏一路下移。
      * 另外 GlassEntry.makeNavigationAreaTransparent 里也是这么处理的，两处必须同一个口径。
      */
     private static void applyImmersiveNavigation(Activity act) {
@@ -2344,8 +2343,9 @@ final class DockController {
      * 会把自己的栏色和 ui flags 整段写回去 —— 只设一次必然被它盖掉。
      * 「导航栏透明不生效」「隐藏状态栏以后那条是黑的」都是这么来的。
      *
-     * 两条老规矩照旧：
-     *  - 不打开 LAYOUT_HIDE_NAVIGATION。内容延伸进手势区会把原生底栏整体下移，Dock 跟着偏。
+     * 规矩：
+     *  - 打开 LAYOUT_HIDE_NAVIGATION，内容铺到手势条后面（画面延伸到底）；
+     *    Dock 的位置有 navBottom 上限，不会被顶进手势区。
      *  - 不主动隐藏状态栏。只有宿主**自己已经在隐藏**（FULLSCREEN）时才补 LAYOUT_FULLSCREEN，
      *    因为透明的状态栏只有内容真的画到那一块才透得出来；不补的话露出来的是窗口底色，
      *    也就是那条黑边。
@@ -2388,8 +2388,15 @@ final class DockController {
             int flags = decor.getSystemUiVisibility();
             int next = flags;
             next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-            // 主动清掉：0.3.3 打开过，残留会让底栏坐标一直偏低。
-            next &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            // 画面延伸到底：让窗口内容一直铺到手势条后面。
+            //
+            // 0.3.3 曾经打开过这个 flag 又关掉，原因是「底栏被顶进手势区、Dock 跟着偏」。
+            // 那个问题现在由 applyGeometryInBand 里的 navBottom 夹紧解决了 ——
+            // 玻璃位置有自己的上限（overlayHeight - 导航条高度 - 2dp - 胶囊高度），
+            // 不再跟着原生底栏一路往下走。所以这里可以放心打开：
+            // 不开的话 decor 到导航条上沿就截止，底栏以下那一整条永远是窗口底色（黑），
+            // 玻璃隔着它采样也只能是黑的。
+            next |= View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
 
             boolean hostHidesStatus = hostHidesStatusBar(act);
 
