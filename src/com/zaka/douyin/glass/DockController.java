@@ -2339,9 +2339,8 @@ final class DockController {
      *
      * 只做两件事：导航栏背景透明、关掉系统的对比度强制灰底。
      *
-     * LAYOUT_HIDE_NAVIGATION 现在是打开的（画面要延伸到底），
-     * 0.3.3 那次「Dock 跑到手势条上」的问题改由 applyGeometryInBand 的 navBottom 夹紧处理，
-     * 玻璃位置不再跟着原生底栏一路下移。
+     * 这里**不开** LAYOUT_HIDE_NAVIGATION：内容延伸进手势区会把抖音自己的控件
+     * （视频页进度条 / 弹幕栏）一起顶到 Dock 底下，点不到。画面连续感改由采样窗口处理。
      * 另外 GlassEntry.makeNavigationAreaTransparent 里也是这么处理的，两处必须同一个口径。
      */
     private static void applyImmersiveNavigation(Activity act) {
@@ -2358,8 +2357,8 @@ final class DockController {
      * 「导航栏透明不生效」「隐藏状态栏以后那条是黑的」都是这么来的。
      *
      * 规矩：
-     *  - 打开 LAYOUT_HIDE_NAVIGATION，内容铺到手势条后面（画面延伸到底）；
-     *    Dock 的位置有 navBottom 上限，不会被顶进手势区。
+     *  - 不打开 LAYOUT_HIDE_NAVIGATION。0.6.0 试过，抖音的进度条/弹幕栏会跟着下移
+     *    钻进 Dock 底下点不到；布局范围保持和宿主一致。
      *  - 不主动隐藏状态栏。只有宿主**自己已经在隐藏**（FULLSCREEN）时才补 LAYOUT_FULLSCREEN，
      *    因为透明的状态栏只有内容真的画到那一块才透得出来；不补的话露出来的是窗口底色，
      *    也就是那条黑边。
@@ -2402,15 +2401,13 @@ final class DockController {
             int flags = decor.getSystemUiVisibility();
             int next = flags;
             next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-            // 画面延伸到底：让窗口内容一直铺到手势条后面。
+            // 主动清掉 LAYOUT_HIDE_NAVIGATION。
             //
-            // 0.3.3 曾经打开过这个 flag 又关掉，原因是「底栏被顶进手势区、Dock 跟着偏」。
-            // 那个问题现在由 applyGeometryInBand 里的 navBottom 夹紧解决了 ——
-            // 玻璃位置有自己的上限（overlayHeight - 导航条高度 - 2dp - 胶囊高度），
-            // 不再跟着原生底栏一路往下走。所以这里可以放心打开：
-            // 不开的话 decor 到导航条上沿就截止，底栏以下那一整条永远是窗口底色（黑），
-            // 玻璃隔着它采样也只能是黑的。
-            next |= View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+            // 0.6.0 打开过一版，结果抖音自己的控件整体下移：视频页的进度条、弹幕栏
+            // 被顶到系统手势条那一带，正好压在玻璃 Dock 底下 —— 点不到，等于把功能废了。
+            // 「画面延伸到底」改成不动宿主布局的做法（采样窗口上移，见 applyGeometryInBand），
+            // 控件位置一个都不变。
+            next &= ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
 
             boolean hostHidesStatus = hostHidesStatusBar(act);
 
