@@ -909,6 +909,7 @@ final class DockController {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         applyGeometry(iso, backdrop, dock, initialTabs.size());
         refreshTabs(iso, initialTabs, plus);
+        dumpLayoutChain(act, dock, content);
 
         final View[] dockRef = new View[]{dock};
         final boolean[] live = new boolean[]{true};
@@ -943,7 +944,6 @@ final class DockController {
         // 用 SelfMask 记下原值再归零：判定「原生底栏可不可见」时必须用原值，
         // 否则就是拿自己写的 0 去判宿主藏了底栏，玻璃会一帧收一帧放地抖。
         SelfMask.mask(dock);
-        collapseDockSpace(dock);
         Finder.hiddenByUs = new java.lang.ref.WeakReference<View>(dock);
         try {
             backdrop.capture();
@@ -1708,6 +1708,90 @@ final class DockController {
      * 玻璃层的位置全在宿主这边算：四个 tab 的胶囊 + 右边「＋」两块。
      * 参数沿用 KernelSU FloatingBottomBar：28dp 安全边距、8dp 间距、64dp 高、单格 76dp。
      */
+    /** 一次性把「内容 / 底栏 / 底栏祖先链」的布局参数打进日志，用来判断该动谁。 */
+    static void dumpLayoutChain(Activity act, View dock, View content) {
+        try {
+            StringBuilder sb = new StringBuilder("布局:内容 w=");
+            sb.append(content == null ? -1 : content.getWidth())
+              .append(" h=").append(content == null ? -1 : content.getHeight())
+              .append(" padB=").append(content == null ? -1 : content.getPaddingBottom())
+              .append(" lp=").append(describeLp(content));
+            Dydock.log(sb.toString());
+            View v = dock;
+            for (int i = 0; i < 6 && v != null; i++) {
+                StringBuilder line = new StringBuilder("布局:第").append(i).append("层 ")
+                        .append(v.getClass().getName())
+                        .append(" id=").append(idName(v))
+                        .append(" ").append(v.getWidth()).append("x").append(v.getHeight())
+                        .append(" padB=").append(v.getPaddingBottom())
+                        .append(" alpha=").append(v.getAlpha())
+                        .append(" lp=").append(describeLp(v));
+                Dydock.log(line.toString());
+                android.view.ViewParent parent = v.getParent();
+                v = parent instanceof View ? (View) parent : null;
+            }
+            // 列表：找第一个 RecyclerView / ListView，看它的底边和 padding
+            View list = findList(content, 0);
+            if (list != null) {
+                int[] loc = new int[2];
+                list.getLocationInWindow(loc);
+                Dydock.log("布局:列表 " + list.getClass().getName()
+                        + " " + list.getWidth() + "x" + list.getHeight()
+                        + " top=" + loc[1] + " bottom=" + (loc[1] + list.getHeight())
+                        + " padB=" + list.getPaddingBottom()
+                        + " lp=" + describeLp(list));
+            } else {
+                Dydock.log("布局:没找到 RecyclerView/ListView");
+            }
+        } catch (Throwable t) {
+            Dydock.warnOnce("layout-dump", "布局链诊断失败: " + t);
+        }
+    }
+
+    private static View findList(View v, int depth) {
+        if (v == null || depth > 14) return null;
+        String cn = v.getClass().getName();
+        if (cn.contains("RecyclerView") || cn.contains("ListView")) return v;
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View found = findList(g.getChildAt(i), depth + 1);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static String describeLp(View v) {
+        if (v == null) return "null";
+        ViewGroup.LayoutParams lp = v.getLayoutParams();
+        if (lp == null) return "null";
+        StringBuilder sb = new StringBuilder(lp.getClass().getSimpleName())
+                .append("{").append(lp.width).append("x").append(lp.height).append("}");
+        if (lp instanceof ViewGroup.MarginLayoutParams) {
+            ViewGroup.MarginLayoutParams m = (ViewGroup.MarginLayoutParams) lp;
+            sb.append(" margin[").append(m.leftMargin).append(",").append(m.topMargin)
+              .append(",").append(m.rightMargin).append(",").append(m.bottomMargin).append("]");
+        }
+        if (lp instanceof FrameLayout.LayoutParams) {
+            sb.append(" gravity=").append(((FrameLayout.LayoutParams) lp).gravity);
+        }
+        if (lp instanceof LinearLayout.LayoutParams) {
+            sb.append(" weight=").append(((LinearLayout.LayoutParams) lp).weight);
+        }
+        return sb.toString();
+    }
+
+    private static String idName(View v) {
+        try {
+            int id = v.getId();
+            if (id == -1) return "-";
+            return v.getResources().getResourceEntryName(id);
+        } catch (Throwable t) {
+            return String.valueOf(v.getId());
+        }
+    }
+
     private static void applyGeometry(IsoDock iso, Backdrop backdrop, View dock, int tabsCount) {
         if (iso == null || dock == null) return;
         Rect band = rectInWindow(dock);
