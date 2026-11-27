@@ -1776,8 +1776,8 @@ final class DockController {
         if (lp instanceof FrameLayout.LayoutParams) {
             sb.append(" gravity=").append(((FrameLayout.LayoutParams) lp).gravity);
         }
-        if (lp instanceof LinearLayout.LayoutParams) {
-            sb.append(" weight=").append(((LinearLayout.LayoutParams) lp).weight);
+        if (lp instanceof android.widget.LinearLayout.LayoutParams) {
+            sb.append(" weight=").append(((android.widget.LinearLayout.LayoutParams) lp).weight);
         }
         return sb.toString();
     }
