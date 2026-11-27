@@ -1693,7 +1693,21 @@ final class DockController {
             Rect regionInWindow = new Rect(region);
             regionInWindow.offset(overlayLocation[0], overlayLocation[1]);
 
-            if (backdrop != null) backdrop.setRegion(regionInWindow);
+            // 采样窗口：视频页就采玻璃背后那一条；**没有视频层的页面**整体上移一个底栏高度。
+            //
+            // 原因：抖音是「内容 + 底栏」上下排列，底栏虽然被我们 alpha 归零，布局位置还占着，
+            // 它那一条背后只有一层被清空的容器 + 窗口底色。直接采就是纯黑，玻璃既不透也折射不出东西。
+            // 上移一个底栏高度，采到的是紧贴着玻璃上沿那几行内容 —— 视觉上连续，
+            // 而且不用动宿主布局，抖音自己的控件（作者信息、弹幕栏）位置一个都不变。
+            Rect sampleRegion = new Rect(regionInWindow);
+            if (backdrop != null) {
+                boolean hasVideo = Shield.hasVideoSurface(dock.getRootView());
+                if (!hasVideo) {
+                    int shift = Math.min(band.height(), Math.max(0, regionInWindow.top));
+                    sampleRegion.offset(0, -shift);
+                }
+                backdrop.setRegion(sampleRegion);
+            }
             iso.setGeometry(region, tabsRect, plusRect);
         } catch (Throwable t) {
             Dydock.warnOnce("iso-geometry", "玻璃定位失败: " + t);
