@@ -59,6 +59,20 @@ final class DockController {
     /** 只弹一次的提示文案，避免每个页面都提示一遍。 */
     private static final java.util.HashSet<String> TOASTED = new java.util.HashSet<String>();
 
+    /**
+     * 原生底栏被我们收掉布局占位时，记下它原本的 layoutParams.height。
+     *
+     * 为什么必须收掉占位：抖音是「内容 + 底栏」上下排列，底栏只要还占着高度，
+     * 列表/视频就在它上沿截止 —— 玻璃背后只有一层被清空的容器，采出来是纯黑，
+     * 于是既看不见"底栏透明"，也看不见折射。把高度收成 0，内容容器自然长到屏幕底，
+     * 画面就一直铺到手势条后面。
+     *
+     * alpha 照旧归零（SelfMask），可见性判据读到的仍然是原值，
+     * 所以「原生底栏该不该显示」这条逻辑不受影响。
+     */
+    private static final java.util.WeakHashMap<View, Integer> DOCK_HEIGHT =
+            new java.util.WeakHashMap<View, Integer>();
+
     /** 每个 Activity 识别出的官方 Dock。 */
     private static final WeakHashMap<Activity, View> DOCKS = new WeakHashMap<Activity, View>();
     /** Host video view currently holding a recognized long press. */
@@ -894,6 +908,7 @@ final class DockController {
         // 用 SelfMask 记下原值再归零：判定「原生底栏可不可见」时必须用原值，
         // 否则就是拿自己写的 0 去判宿主藏了底栏，玻璃会一帧收一帧放地抖。
         SelfMask.mask(dock);
+        collapseDockSpace(dock);
         Finder.hiddenByUs = new java.lang.ref.WeakReference<View>(dock);
         try {
             backdrop.capture();
@@ -1069,6 +1084,7 @@ final class DockController {
                                     // 底栏区域和遮罩匹配都要用这份坐标。
                                     Rect freshBand = rectInWindow(fresh);
                                     SelfMask.mask(fresh);
+                                    collapseDockSpace(fresh);
                                     Finder.hiddenByUs =
                                             new java.lang.ref.WeakReference<View>(fresh);
                                     dockRef[0] = fresh;
@@ -1203,7 +1219,11 @@ final class DockController {
                             lastWindowW[0] = decorW;
                             lastWindowH[0] = decorH;
                         }
-                        if (sizeChanged || windowChanged || bandRect[0] == null) {
+                        // 占位被收成 0 之后，量到的高度永远是 0：这时候的
+                        // 「尺寸变了」是我们自己造成的，不能再拿去重新定位，
+                        // 否则玻璃会被判成「位置不可信」跳到兜底坐标上。
+                        if (!dockSpaceCollapsed(d)
+                                && (sizeChanged || windowChanged || bandRect[0] == null)) {
                             lastAccountedBandW[0] = w;
                             lastAccountedBandH[0] = h;
                             lastBandSig[0] = bandSignature(d);
@@ -1593,10 +1613,55 @@ final class DockController {
         }
     }
 
+    /** 收掉原生底栏的布局占位，让内容容器长到屏幕底。重复调用不会覆盖第一次记下的高度。 */
+    private static void collapseDockSpace(View dock) {
+        if (dock == null) return;
+        try {
+            ViewGroup.LayoutParams lp = dock.getLayoutParams();
+            if (lp == null || lp.height == 0) return;
+            synchronized (DOCK_HEIGHT) {
+                if (!DOCK_HEIGHT.containsKey(dock)) DOCK_HEIGHT.put(dock, lp.height);
+            }
+            int original = lp.height;
+            lp.height = 0;
+            dock.setLayoutParams(lp);
+            Dydock.log("底栏:已收掉原生底栏占位 " + original + "px，内容铺到屏幕底");
+        } catch (Throwable t) {
+            Dydock.warnOnce("dock-collapse", "收掉底栏占位失败: " + t);
+        }
+    }
+
+    /** 把布局占位还原回去（退出接管 / 玻璃画不出来时用）。 */
+    private static void expandDockSpace(View dock) {
+        if (dock == null) return;
+        try {
+            Integer original;
+            synchronized (DOCK_HEIGHT) {
+                original = DOCK_HEIGHT.remove(dock);
+            }
+            if (original == null) return;
+            ViewGroup.LayoutParams lp = dock.getLayoutParams();
+            if (lp != null && lp.height != original) {
+                lp.height = original;
+                dock.setLayoutParams(lp);
+            }
+        } catch (Throwable t) {
+            Dydock.warnOnce("dock-expand", "还原底栏占位失败: " + t);
+        }
+    }
+
+    private static boolean dockSpaceCollapsed(View dock) {
+        if (dock == null) return false;
+        synchronized (DOCK_HEIGHT) {
+            return DOCK_HEIGHT.containsKey(dock);
+        }
+    }
+
     private static void restoreNative(View dock) {
         try {
             if (dock != null) {
                 dock.setVisibility(View.VISIBLE);
+                expandDockSpace(dock);
                 SelfMask.restore(dock);
                 restoreSavedBackgrounds(dock);
             }
