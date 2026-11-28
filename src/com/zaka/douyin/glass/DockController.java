@@ -957,6 +957,7 @@ final class DockController {
         final int[] expandedTicks = new int[]{0};
         final int[] diagDumps = new int[]{0};
         final long[] lastReserveAt = new long[]{0L};
+        final long[] lastRemaskAt = new long[]{0L};
         final long[] diagAt = new long[]{SystemClock.uptimeMillis()};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
@@ -1111,6 +1112,15 @@ final class DockController {
                     long now = SystemClock.uptimeMillis();
                     // 临时诊断：每 15 秒打一次当前页面的大视图，共 6 次。
                     // 目的是抓到「消息」这类列表页里 bottom 停在底栏上沿的那个容器。
+                    // 原生底栏必须始终是透明的：宿主会在切页、重建节点之后把它改回 alpha=1，
+                    // 露出来就变成「Dock 底下还有一排」——就是用户看到的那一条。
+                    if (d != null && d.getAlpha() > 0.01f) {
+                        SelfMask.mask(d);
+                        if (now - lastRemaskAt[0] >= 3000L) {
+                            lastRemaskAt[0] = now;
+                            Dydock.log("底栏:原生底栏又变回可见，重新压成透明");
+                        }
+                    }
                     // 「消息」这类页面是切过去之后才创建的，安装那一刻还不在树上，
                     // 所以底部预留要周期性复查：命中就清、被宿主改回去就再清一次。
                     if (bandRect[0] != null && now - lastReserveAt[0] >= 1500L) {
