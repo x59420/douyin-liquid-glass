@@ -824,8 +824,13 @@ final class DockController {
 
         // 设置里开了「视频页真实背景」：这里发起一次录屏授权（授权必须由宿主 uid 发起）
         try {
-            if (DockPrefs.captureVideo(act) && !VideoCapture.isActive() && !VideoCapture.isPending()) {
+            boolean wantCapture = DockPrefs.captureVideo(act);
+            if (wantCapture && !VideoCapture.isActive() && !VideoCapture.isPending()) {
+                Dydock.log("录屏:设置里已开启，发起授权");
                 VideoCapture.request(act);
+            } else if (wantCapture) {
+                Dydock.log("录屏:已开启（active=" + VideoCapture.isActive()
+                        + " pending=" + VideoCapture.isPending() + "）");
             }
         } catch (Throwable t) {
             Dydock.warnOnce("capture-trigger", "触发录屏授权失败: " + t);
@@ -939,20 +944,9 @@ final class DockController {
                             if (d0.getAlpha() > 0.01f) SelfMask.mask(d0);
                             View shell0 = ancestorOfClass(d0, "MainBottomTabContainer", 6);
                             if (shell0 != null && shell0.getAlpha() > 0.01f) SelfMask.mask(shell0);
-                            // 背景：底栏自己 + 上面几层壳，一层都不许留
-                            View v = d0;
-                            for (int i = 0; i < 6 && v != null; i++) {
-                                if (v.getBackground() != null) saveAndClearBackground(v);
-                                android.view.ViewParent parent = v.getParent();
-                                v = parent instanceof View ? (View) parent : null;
-                            }
-                            // 底栏里面那层「胶囊底板」也要清 —— 用户看到的那块灰色圆角底
-                            // 就是它，不在父链上，是在底栏内部当子 View 画的。
-                            clearChildBackgrounds(d0, 0);
-                            // 注意：这里**不要**再整树扫一遍清背景。
-                            // 每帧扫 80 个节点 + setBackground 会触发宿主 invalidate/relayout，
-                            // 长按倍速、快速滑动时能看到画面「跳一下」——就是这条引起的。
-                            // 带子里的背景交给轮询里的 stripDockBackground 处理（1.5s 一次，足够了）。
+                            // 这里只压 alpha（改 alpha 不触发 relayout，最便宜）。
+                            // 背景清理全部交给轮询里的 stripDockBackground —— 每帧 setBackground
+                            // 会让宿主 invalidate/relayout，长按倍速时肉眼就是「画面跳一下」。
                         }
                     } catch (Throwable ignored) {
                     }
