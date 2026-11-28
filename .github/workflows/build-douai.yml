@@ -1,0 +1,98 @@
+name: Build DouAi APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'douai/**'
+      - '.github/workflows/build-douai.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: douai
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Android SDK packages
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" "build-tools;37.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build signed Release APK
+        env:
+          DOUAI_RELEASE_STORE_FILE: ${{ github.workspace }}/keystore/dydock.jks
+          DOUAI_RELEASE_STORE_PASSWORD: ${{ secrets.DYDOCK_KEYSTORE_PASSWORD }}
+          DOUAI_RELEASE_KEY_ALIAS: dydock
+          DOUAI_RELEASE_KEY_PASSWORD: ${{ secrets.DYDOCK_KEYSTORE_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleRelease --console=plain --stacktrace
+
+      - name: Collect APK
+        run: |
+          mkdir -p ../out
+          APK="$(find app/build/outputs/apk/release -name '*.apk' -print -quit)"
+          test -n "$APK"
+          cp "$APK" ../out/douai.apk
+          ls -l ../out
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: douai-apk
+          path: out/douai.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Read DouAi version
+        id: ver
+        run: |
+          V="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' douai/app/build.gradle.kts | head -1)"
+          test -n "$V"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: douai-apk
+          path: artifact
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          APK="$(find artifact -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          mv "$APK" "douai-${{ steps.ver.outputs.version }}.apk"
+          TAG="douai-v${{ steps.ver.outputs.version }}-build.${GITHUB_RUN_NUMBER}"
+          gh release create "$TAG" "douai-${{ steps.ver.outputs.version }}.apk" \
+            --title "DouAi ${{ steps.ver.outputs.version }} (build ${GITHUB_RUN_NUMBER})" \
+            --notes "DouAi 移植版，已适配抖音 41.3.0。源码提交：${GITHUB_SHA}"

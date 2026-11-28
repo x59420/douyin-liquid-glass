@@ -172,3 +172,25 @@ ANDROID_HOME=/path/to/android-sdk bash build.sh
 Apache License 2.0，见 [LICENSE](LICENSE)。第三方衍生部分的版权与许可见 [NOTICE](NOTICE) / [NOTICE-KERNELSU](NOTICE-KERNELSU.md)。
 
 本项目仅供学习、研究与个人**非商业**用途；为非官方第三方模块，与字节跳动及抖音官方无隶属关系。「抖音」及相关商标归其各自所有者所有。修改第三方应用可能因宿主更新而失效，也可能带来兼容性或账号方面的风险，请自行判断是否使用。
+
+---
+
+## 仓库结构
+
+- `app/`、`src/`：dydock —— 抖音底栏液态玻璃模块（上文说明的部分）
+- `douai/`：DouAi 独立子工程，包名 `com.douai.module`，与 dydock 各自出包、互不影响
+
+两个模块作用域都是 `com.ss.android.ugc.aweme`，可以同时启用。
+
+## DouAi 与抖音 41.3.0
+
+`douai/` 是从 yudigaga/DouAi 移植进来的完整工程，用自带的 Gradle wrapper 构建，CI 在 `.github/workflows/build-douai.yml`。
+
+41.3.0 的适配方式：
+
+- 宿主识别按 **41 大版本**归到 41 基线（`HostAdaptation.relaxedProfileFor`），41.3.0 不再被判成 unsupported，所有 `== PROFILE_410` 的 41 分支照旧成立
+- 精确版本（40.6.0 / 40.8.0 / 41.0.0）仍按原表校验 build 号；41.x 宽松匹配时跳过 build 号校验
+- 规则表沿用 41.0.0 基线，运行时按设备上真实 APK 现场扫描校验；扫不到的规则会在诊断里标出来，不会崩
+- 诊断里新增 `host_adaptation_relaxed_baseline` / `host_adaptation_observed_version`，能看出当前是精确匹配还是基线兜底
+
+抖音 41.3.0 的真实资源表还没有拿到，所以 UI 定位里按资源 id 的部分仍是 41.0.0 的映射，需要用真机诊断日志再对一轮。
