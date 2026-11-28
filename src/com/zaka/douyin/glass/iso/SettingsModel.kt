@@ -17,6 +17,7 @@ internal interface SettingsModel {
     val bottomTransparent: MutableState<Boolean>
     val menuTransparent: MutableState<Boolean>
     val videoTint: MutableState<Boolean>
+    val captureVideo: MutableState<Boolean>
     val height: MutableState<Int>
     val tabWidth: MutableState<Int>
     val sideMargin: MutableState<Int>
@@ -32,6 +33,7 @@ internal interface SettingsModel {
     fun setBottomTransparent(value: Boolean)
     fun setMenuTransparent(value: Boolean)
     fun setVideoTint(value: Boolean)
+    fun setCaptureVideo(value: Boolean)
     fun setHeight(value: Int)
     fun setTabWidth(value: Int)
     fun setSideMargin(value: Int)

@@ -124,6 +124,27 @@ public final class GlassEntry implements IXposedHookLoadPackage {
             Dydock.warn("挂 Activity.dispatchKeyEvent 失败: " + t);
         }
 
+        // 录屏授权结果：MediaProjection 的授权必须在宿主进程里接住
+        try {
+            XposedHelpers.findAndHookMethod(Activity.class, "onActivityResult",
+                    int.class, int.class, android.content.Intent.class, new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                Object a = param.thisObject;
+                                if (a instanceof Activity && param.args != null && param.args.length == 3) {
+                                    VideoCapture.onResult((Activity) a,
+                                            (Integer) param.args[0], (Integer) param.args[1],
+                                            (android.content.Intent) param.args[2]);
+                                }
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+        } catch (Throwable t) {
+            Dydock.warn("挂 Activity.onActivityResult 失败: " + t);
+        }
+
         // 统一只在 Activity.onResume 完成后处理，避免 Instrumentation 与 onResume 双重入口。
         try {
             XposedHelpers.findAndHookMethod(Activity.class, "onResume", new XC_MethodHook() {

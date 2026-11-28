@@ -93,6 +93,7 @@ internal class SettingsState(context: Context) : SettingsModel {
     override val bottomTransparent = mutableStateOf(DockPrefs.bottomTransparent(ctx))
     override val menuTransparent = mutableStateOf(DockPrefs.menuTransparent(ctx))
     override val videoTint = mutableStateOf(DockPrefs.videoTintFallback(ctx))
+    override val captureVideo = mutableStateOf(DockPrefs.captureVideo(ctx))
 
     override val height = mutableStateOf(DockPrefs.heightDp(ctx))
     override val tabWidth = mutableStateOf(DockPrefs.tabWidthDp(ctx))
@@ -176,6 +177,12 @@ internal class SettingsState(context: Context) : SettingsModel {
         push()
     }
 
+    override fun setCaptureVideo(value: Boolean) {
+        captureVideo.value = value
+        DockPrefs.setCaptureVideo(ctx, value)
+        push()
+    }
+
     override fun setHeight(value: Int) {
         height.value = value
         DockPrefs.setHeightDp(ctx, value)
@@ -220,6 +227,7 @@ internal class SettingsState(context: Context) : SettingsModel {
             bottomTransparent.value,
             menuTransparent.value,
             videoTint.value,
+            captureVideo.value,
         )
     }
 
@@ -379,6 +387,13 @@ internal fun SettingsScreen(
                     subtitle = "抓不到视频画面时用界面主色垫底，避免玻璃变黑",
                     checked = state.videoTint.value,
                     onChange = state::setVideoTint,
+                )
+                Divider()
+                SwitchRow(
+                    title = "视频页真实背景（录屏）",
+                    subtitle = "打开后抖音里会弹一次录屏授权；直播/视频页的玻璃就能折射真实画面",
+                    checked = state.captureVideo.value,
+                    onChange = state::setCaptureVideo,
                 )
             }
 

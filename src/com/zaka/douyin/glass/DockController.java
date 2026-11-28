@@ -822,6 +822,15 @@ final class DockController {
         // 页面自己在底部留的那条 159px：清掉，内容才真的铺到屏幕底。
         releaseBottomReservation(content, rectInWindow(dock).height());
 
+        // 设置里开了「视频页真实背景」：这里发起一次录屏授权（授权必须由宿主 uid 发起）
+        try {
+            if (DockPrefs.captureVideo(act) && !VideoCapture.isActive() && !VideoCapture.isPending()) {
+                VideoCapture.request(act);
+            }
+        } catch (Throwable t) {
+            Dydock.warnOnce("capture-trigger", "触发录屏授权失败: " + t);
+        }
+
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
         // Miuix 自己在 GPU 上做 4dp 模糊，这里只决定采样分辨率。
@@ -841,7 +850,8 @@ final class DockController {
         // 一进门就被判成不能用实时图层，结果列表页也永远走位图那条老路。
         // 实时图层对列表页是质变（真画面、跟手），对视频页至少不比现在的黑底更差
         //（视频像素本来就 PixelCopy 抓不到 code=1）。
-        final boolean livePaint = android.os.Build.VERSION.SDK_INT >= 31;   // 保留：玻璃实时映射宿主画面
+        // 录屏在前时改用「位图」那条路：实时图层画不到 Surface，录屏帧才是真画面。
+        final boolean livePaint = android.os.Build.VERSION.SDK_INT >= 31 && !VideoCapture.isActive();
         final Consumer<android.graphics.Canvas> hostPainter;
         if (livePaint) {
             hostPainter = new Consumer<android.graphics.Canvas>() {
@@ -2305,6 +2315,38 @@ final class DockController {
 
     /** 带子清理日志的计数（只打前 12 条，别把日志刷爆）。 */
     private static final int[] BAND_LOG = new int[]{0};
+
+    /** 当前正在接管的 Activity（给录屏裁剪用）。 */
+    static java.util.List<Activity> captureTargets() {
+        synchronized (BANDS) {
+            return new java.util.ArrayList<Activity>(BANDS.keySet());
+        }
+    }
+
+    /** 某个 Activity 的底栏带（窗口坐标，给录屏裁剪用）。 */
+    static Rect captureBand(Activity act) {
+        synchronized (BANDS) {
+            Rect r = BANDS.get(act);
+            return r == null ? null : new Rect(r);
+        }
+    }
+
+    /** 录屏帧 → 玻璃层背景位图。 */
+    static void pushCapturedFrame(Activity act, Bitmap frame) {
+        IsoDock iso;
+        synchronized (OVERLAYS) {
+            iso = OVERLAYS.get(act);
+        }
+        if (iso == null) {
+            frame.recycle();
+            return;
+        }
+        try {
+            iso.setBackdrop(frame);
+        } catch (Throwable t) {
+            Dydock.warnOnce("capture-push", "推录屏帧失败: " + t);
+        }
+    }
 
     /** 系统是不是手势导航（Settings.Secure.navigation_mode == 2）。 */
     private static boolean isGestureNav(android.content.Context ctx) {
