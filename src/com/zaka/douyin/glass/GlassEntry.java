@@ -37,6 +37,49 @@ public final class GlassEntry implements IXposedHookLoadPackage {
         }
 
 
+        // 抖音底栏那层黑底：从源头掐掉。
+        //
+        // 宿主每一帧/每次 layout 都会给自己底栏 setBackground(黑色 drawable)，
+        // 我们在 onPreDraw 里清掉也挡不住下一帧写回来。这里直接 hook 住这个调用：
+        // 只要目标是「我们接管的那条底栏」或它的外壳容器，就把参数换成 null。
+        try {
+            XposedBridge.hookAllMethods(View.class, "setBackground", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.thisObject instanceof View
+                                && DockController.isNativeChrome((View) param.thisObject)
+                                && param.args != null && param.args.length == 1
+                                && param.args[0] != null) {
+                            param.args[0] = null;
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Dydock.warn("挂 View.setBackground 失败: " + t);
+        }
+
+        try {
+            XposedBridge.hookAllMethods(View.class, "setBackgroundDrawable", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    try {
+                        if (param.thisObject instanceof View
+                                && DockController.isNativeChrome((View) param.thisObject)
+                                && param.args != null && param.args.length == 1
+                                && param.args[0] != null) {
+                            param.args[0] = null;
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            Dydock.warn("挂 View.setBackgroundDrawable 失败: " + t);
+        }
+
         // Observe the host's own accepted long-click callback without replacing its listeners.
         // This keeps Douyin's original gesture handling intact.
         try {
