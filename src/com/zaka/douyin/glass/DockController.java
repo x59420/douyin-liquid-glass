@@ -819,6 +819,8 @@ final class DockController {
         stripDockBackground(dock);
         // 系统导航条那片区域：透明底、关掉对比度强制、内容延伸到底部。
         applyImmersiveNavigation(act);
+        // 页面自己在底部留的那条 159px：清掉，内容才真的铺到屏幕底。
+        releaseBottomReservation(content, rectInWindow(dock).height());
 
         final Backdrop backdrop = new Backdrop();
         backdrop.setContent(content);
@@ -1662,6 +1664,80 @@ final class DockController {
             Dydock.log("底栏:已收掉原生底栏占位 " + original + "px，内容铺到屏幕底");
         } catch (Throwable t) {
             Dydock.warnOnce("dock-collapse", "收掉底栏占位失败: " + t);
+        }
+    }
+
+    /**
+     * 「页面底部预留」登记表：paddBottom 被我们清零的 View 及其原值。
+     *
+     * 0.6.6 的布局链诊断说明白了那 159px 是谁占的：
+     *
+     *   第3层 MainBottomTabContainer id=css 1280x159 gravity=bottom   ← 底栏自己只是个悬浮容器
+     *   第4层 ProTouchDelegateFrameLayout 1280x2772                  ← 它下面已经是整屏
+     *
+     * 也就是说**不是**底栏在布局里挤占内容，是每个页面自己在底部留了 159px 的空（paddingBottom），
+     * 内容到那里就截止。所以正确做法不是收底栏的高度，而是把页面自己那条底部预留清掉，
+     * 退回时再按原值还原。
+     */
+    private static final java.util.WeakHashMap<View, Integer> SAVED_PAD =
+            new java.util.WeakHashMap<View, Integer>();
+
+    /** 清掉页面上「等于底栏高度」的底部预留，让内容铺到屏幕底。 */
+    private static void releaseBottomReservation(View root, int tabHeight) {
+        if (root == null || tabHeight <= 0) return;
+        try {
+            int rootH = root.getHeight();
+            if (rootH <= 0) return;
+            int changed = clearBottomPad(root, tabHeight, rootH, 0);
+            if (changed > 0) {
+                Dydock.log("布局:已清掉 " + changed + " 处底部预留 " + tabHeight
+                        + "px，内容铺到屏幕底");
+            }
+        } catch (Throwable t) {
+            Dydock.warnOnce("bottom-reserve", "清理底部预留失败: " + t);
+        }
+    }
+
+    private static int clearBottomPad(View v, int tabHeight, int rootH, int depth) {
+        if (v == null || depth > 18) return 0;
+        int count = 0;
+        try {
+            int pad = v.getPaddingBottom();
+            if (pad >= tabHeight - 8 && pad <= tabHeight + 8 && v.getHeight() >= rootH * 0.55f) {
+                synchronized (SAVED_PAD) {
+                    if (!SAVED_PAD.containsKey(v)) SAVED_PAD.put(v, pad);
+                }
+                v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), 0);
+                count++;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    count += clearBottomPad(g.getChildAt(i), tabHeight, rootH, depth + 1);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return count;
+    }
+
+    /** 还原所有被清零的底部预留。 */
+    private static void restoreBottomReservation() {
+        try {
+            java.util.ArrayList<View> views;
+            java.util.ArrayList<Integer> pads;
+            synchronized (SAVED_PAD) {
+                views = new java.util.ArrayList<View>(SAVED_PAD.keySet());
+                pads = new java.util.ArrayList<Integer>(SAVED_PAD.values());
+                SAVED_PAD.clear();
+            }
+            for (int i = 0; i < views.size(); i++) {
+                View v = views.get(i);
+                Integer pad = pads.get(i);
+                if (v == null || pad == null) continue;
+                v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), pad);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
