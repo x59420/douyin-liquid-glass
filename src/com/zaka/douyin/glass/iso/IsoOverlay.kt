@@ -207,6 +207,8 @@ class IsoOverlay private constructor(
             MiuixTheme(controller = controller) {
                 GlassSurface(
                     hostPainter = hostPainter,
+                    bandTop = bandTop,
+                    bandColor = bandColor,
                     image = backdropImage,
                     region = region,
                     tabsRect = tabsRect,
@@ -436,6 +438,8 @@ private fun LineTabIcon(index: Int, color: Color) {
 @Composable
 private fun GlassSurface(
     hostPainter: Consumer<android.graphics.Canvas>?,
+    bandTop: Int,
+    bandColor: Int,
     image: MutableState<ImageBitmap?>,
     region: Rect,
     tabsRect: Rect,
