@@ -124,6 +124,10 @@ final class DockController {
             new java.util.WeakHashMap<View, android.graphics.drawable.Drawable>();
 
     /** 已经把 window 背景设成透明过的页面（window 背景没有 getter，只能记标记）。 */
+    /** setDecorFitsSystemWindows(false) 是不是已经对这个 Activity 应用过。 */
+    private static final WeakHashMap<Activity, Boolean> DECOR_FITS_APPLIED =
+            new WeakHashMap<Activity, Boolean>();
+
     private static final WeakHashMap<Activity, Boolean> WINDOW_BG_CLEARED =
             new WeakHashMap<Activity, Boolean>();
     /** 手指按住视频的起点，用来判断「长按倍速」——抖音自己不一定走 performLongClick。 */
@@ -3144,6 +3148,19 @@ final class DockController {
             View decor = window.getDecorView();
             if (decor == null) return false;
             boolean changed = false;
+            // 让 decor 铺到系统栏后面：这是「整页一块」的正解。
+            // 每个 Activity 只设一次；设完之后抖音自己的导航条/状态栏区域就是内容本身，
+            // 不再是窗口底色（也就不需要把窗口背景设透明）。
+            if (android.os.Build.VERSION.SDK_INT >= 30 && !DECOR_FITS_APPLIED.containsKey(act)) {
+                try {
+                    window.setDecorFitsSystemWindows(false);
+                    DECOR_FITS_APPLIED.put(act, Boolean.TRUE);
+                    Dydock.log("窗口:setDecorFitsSystemWindows(false) 已应用");
+                } catch (Throwable t) {
+                    Dydock.warnOnce("decor-fits", "setDecorFitsSystemWindows 失败: " + t);
+                }
+            }
+
             // 窗口自身背景设成纯透明：不然那条带子透出来的是「窗口底色」（黑）
             try {
                 if (!(window.getDecorView().getBackground() instanceof android.graphics.drawable.ColorDrawable)
@@ -3194,10 +3211,10 @@ final class DockController {
             if (lastAt != null && nowMs - lastAt < 3000L) return false;
             CHROME_AT.put(act, nowMs);
 
+            // 用 setDecorFitsSystemWindows(false) 让窗口铺到系统栏后面（见下），
+            // 不再碰 systemUiVisibility 的 layout flag —— 两套混用会重复 inset。
             int flags = decor.getSystemUiVisibility();
             int next = flags;
-            next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-            next |= View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
 
 
             boolean hostHidesStatus = hostHidesStatusBar(act);
