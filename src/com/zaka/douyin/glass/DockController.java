@@ -2382,6 +2382,63 @@ final class DockController {
         }
     }
 
+
+    /** 被我们撑满过的页面容器：原 LayoutParams 记下来，退出/关闭时还原。 */
+    private static final java.util.WeakHashMap<View, ViewGroup.LayoutParams> EXPANDED_PAGES =
+            new java.util.WeakHashMap<View, ViewGroup.LayoutParams>();
+
+    /**
+     * 把页面容器撑到屏幕底（思路来自抖仙人的 ImmersiveUi）。
+     *
+     * 抖音的页面容器（RTMainFlippableViewPager / RTViewPager 这一类）高度往往只有
+     * 「屏高 - 底栏」或者带着 bottomMargin，画面之外的区域就露出页面底色（纯黑）。
+     * 这里把它的 LayoutParams.height 改成 MATCH_PARENT、bottomMargin 归零，
+     * 页面自己就会铺到底 —— 不拉伸视频、不变形、也不依赖宿主有没有色带图。
+     */
+    static void expandPageToBottom(View root, int screenH, int screenW) {
+        if (root == null || screenH <= 0 || screenW <= 0) return;
+        expandWalk(root, screenH, screenW, 0);
+    }
+
+    private static void expandWalk(View v, int screenH, int screenW, int depth) {
+        if (v == null || depth > 24) return;
+        try {
+            String cls = v.getClass().getSimpleName();
+            boolean pageLike = cls.contains("ViewPager") || cls.contains("FlippableViewPager");
+            if (pageLike && v.getWidth() >= screenW * 0.9f) {
+                ViewGroup.LayoutParams lp = v.getLayoutParams();
+                if (lp != null && lp.height != ViewGroup.LayoutParams.MATCH_PARENT) {
+                    if (!EXPANDED_PAGES.containsKey(v)) EXPANDED_PAGES.put(v, lp);
+                    ViewGroup.LayoutParams copy = new ViewGroup.LayoutParams(lp);
+                    copy.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                    if (copy instanceof ViewGroup.MarginLayoutParams) {
+                        ((ViewGroup.MarginLayoutParams) copy).bottomMargin = 0;
+                    }
+                    v.setLayoutParams(copy);
+                    Dydock.log("页面:容器撑到屏底 " + cls + "（原高=" + lp.height + "→MATCH_PARENT）");
+                }
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    expandWalk(g.getChildAt(i), screenH, screenW, depth + 1);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 还原所有被撑满的页面容器。 */
+    static void restorePages() {
+        for (java.util.Map.Entry<View, ViewGroup.LayoutParams> e : EXPANDED_PAGES.entrySet()) {
+            try {
+                if (e.getKey() != null) e.getKey().setLayoutParams(e.getValue());
+            } catch (Throwable ignored) {
+            }
+        }
+        EXPANDED_PAGES.clear();
+    }
+
     /** 系统是不是手势导航（Settings.Secure.navigation_mode == 2）。 */
     private static boolean isGestureNav(android.content.Context ctx) {
         try {
@@ -2561,6 +2618,12 @@ final class DockController {
             // 抖音自己的模糊色带：把它纵向铺满，填掉画面到不了的地方。
             try {
                 ColourBandLease.sync(dock.getRootView(), band);
+            } catch (Throwable ignored) {
+            }
+            // 页面容器撑到屏底（抖仙人那招）：页面自己铺满，不拉伸画面。
+            try {
+                View rootView = dock.getRootView();
+                expandPageToBottom(rootView, rootView.getHeight(), rootView.getWidth());
             } catch (Throwable ignored) {
             }
 
