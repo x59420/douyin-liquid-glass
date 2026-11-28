@@ -1263,6 +1263,11 @@ final class DockController {
                     if (now - lastVideoScanAt[0] >= 240L) {
                         lastVideoScanAt[0] = now;
                         boolean nowVideo = Shield.hasVideoSurface(content);
+                        if (nowVideo) {
+                            fillVideoToScreen(content);
+                        } else if (pageHasVideo[0]) {
+                            restoreVideoFill();
+                        }
                         if (nowVideo != pageHasVideo[0]) {
                             pageHasVideo[0] = nowVideo;
                             try {
@@ -2064,6 +2069,98 @@ final class DockController {
                 for (int i = 0; i < g.getChildCount(); i++) {
                     walkBigViews(g.getChildAt(i), rootH, depth + 1, budget);
                 }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 把视频层等比放大到铺满整屏（cover），让它一直画到屏幕最底。
+     *
+     * 背景：16:9 / 4:3 的视频放在 20:9 的屏幕上，抖音按「完整显示」缩放，
+     * 上下就会留黑边；底栏被我们藏起来之后那条黑边正好露在 Dock 底下，
+     * 看着就是「Dock 下面还有一条黑」。
+     *
+     * 做法：按 max(屏宽/视宽, 屏高/视高) 等比放大，再平移到屏幕中心 ——
+     * 画面永远铺满、不变形，多出来的部分被父容器裁掉（和「全屏观看」一个道理）。
+     * 原值记在 SAVED_VIDEO_SCALE 里，退出接管或页面切走时还原。
+     */
+    private static final java.util.WeakHashMap<View, float[]> SAVED_VIDEO_SCALE =
+            new java.util.WeakHashMap<View, float[]>();
+
+    static void fillVideoToScreen(View root) {
+        if (root == null) return;
+        try {
+            int w = root.getWidth();
+            int h = root.getHeight();
+            if (w <= 0 || h <= 0) return;
+            applyVideoFill(root, w, h, 0, new int[]{0});
+        } catch (Throwable t) {
+            Dydock.warnOnce("video-fill", "视频铺满失败: " + t);
+        }
+    }
+
+    private static void applyVideoFill(View v, int screenW, int screenH, int depth, int[] budget) {
+        if (v == null || depth > 32 || budget[0] >= 4) return;
+        try {
+            boolean isVideo = v instanceof android.view.SurfaceView
+                    || v instanceof android.view.TextureView;
+            if (isVideo && v.getWidth() > 0 && v.getHeight() > 0
+                    && (long) v.getWidth() * v.getHeight() >= (long) screenW * screenH * 20L / 100L) {
+                float k = Math.max(screenW / (float) v.getWidth(), screenH / (float) v.getHeight());
+                if (k > 1.001f) {
+                    synchronized (SAVED_VIDEO_SCALE) {
+                        if (!SAVED_VIDEO_SCALE.containsKey(v)) {
+                            SAVED_VIDEO_SCALE.put(v, new float[]{
+                                    v.getScaleX(), v.getScaleY(),
+                                    v.getTranslationX(), v.getTranslationY()});
+                        }
+                    }
+                    int[] loc = new int[2];
+                    v.getLocationInWindow(loc);
+                    float cx = loc[0] + v.getWidth() / 2f;
+                    float cy = loc[1] + v.getHeight() / 2f;
+                    v.setPivotX(v.getWidth() / 2f);
+                    v.setPivotY(v.getHeight() / 2f);
+                    v.setScaleX(k);
+                    v.setScaleY(k);
+                    v.setTranslationX(screenW / 2f - cx);
+                    v.setTranslationY(screenH / 2f - cy);
+                    budget[0]++;
+                    Dydock.log("视频:已等比放大 " + String.format(java.util.Locale.US, "%.2f", k)
+                            + " 倍铺满屏幕（" + v.getWidth() + "x" + v.getHeight()
+                            + " → " + screenW + "x" + screenH + "）");
+                }
+                return;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    applyVideoFill(g.getChildAt(i), screenW, screenH, depth + 1, budget);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 还原被放大的视频层。 */
+    static void restoreVideoFill() {
+        try {
+            java.util.ArrayList<View> views;
+            java.util.ArrayList<float[]> vals;
+            synchronized (SAVED_VIDEO_SCALE) {
+                views = new java.util.ArrayList<View>(SAVED_VIDEO_SCALE.keySet());
+                vals = new java.util.ArrayList<float[]>(SAVED_VIDEO_SCALE.values());
+                SAVED_VIDEO_SCALE.clear();
+            }
+            for (int i = 0; i < views.size(); i++) {
+                View v = views.get(i);
+                float[] s = vals.get(i);
+                if (v == null || s == null) continue;
+                v.setScaleX(s[0]);
+                v.setScaleY(s[1]);
+                v.setTranslationX(s[2]);
+                v.setTranslationY(s[3]);
             }
         } catch (Throwable ignored) {
         }
