@@ -568,7 +568,29 @@ private fun GlassSurface(
                     .clickable(onClick = onPlusClick),
                 contentAlignment = Alignment.Center
             ) {
-                Text("+", color = Color.White, fontSize = 34.sp, lineHeight = 34.sp)
+                // 加号用 Canvas 画两根圆头短线，不用 Text。
+                // 原来的 Text("+") 会跟着系统字体大小走（sp），字体一改，
+                // 字形在行框里的基线偏移就变了，看起来就不居中。
+                androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    val arm = minOf(w, h) * 0.19f
+                    val thickness = (minOf(w, h) * 0.105f).coerceAtLeast(2f)
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(w / 2f - arm / 2f, h / 2f),
+                        end = Offset(w / 2f + arm / 2f, h / 2f),
+                        strokeWidth = thickness,
+                        cap = StrokeCap.Round,
+                    )
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(w / 2f, h / 2f - arm / 2f),
+                        end = Offset(w / 2f, h / 2f + arm / 2f),
+                        strokeWidth = thickness,
+                        cap = StrokeCap.Round,
+                    )
+                }
             }
         }
     }
