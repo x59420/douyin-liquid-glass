@@ -2341,7 +2341,9 @@ final class DockController {
                 int[] loc = new int[2];
                 v.getLocationInWindow(loc);
                 int viewBottom = loc[1] + v.getHeight();
-                int gap = band.top - viewBottom;
+                // 补到屏幕最底，而不是只补到 Dock 上沿 ——
+                // Dock 下面那截（离底间距 + 系统手势条）否则还是没人画，就是那条通栏黑。
+                int gap = screenH - viewBottom;
                 if (gap <= 0 || gap > screenH * 0.12f) return;
                 float base;
                 synchronized (VIDEO_BASE_SCALE) {
