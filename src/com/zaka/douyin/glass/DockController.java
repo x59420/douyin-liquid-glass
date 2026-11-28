@@ -2707,12 +2707,17 @@ final class DockController {
                 ColourBandLease.sync(dock.getRootView(), band);
             } catch (Throwable ignored) {
             }
-            // 页面容器撑到屏底（抖仙人那招）：页面自己铺满，不拉伸画面。
+            // 底部布局接管（PDDLG 那套）：撑页面 + 清底栏预留 + 关毛玻璃带。
             try {
                 View rootView = dock.getRootView();
                 expandPageToBottom(rootView, rootView.getHeight(), rootView.getWidth());
-                // 接管视频层本身，让它铺到屏幕底（含手势条区域），不缩放、不变形。
                 takeOverVideo(rootView, rootView.getHeight());
+                // 1) 页面容器撑到父容器底
+                BottomAdapter.stretchToBottom(dock.getRootView(), 0);
+                // 2) 底栏的底部预留归零
+                BottomAdapter.dropNavReserve(dock);
+                // 3) 关掉宿主底部那条毛玻璃带
+                BottomAdapter.dropBottomFrost(dock.getRootView());
             } catch (Throwable ignored) {
             }
 
