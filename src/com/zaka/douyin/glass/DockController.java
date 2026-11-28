@@ -991,12 +991,6 @@ final class DockController {
         // 用 SelfMask 记下原值再归零：判定「原生底栏可不可见」时必须用原值，
         // 否则就是拿自己写的 0 去判宿主藏了底栏，玻璃会一帧收一帧放地抖。
         SelfMask.mask(dock);
-        markNativeChrome(dock);
-        try {
-            View shell0 = ancestorOfClass(dock, "MainBottomTabContainer", 6);
-            if (shell0 != null) markNativeChrome(shell0);
-        } catch (Throwable ignored) {
-        }
         Finder.hiddenByUs = new java.lang.ref.WeakReference<View>(dock);
         try {
             backdrop.capture();
@@ -2311,29 +2305,6 @@ final class DockController {
 
     /** 带子清理日志的计数（只打前 12 条，别把日志刷爆）。 */
     private static final int[] BAND_LOG = new int[]{0};
-
-    /** 宿主被我们盯上的底栏节点（含外壳），hook 里用它做白名单。 */
-    private static final java.util.WeakHashMap<View, Boolean> NATIVE_CHROME =
-            new java.util.WeakHashMap<View, Boolean>();
-
-    static boolean isNativeChrome(View v) {
-        if (v == null) return false;
-        synchronized (NATIVE_CHROME) {
-            if (NATIVE_CHROME.containsKey(v)) return true;
-        }
-        try {
-            return v.getClass().getName().contains("MainBottomTabContainer");
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    static void markNativeChrome(View v) {
-        if (v == null) return;
-        synchronized (NATIVE_CHROME) {
-            NATIVE_CHROME.put(v, Boolean.TRUE);
-        }
-    }
 
     /** 系统是不是手势导航（Settings.Secure.navigation_mode == 2）。 */
     private static boolean isGestureNav(android.content.Context ctx) {
