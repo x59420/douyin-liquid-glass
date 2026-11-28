@@ -125,6 +125,9 @@ final class DockController {
 
     /** 已经把 window 背景设成透明过的页面（window 背景没有 getter，只能记标记）。 */
     /** setDecorFitsSystemWindows(false) 是不是已经对这个 Activity 应用过。 */
+    /** 布局接管上次执行时间（post 节流，避免 preDraw 里反复 requestLayout）。 */
+    private static final long[] LAST_LAYOUT_TAKEOVER = new long[]{0L};
+
     private static final WeakHashMap<Activity, Boolean> DECOR_FITS_APPLIED =
             new WeakHashMap<Activity, Boolean>();
 
@@ -2708,16 +2711,29 @@ final class DockController {
             } catch (Throwable ignored) {
             }
             // 底部布局接管（PDDLG 那套）：撑页面 + 清底栏预留 + 关毛玻璃带。
+            //
+            // 关键：绝不能在这里直接 setLayoutParams —— 这段跑在 onPreDraw 里，
+            // 布局回调里再请求布局会形成无限循环，主线程被拖住，系统判「启动超时」直接杀进程。
+            // 统一 post 到消息队列，并且 1.5 秒冷却一次。
             try {
-                View rootView = dock.getRootView();
-                expandPageToBottom(rootView, rootView.getHeight(), rootView.getWidth());
-                takeOverVideo(rootView, rootView.getHeight());
-                // 1) 页面容器撑到父容器底
-                BottomAdapter.stretchToBottom(dock.getRootView(), 0);
-                // 2) 底栏的底部预留归零
-                BottomAdapter.dropNavReserve(dock);
-                // 3) 关掉宿主底部那条毛玻璃带
-                BottomAdapter.dropBottomFrost(dock.getRootView());
+                final View rootView = dock.getRootView();
+                final View dockView = dock;
+                long nowPost = android.os.SystemClock.uptimeMillis();
+                if (nowPost - LAST_LAYOUT_TAKEOVER[0] > 1500L) {
+                    LAST_LAYOUT_TAKEOVER[0] = nowPost;
+                    dock.post(new Runnable() {
+                        @Override public void run() {
+                            try {
+                                expandPageToBottom(rootView, rootView.getHeight(), rootView.getWidth());
+                                takeOverVideo(rootView, rootView.getHeight());
+                                BottomAdapter.stretchToBottom(rootView, 0);
+                                BottomAdapter.dropNavReserve(dockView);
+                                BottomAdapter.dropBottomFrost(rootView);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    });
+                }
             } catch (Throwable ignored) {
             }
 
