@@ -105,6 +105,10 @@ final class DockController {
     private static final WeakHashMap<Activity, Integer> ORIGINAL_STATUS_BAR =
             new WeakHashMap<Activity, Integer>();
     /** LAYOUT_FULLSCREEN 是不是我们自己加的：退出全屏时要主动收掉，不能赖在宿主头上。 */
+    /** applyWindowChrome 的节流表：整段 3 秒一次，避免和宿主来回改 flags。 */
+    private static final WeakHashMap<Activity, Long> CHROME_AT =
+            new java.util.WeakHashMap<Activity, Long>();
+
     private static final WeakHashMap<Activity, Boolean> OURS_LAYOUT_FULLSCREEN =
             new WeakHashMap<Activity, Boolean>();
     /**
@@ -3235,8 +3239,17 @@ final class DockController {
             // 宿主（抖音）在长按倍速、切页、进出全屏时会整段写回自己的 flags，
             // 我们又写回去 —— 每来回一次就是一次窗口 relayout，肉眼就是「画面跳一下」。
             // 现在只保留状态栏 / 导航栏的颜色与对比度，flags 交给宿主自己。
+            // 直播/视频画面要铺到手势条后面，必须有 LAYOUT_HIDE_NAVIGATION；
+            // 但这段整体只允许 3 秒跑一次，否则宿主一改我们就改回去 = 反复 relayout = 画面跳。
+            Long lastAt = CHROME_AT.get(act);
+            long nowMs = android.os.SystemClock.uptimeMillis();
+            if (lastAt != null && nowMs - lastAt < 3000L) return false;
+            CHROME_AT.put(act, nowMs);
+
             int flags = decor.getSystemUiVisibility();
             int next = flags;
+            next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+            next |= View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
 
 
             boolean hostHidesStatus = hostHidesStatusBar(act);
