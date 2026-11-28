@@ -60,7 +60,13 @@ final class Shield {
             View content = activity.findViewById(android.R.id.content);
             if (content == null) return false;
             Rect video = videoRect(content, 0);
-            if (video == null || video.isEmpty()) return false;
+            // 找不到视频层就沿用旧行为（宁可让长按生效，也不要整片区域失效）。
+            if (video == null || video.isEmpty()) return true;
+            // 抖音的长按倍速判定在「播放器区域」，不是严格等于 Surface 的矩形：
+            // 竖屏视频上下有黑边、直播画面居中时，Surface 比可长按区域小。
+            // 这里按视频层向外扩 12%，并且只要视频层存在（≥ 屏高 20%）就认。
+            int pad = (int) (video.height() * 0.12f);
+            video.inset(-pad, -pad);
             return video.contains((int) rawX, (int) rawY);
         } catch (Throwable t) {
             return false;
