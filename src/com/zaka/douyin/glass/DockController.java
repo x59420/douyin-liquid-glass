@@ -3081,17 +3081,6 @@ final class DockController {
             android.view.Window window = act.getWindow();
             View decor = window.getDecorView();
             if (decor == null) return false;
-            // 窗口自身背景设成纯透明：不然那条带子透出来的是「窗口底色」（黑）
-            try {
-                if (!(window.getDecorView().getBackground() instanceof android.graphics.drawable.ColorDrawable)
-                        || ((android.graphics.drawable.ColorDrawable) window.getDecorView().getBackground()).getColor() != android.graphics.Color.TRANSPARENT) {
-                    window.setBackgroundDrawable(
-                            new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
-                    changed = true;
-                }
-            } catch (Throwable ignored) {
-            }
-
             int flags = decor.getSystemUiVisibility();
             if ((flags & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0) return true;
             if ((window.getAttributes().flags
@@ -3160,6 +3149,18 @@ final class DockController {
             View decor = window.getDecorView();
             if (decor == null) return false;
             boolean changed = false;
+            // 窗口自身背景设成纯透明：不然那条带子透出来的是「窗口底色」（黑）
+            try {
+                if (!(window.getDecorView().getBackground() instanceof android.graphics.drawable.ColorDrawable)
+                        || ((android.graphics.drawable.ColorDrawable) window.getDecorView().getBackground()).getColor() != android.graphics.Color.TRANSPARENT) {
+                    window.setBackgroundDrawable(
+                            new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+                    changed = true;
+                }
+            } catch (Throwable ignored) {
+            }
+
+
 
             // setStatusBarColor / setNavigationBarColor 在 Android 5+ 有个前提：
             // 窗口必须带 FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS，否则系统直接忽略这两个调用 ——
