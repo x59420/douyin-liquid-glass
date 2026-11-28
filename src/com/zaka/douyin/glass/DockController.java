@@ -841,7 +841,7 @@ final class DockController {
         // 一进门就被判成不能用实时图层，结果列表页也永远走位图那条老路。
         // 实时图层对列表页是质变（真画面、跟手），对视频页至少不比现在的黑底更差
         //（视频像素本来就 PixelCopy 抓不到 code=1）。
-        final boolean livePaint = false;   // 回退：背景仍由宿主位图采样提供，不走实时图层
+        final boolean livePaint = android.os.Build.VERSION.SDK_INT >= 31;   // 保留：玻璃实时映射宿主画面
         final Consumer<android.graphics.Canvas> hostPainter;
         if (livePaint) {
             hostPainter = new Consumer<android.graphics.Canvas>() {
