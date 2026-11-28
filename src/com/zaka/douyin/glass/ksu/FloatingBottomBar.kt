@@ -397,8 +397,11 @@ fun FloatingBottomBar(
                                 vibrancy()
                                 blur(4.dp.toPx(), 4.dp.toPx())
                                 lens(
-                                    refractionHeight = 24.dp.toPx(),
-                                    refractionAmount = 24.dp.toPx(),
+                                    // 与 wxglass 对齐：13dp / 11dp。
+                                    // 原来是 24/24，折射范围和弯度都是这边的两倍多，
+                                    // 玻璃边缘被勾得很明显，看着厚、也放大了「分割感」。
+                                    refractionHeight = 13.dp.toPx(),
+                                    refractionAmount = 11.dp.toPx(),
                                 )
                             },
                             highlight = { baseHighlight.value.copy(alpha = 0.75f) },
@@ -451,8 +454,11 @@ fun FloatingBottomBar(
                                 vibrancy()
                                 blur(4.dp.toPx(), 4.dp.toPx())
                                 lens(
-                                    refractionHeight = 24.dp.toPx(),
-                                    refractionAmount = 24.dp.toPx(),
+                                    // 与 wxglass 对齐：13dp / 11dp。
+                                    // 原来是 24/24，折射范围和弯度都是这边的两倍多，
+                                    // 玻璃边缘被勾得很明显，看着厚、也放大了「分割感」。
+                                    refractionHeight = 13.dp.toPx(),
+                                    refractionAmount = 11.dp.toPx(),
                                 )
                             },
                             onDrawSurface = { drawRect(containerColor) },
