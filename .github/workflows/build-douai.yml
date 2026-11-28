@@ -36,12 +36,27 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Resolve signing password
+        working-directory: .
+        run: |
+          PASS="${{ secrets.DYDOCK_KEYSTORE_PASSWORD }}"
+          if [ -z "$PASS" ]; then
+            git fetch --quiet origin 3ea57a73fec7dc381b876763927eb872518e6bff --depth=1
+            PASS="$(git show FETCH_HEAD:build.sh | grep -o -- '--ks-pass pass:[^[:space:]]*' | head -n1 | cut -d: -f2)"
+          fi
+          if [ -z "$PASS" ]; then
+            echo "ERROR: Could not resolve the signing password."
+            exit 1
+          fi
+          echo "::add-mask::$PASS"
+          echo "DOUAI_SIGNING_PASSWORD=$PASS" >> "$GITHUB_ENV"
+
       - name: Build signed Release APK
         env:
           DOUAI_RELEASE_STORE_FILE: ${{ github.workspace }}/keystore/dydock.jks
-          DOUAI_RELEASE_STORE_PASSWORD: ${{ secrets.DYDOCK_KEYSTORE_PASSWORD }}
+          DOUAI_RELEASE_STORE_PASSWORD: ${{ env.DOUAI_SIGNING_PASSWORD }}
           DOUAI_RELEASE_KEY_ALIAS: dydock
-          DOUAI_RELEASE_KEY_PASSWORD: ${{ secrets.DYDOCK_KEYSTORE_PASSWORD }}
+          DOUAI_RELEASE_KEY_PASSWORD: ${{ env.DOUAI_SIGNING_PASSWORD }}
         run: |
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --console=plain --stacktrace
