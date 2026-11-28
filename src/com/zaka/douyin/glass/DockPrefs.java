@@ -35,7 +35,6 @@ final class DockPrefs {
     private static final String KEY_MENU_TRANSPARENT = "menu_transparent";
     /** 抓不到视频画面时，用界面主色垫底（不开就是原来的纯黑玻璃）。 */
     private static final String KEY_VIDEO_TINT = "video_tint_fallback";
-    private static final String KEY_CAPTURE = "capture_video";
     /** 配置版本号：模块里的设置页写盘时打一个时间戳，宿主这边比它新才覆盖。 */
     private static final String KEY_REV = "settings_rev";
 
@@ -184,14 +183,6 @@ final class DockPrefs {
         writeBool(context, KEY_VIDEO_TINT, value);
     }
 
-    /** 视频页真实背景：需要录屏授权。默认关。 */
-    static boolean captureVideo(Context context) {
-        return readBool(context, KEY_CAPTURE, false);
-    }
-
-    static void setCaptureVideo(Context context, boolean value) {
-        writeBool(context, KEY_CAPTURE, value);
-    }
 
     static void setLogEnabled(Context context, boolean value) {
         writeBool(context, KEY_LOG, value);
@@ -264,7 +255,6 @@ final class DockPrefs {
             editor.putBoolean(KEY_LOG, remote.getBoolean(KEY_LOG, true));
             editor.putInt(KEY_THEME_MODE, remote.getInt(KEY_THEME_MODE, 0));
             editor.putInt(KEY_GLASS_ALPHA, remote.getInt(KEY_GLASS_ALPHA, 100));
-            editor.putBoolean(KEY_CAPTURE, remote.getBoolean(KEY_CAPTURE, false));
             editor.putBoolean(KEY_HIDE_BG, remote.getBoolean(KEY_HIDE_BG, false));
             editor.putBoolean(KEY_BOTTOM_TRANSPARENT,
                     remote.getBoolean(KEY_BOTTOM_TRANSPARENT, true));

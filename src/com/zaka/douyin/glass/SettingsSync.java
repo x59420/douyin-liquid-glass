@@ -124,12 +124,6 @@ public final class SettingsSync {
                     intent.getBooleanExtra("menu_transparent", true));
             changed = true;
         }
-        if (intent.hasExtra("capture_video")) {
-            boolean want = intent.getBooleanExtra("capture_video", false);
-            DockPrefs.setCaptureVideo(context, want);
-            if (want) VideoCapture.resetAttempts();
-            changed = true;
-        }
         if (intent.hasExtra("video_tint")) {
             DockPrefs.setVideoTintFallback(context,
                     intent.getBooleanExtra("video_tint", true));
@@ -145,8 +139,7 @@ public final class SettingsSync {
     /** 设置界面每改一项就调一次：广播出去 + （兜底）把 prefs 文件设成可读。 */
     static void push(Context context, boolean enabled, boolean showPlus, boolean showLabels,
                      boolean verboseLog, int height, int tabWidth, int sideMargin, int bottomGap,
-                     boolean bottomTransparent, boolean menuTransparent, boolean videoTint,
-                     boolean captureVideo) {
+                     boolean bottomTransparent, boolean menuTransparent, boolean videoTint) {
         if (context == null) return;
         try {
             Intent intent = new Intent(ACTION);
@@ -162,7 +155,6 @@ public final class SettingsSync {
             intent.putExtra("bottom_transparent", bottomTransparent);
             intent.putExtra("menu_transparent", menuTransparent);
             intent.putExtra("video_tint", videoTint);
-            intent.putExtra("capture_video", captureVideo);
             context.sendBroadcast(intent);
         } catch (Throwable t) {
             Dydock.warnOnce("settings-push", "发送设置广播失败: " + t);
