@@ -1160,9 +1160,6 @@ final class DockController {
                             Dydock.log("底栏:原生底栏又变回可见，重新压成透明");
                         }
                     }
-                        } catch (Throwable ignored) {
-                        }
-                    }
                     if (now - lastSweepAt[0] >= 300L) {
                         lastSweepAt[0] = now;
                         int swept = maskAllTabBars(decor);
