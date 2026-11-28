@@ -915,6 +915,38 @@ final class DockController {
         dumpBigViews(content);
 
         final View[] dockRef = new View[]{dock};
+        // 抖音的底栏会在每一次 layout / 切页之后把自己的背景和 alpha 写回来，
+        // 轮询（1.5s / 100ms）追不上，肉眼看到的就是「原生底栏还在」。
+        // 这里挂一个「每帧绘制前」的把关：底栏、它的外壳、给它让位的几层祖先，
+        // 只要背景或 alpha 又被写回来，就在这一帧画之前压掉。
+        try {
+            decor.getViewTreeObserver().addOnPreDrawListener(new android.view.ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    try {
+                        View d0 = dockRef[0];
+                        if (d0 != null) {
+                            if (d0.getAlpha() > 0.01f) SelfMask.mask(d0);
+                            View shell0 = ancestorOfClass(d0, "MainBottomTabContainer", 6);
+                            if (shell0 != null && shell0.getAlpha() > 0.01f) SelfMask.mask(shell0);
+                            // 背景：底栏自己 + 上面几层壳，一层都不许留
+                            View v = d0;
+                            for (int i = 0; i < 6 && v != null; i++) {
+                                if (v.getBackground() != null) saveAndClearBackground(v);
+                                android.view.ViewParent parent = v.getParent();
+                                v = parent instanceof View ? (View) parent : null;
+                            }
+                        }
+                    } catch (Throwable ignored) {
+                    }
+                    return true;
+                }
+            });
+            Dydock.log("底栏:已挂上每帧把关（背景 + alpha）");
+        } catch (Throwable t) {
+            Dydock.warnOnce("predraw", "挂每帧把关失败: " + t);
+        }
+
         final boolean[] live = new boolean[]{true};
         final long[] lastStamp = new long[]{Long.MIN_VALUE};
         synchronized (DOCKS) {
