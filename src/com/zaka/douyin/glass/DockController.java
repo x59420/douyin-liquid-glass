@@ -2344,6 +2344,9 @@ final class DockController {
                 // 补到屏幕最底，而不是只补到 Dock 上沿 ——
                 // Dock 下面那截（离底间距 + 系统手势条）否则还是没人画，就是那条通栏黑。
                 int gap = screenH - viewBottom;
+                Dydock.log("视频:层 " + v.getWidth() + "x" + v.getHeight()
+                        + " top=" + loc[1] + " bottom=" + viewBottom
+                        + " 屏高=" + screenH + " 缺口=" + gap);
                 if (gap <= 0 || gap > screenH * 0.12f) return;
                 float base;
                 synchronized (VIDEO_BASE_SCALE) {
