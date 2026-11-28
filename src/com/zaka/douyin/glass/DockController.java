@@ -2607,21 +2607,11 @@ final class DockController {
             if (act == null || act.getWindow() == null) return false;
             android.view.Window window = act.getWindow();
 
-            View root = dock.getRootView();
-            if (root != null && root.getBackground() != null) {
-                root.setBackground(null);
-                changed = true;
-            }
-            View decor = window.getDecorView();
-            if (decor != null && decor.getBackground() != null) {
-                decor.setBackground(null);
-                changed = true;
-            }
-            View content = act.findViewById(android.R.id.content);
-            if (content != null && content.getBackground() != null) {
-                content.setBackground(null);
-                changed = true;
-            }
+            // 只清 window 自己的背景，root / decor / content 一律不碰。
+            //
+            // 抖音那层「画面往底栏过渡」的背景就挂在页面这棵树上，清掉之后
+            // 底下没有东西可透，露出来必然是纯黑（翻页中途那条黑带也是这么来的）。
+            // window 背景仍然设透明 —— 系统导航条那一条要靠它才透得出来。
             // window 背景没有 getter，只能用标记保证只设一次。
             if (!WINDOW_BG_CLEARED.containsKey(act)) {
                 window.setBackgroundDrawable(
