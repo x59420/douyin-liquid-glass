@@ -125,6 +125,10 @@ final class DockController {
 
     /** 已经把 window 背景设成透明过的页面（window 背景没有 getter，只能记标记）。 */
     /** setDecorFitsSystemWindows(false) 是不是已经对这个 Activity 应用过。 */
+    /** 显隐迟滞：上一次状态与改变时间，防止在阈值附近来回抖（用户看到的就是闪）。 */
+    private static final boolean[] VISIBLE_STATE = new boolean[]{true};
+    private static final long[] LAST_VIS_CHANGE = new long[]{0L};
+
     /** 布局接管上次执行时间（post 节流，避免 preDraw 里反复 requestLayout）。 */
     private static final long[] LAST_LAYOUT_TAKEOVER = new long[]{0L};
 
@@ -1322,7 +1326,16 @@ final class DockController {
                     // 为什么需要这条：按住不动时系统不再发 MOVE，靠触摸超时判断「松手」会把
                     // 按住看十几秒的场景误判成结束；而抬手事件也可能被宿主吞掉。
                     // 锁存超过 1.2 秒、原生底栏又连续可见 6 帧，才认为倍速真的结束了。
-                    if (longPress && nativeVisible && nativeVisibleTicks[0] >= 6) {
+                    // 手指还在屏幕上（500ms 内有触摸事件）就不许释放长按态。
+                    // 以前只看「锁存超过 1.2 秒 + 原生底栏可见」，于是一边按住一边被释放、
+                    // 下一帧触摸又把它设回来，Dock 就成了「隐藏-显示-隐藏」地闪。
+                    boolean fingerDown;
+                    synchronized (PRESS_ALIVE) {
+                        long[] alive = PRESS_ALIVE.get(act);
+                        fingerDown = alive != null
+                                && SystemClock.uptimeMillis() - alive[0] < 500L;
+                    }
+                    if (longPress && !fingerDown && nativeVisible && nativeVisibleTicks[0] >= 6) {
                         long[] latched;
                         synchronized (LONG_PRESS_LATCH) { latched = LONG_PRESS_LATCH.get(act); }
                         if (latched != null && SystemClock.uptimeMillis() - latched[0] > 1_200L) {
@@ -1354,7 +1367,20 @@ final class DockController {
                             Dydock.log("底栏恢复显示");
                         }
                     }
-                    boolean show = !hidden && revealTicks[0] >= FAST_REVEAL_TICKS;
+                    boolean wantShow = !hidden && revealTicks[0] >= FAST_REVEAL_TICKS;
+                    long nowVis = SystemClock.uptimeMillis();
+                    boolean show;
+                    if (wantShow != VISIBLE_STATE[0]
+                            && nowVis - LAST_VIS_CHANGE[0] < 220L) {
+                        // 还没稳定，保持上一状态（迟滞），避免阈值附近来回抖。
+                        show = VISIBLE_STATE[0];
+                    } else {
+                        show = wantShow;
+                        if (show != VISIBLE_STATE[0]) {
+                            VISIBLE_STATE[0] = show;
+                            LAST_VIS_CHANGE[0] = nowVis;
+                        }
+                    }
 
                     // 位置只在「尺寸真的变了」的时候重算（旋转、导航模式变化、底栏重建）。
                     // 不跟位置走：抖音底栏滚动时会上下位移，跟着它算玻璃就会一路漂。
