@@ -912,6 +912,7 @@ final class DockController {
         applyGeometry(iso, backdrop, dock, initialTabs.size());
         refreshTabs(iso, initialTabs, plus);
         dumpLayoutChain(act, dock, content);
+        dumpBigViews(content);
 
         final View[] dockRef = new View[]{dock};
         final boolean[] live = new boolean[]{true};
@@ -1784,6 +1785,42 @@ final class DockController {
      * 玻璃层的位置全在宿主这边算：四个 tab 的胶囊 + 右边「＋」两块。
      * 参数沿用 KernelSU FloatingBottomBar：28dp 安全边距、8dp 间距、64dp 高、单格 76dp。
      */
+    /** 把「占了半屏以上」的 View 全部打出来：找到底边停在 2613 的那个容器，才知道该改谁。 */
+    static void dumpBigViews(View root) {
+        try {
+            if (root == null) return;
+            int rootH = root.getHeight();
+            if (rootH <= 0) return;
+            walkBigViews(root, rootH, 0, new int[]{0});
+        } catch (Throwable t) {
+            Dydock.warnOnce("big-view-dump", "大视图诊断失败: " + t);
+        }
+    }
+
+    private static void walkBigViews(View v, int rootH, int depth, int[] budget) {
+        if (v == null || depth > 16 || budget[0] >= 24) return;
+        try {
+            if (v.getVisibility() != View.VISIBLE) return;
+            if (v.getHeight() >= rootH * 0.30f) {
+                int[] loc = new int[2];
+                v.getLocationInWindow(loc);
+                Dydock.log("大视图:" + v.getClass().getName() + " id=" + idName(v)
+                        + " " + v.getWidth() + "x" + v.getHeight()
+                        + " top=" + loc[1] + " bottom=" + (loc[1] + v.getHeight())
+                        + " padB=" + v.getPaddingBottom()
+                        + " lp=" + describeLp(v));
+                budget[0]++;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    walkBigViews(g.getChildAt(i), rootH, depth + 1, budget);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 一次性把「内容 / 底栏 / 底栏祖先链」的布局参数打进日志，用来判断该动谁。 */
     static void dumpLayoutChain(Activity act, View dock, View content) {
         try {
