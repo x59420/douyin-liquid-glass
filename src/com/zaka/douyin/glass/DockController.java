@@ -1121,6 +1121,19 @@ final class DockController {
                             Dydock.log("底栏:原生底栏又变回可见，重新压成透明");
                         }
                     }
+                    // 还有一种情况：抖音有第二个「底栏外壳」容器（MainBottomTabContainer），
+                    // 它自己还带着一层背景和一份图标副本 —— 只压里面那个 LinearLayout 是不够的，
+                    // 用户看到的「底下还有一排」就是它。
+                    if (d != null) {
+                        View shell = ancestorOfClass(d, "MainBottomTabContainer", 6);
+                        if (shell != null && shell.getAlpha() > 0.01f) {
+                            SelfMask.mask(shell);
+                            if (now - lastRemaskAt[0] >= 3000L) {
+                                lastRemaskAt[0] = now;
+                                Dydock.log("底栏:外壳容器 MainBottomTabContainer 也压成透明");
+                            }
+                        }
+                    }
                     // 「消息」这类页面是切过去之后才创建的，安装那一刻还不在树上，
                     // 所以底部预留要周期性复查：命中就清、被宿主改回去就再清一次。
                     if (bandRect[0] != null && now - lastReserveAt[0] >= 1500L) {
@@ -1979,6 +1992,20 @@ final class DockController {
         } catch (Throwable t) {
             Dydock.warnOnce("layout-dump", "布局链诊断失败: " + t);
         }
+    }
+
+    /** 沿父链找类名包含某段的祖先（抖音的底栏外壳是 MainBottomTabContainer）。 */
+    private static View ancestorOfClass(View v, String needle, int maxDepth) {
+        View cur = v;
+        for (int i = 0; i < maxDepth && cur != null; i++) {
+            try {
+                if (cur.getClass().getName().contains(needle)) return cur;
+            } catch (Throwable ignored) {
+            }
+            android.view.ViewParent parent = cur.getParent();
+            cur = parent instanceof View ? (View) parent : null;
+        }
+        return null;
     }
 
     private static View findList(View v, int depth) {
