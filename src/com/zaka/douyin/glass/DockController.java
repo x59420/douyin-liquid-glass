@@ -1263,11 +1263,6 @@ final class DockController {
                     if (now - lastVideoScanAt[0] >= 240L) {
                         lastVideoScanAt[0] = now;
                         boolean nowVideo = Shield.hasVideoSurface(content);
-                        if (nowVideo) {
-                            fillVideoToScreen(content);
-                        } else if (pageHasVideo[0]) {
-                            restoreVideoFill();
-                        }
                         if (nowVideo != pageHasVideo[0]) {
                             pageHasVideo[0] = nowVideo;
                             try {
@@ -2259,6 +2254,17 @@ final class DockController {
         }
     }
 
+    /** 系统是不是手势导航（Settings.Secure.navigation_mode == 2）。 */
+    private static boolean isGestureNav(android.content.Context ctx) {
+        try {
+            int mode = android.provider.Settings.Secure.getInt(
+                    ctx.getContentResolver(), "navigation_mode", -1);
+            return mode == 2;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** 沿父链找类名包含某段的祖先（抖音的底栏外壳是 MainBottomTabContainer）。 */
     private static View ancestorOfClass(View v, String needle, int maxDepth) {
         View cur = v;
@@ -2394,7 +2400,10 @@ final class DockController {
                 // 只要还按导航条高度让位，Dock 底下就会留出一条 60 多像素的底色 ——
                 // 用户看到的就是「下面还有一栏」。三键导航（导航条很高）仍然让开，
                 // 否则会把返回键盖住。
-                int navReserve = navBottom > 100 ? navBottom : 0;
+                // 手势导航（navigation_mode=2）下 Dock 贴屏幕最底；三键导航才让开。
+                // 之前用 navBottom>100 猜，MIUI 手势导航的 inset 也可能上百，
+                // 结果 Dock 一直悬在上面，底下那条底色就永远消不掉。
+                int navReserve = isGestureNav(dock.getContext()) ? 0 : navBottom;
                 int limit = overlayHeight - navReserve
                         - (int) (2f * density) - pill;
                 if (top > limit) top = limit;
