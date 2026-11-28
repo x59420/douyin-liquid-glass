@@ -990,6 +990,8 @@ final class DockController {
         final int[] diagDumps = new int[]{0};
         final long[] lastReserveAt = new long[]{0L};
         final long[] lastRemaskAt = new long[]{0L};
+        final long[] lastSweepAt = new long[]{0L};
+        final long[] lastSweepLogAt = new long[]{0L};
         final long[] diagAt = new long[]{SystemClock.uptimeMillis()};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
@@ -1151,6 +1153,14 @@ final class DockController {
                         if (now - lastRemaskAt[0] >= 3000L) {
                             lastRemaskAt[0] = now;
                             Dydock.log("底栏:原生底栏又变回可见，重新压成透明");
+                        }
+                    }
+                    if (now - lastSweepAt[0] >= 300L) {
+                        lastSweepAt[0] = now;
+                        int swept = maskAllTabBars(decor);
+                        if (swept > 0 && now - lastSweepLogAt[0] >= 3000L) {
+                            lastSweepLogAt[0] = now;
+                            Dydock.log("底栏:全量压掉 " + swept + " 个底栏容器实例");
                         }
                     }
                     // 还有一种情况：抖音有第二个「底栏外壳」容器（MainBottomTabContainer），
@@ -2087,6 +2097,44 @@ final class DockController {
         } catch (Throwable t) {
             Dydock.warnOnce("layout-dump", "布局链诊断失败: " + t);
         }
+    }
+
+    /**
+     * 把树上**所有**像底栏的容器都压掉。
+     *
+     * 首页/朋友页之所以还能看到原生底栏：抖音在这两个 tab 上用的是另一份底栏实例
+     * （同一个类 MainBottomTabContainer，但不是我们接管的那一个），只压手上的那个节点没用。
+     * 这里按类名/资源名把所有实例都找出来，alpha 归零 + 背景清掉。
+     */
+    static int maskAllTabBars(View root) {
+        if (root == null) return 0;
+        return maskAllTabBars(root, 0, new int[]{0});
+    }
+
+    private static int maskAllTabBars(View v, int depth, int[] count) {
+        if (v == null || depth > 16 || count[0] >= 6) return 0;
+        int n = 0;
+        try {
+            String cls = v.getClass().getName();
+            String id = idName(v);
+            boolean looks = cls.contains("MainBottomTabContainer")
+                    || "css".equals(id) || "cta".equals(id);
+            if (looks) {
+                if (v.getAlpha() > 0.01f) SelfMask.mask(v);
+                if (v.getBackground() != null) saveAndClearBackground(v);
+                count[0]++;
+                n++;
+                return n;   // 命中就不再往下钻，避免把里面我们自己的玻璃也压了
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    n += maskAllTabBars(g.getChildAt(i), depth + 1, count);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return n;
     }
 
     /** 沿父链找类名包含某段的祖先（抖音的底栏外壳是 MainBottomTabContainer）。 */
