@@ -2384,8 +2384,9 @@ final class DockController {
 
 
     /** 被我们撑满过的页面容器：原 LayoutParams 记下来，退出/关闭时还原。 */
-    private static final java.util.WeakHashMap<View, ViewGroup.LayoutParams> EXPANDED_PAGES =
-            new java.util.WeakHashMap<View, ViewGroup.LayoutParams>();
+    /** 原值：{height, topMargin, bottomMargin}。原地改 LayoutParams，绝不换对象类型。 */
+    private static final java.util.WeakHashMap<View, int[]> EXPANDED_PAGES =
+            new java.util.WeakHashMap<View, int[]>();
 
     /**
      * 把页面容器撑到屏幕底（思路来自抖仙人的 ImmersiveUi）。
@@ -2408,14 +2409,21 @@ final class DockController {
             if (pageLike && v.getWidth() >= screenW * 0.9f) {
                 ViewGroup.LayoutParams lp = v.getLayoutParams();
                 if (lp != null && lp.height != ViewGroup.LayoutParams.MATCH_PARENT) {
-                    if (!EXPANDED_PAGES.containsKey(v)) EXPANDED_PAGES.put(v, lp);
-                    ViewGroup.LayoutParams copy = new ViewGroup.LayoutParams(lp);
-                    copy.height = ViewGroup.LayoutParams.MATCH_PARENT;
-                    if (copy instanceof ViewGroup.MarginLayoutParams) {
-                        ((ViewGroup.MarginLayoutParams) copy).bottomMargin = 0;
+                    // 原地改，不换对象！换了类型会让宿主强转 MarginLayoutParams 时 ClassCastException。
+                    int topMargin = 0, bottomMargin = 0;
+                    if (lp instanceof ViewGroup.MarginLayoutParams) {
+                        topMargin = ((ViewGroup.MarginLayoutParams) lp).topMargin;
+                        bottomMargin = ((ViewGroup.MarginLayoutParams) lp).bottomMargin;
                     }
-                    v.setLayoutParams(copy);
-                    Dydock.log("页面:容器撑到屏底 " + cls + "（原高=" + lp.height + "→MATCH_PARENT）");
+                    if (!EXPANDED_PAGES.containsKey(v)) {
+                        EXPANDED_PAGES.put(v, new int[]{lp.height, topMargin, bottomMargin});
+                    }
+                    lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                    if (lp instanceof ViewGroup.MarginLayoutParams) {
+                        ((ViewGroup.MarginLayoutParams) lp).bottomMargin = 0;
+                    }
+                    v.setLayoutParams(lp);
+                    Dydock.log("页面:容器撑到屏底 " + cls + "（原高=" + lp.height + "）");
                 }
             }
             if (v instanceof ViewGroup) {
@@ -2430,9 +2438,19 @@ final class DockController {
 
     /** 还原所有被撑满的页面容器。 */
     static void restorePages() {
-        for (java.util.Map.Entry<View, ViewGroup.LayoutParams> e : EXPANDED_PAGES.entrySet()) {
+        for (java.util.Map.Entry<View, int[]> e : EXPANDED_PAGES.entrySet()) {
             try {
-                if (e.getKey() != null) e.getKey().setLayoutParams(e.getValue());
+                View v = e.getKey();
+                if (v == null) continue;
+                int[] saved = e.getValue();
+                android.view.ViewGroup.LayoutParams lp = v.getLayoutParams();
+                if (lp == null) continue;
+                lp.height = saved[0];
+                if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                    ((android.view.ViewGroup.MarginLayoutParams) lp).topMargin = saved[1];
+                    ((android.view.ViewGroup.MarginLayoutParams) lp).bottomMargin = saved[2];
+                }
+                v.setLayoutParams(lp);
             } catch (Throwable ignored) {
             }
         }
