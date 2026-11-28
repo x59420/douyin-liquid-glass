@@ -2584,10 +2584,7 @@ final class DockController {
         //    视频就透不到底栏这一条来 —— 这就是「底部背景怎么都透明不了」的硬原因。
         // 无条件清：用户要的是「底栏那条带子纯透明」，不管有没有视频，
         // 窗口 / 内容树只要留一层不透明底，那条带子就永远是黑的。
-        // 不再清窗口 / decor / content 的背景。
-        // 抖音的「画面往底栏过渡」那层就是画在这里的，清掉之后底下没有东西，
-        // 露出来必然是纯黑（翻页中途那条 210px 的黑带也是这么来的）。
-        // if (clearWindowBackdrop(dock)) cleared++;
+        if (clearWindowBackdrop(dock)) cleared++;
 
         if (cleared > 0) {
             Dydock.log("底栏:已去掉 " + cleared + " 层原生底栏 / 边缘遮罩的背景");
