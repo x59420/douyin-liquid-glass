@@ -1262,7 +1262,14 @@ final class DockController {
                     // 所以「按住就收」仍然是实时的。
                     if (now - lastVideoScanAt[0] >= 240L) {
                         lastVideoScanAt[0] = now;
-                        pageHasVideo[0] = Shield.hasVideoSurface(content);
+                        boolean nowVideo = Shield.hasVideoSurface(content);
+                        if (nowVideo != pageHasVideo[0]) {
+                            pageHasVideo[0] = nowVideo;
+                            try {
+                                applyGeometry(iso, backdrop, dockRef[0], tabTargets[0].size());
+                            } catch (Throwable ignored) {
+                            }
+                        }
                     }
                     boolean longPress = isHostLongPressActive(act, pageHasVideo[0]);
                     if (now - lastClearScanAt[0] >= 80L) {
@@ -2233,7 +2240,13 @@ final class DockController {
             // 外观参数（玻璃不透明度 / 隐藏玻璃背景 / 深浅模式）跟着几何一起推下去：
             // 默认值就等于以前那套，不改外观；改了设置这里也会立刻生效。
             android.content.Context glassCtx = dock.getContext();
-            iso.setAppearance(DockPrefs.glassAlpha(glassCtx),
+            int wantedAlpha = DockPrefs.glassAlpha(glassCtx);
+            // 视频页拿不到视频像素（PixelCopy code=1），玻璃里没有可折射的画面。
+            // 这时候如果还按 100% 不透明度画材质，就是一块盖在视频上的深色板 ——
+            // 用户看到的「黑底」就是它。视频页自动压到 40%，让视频直接透出来。
+            boolean videoPage = Shield.hasVideoSurface(dock.getRootView());
+            int effectiveAlpha = videoPage ? Math.min(wantedAlpha, 40) : wantedAlpha;
+            iso.setAppearance(effectiveAlpha,
                     DockPrefs.hideGlassBackground(glassCtx), DockPrefs.themeMode(glassCtx));
             float density = dock.getResources().getDisplayMetrics().density;
             int count = Math.max(1, tabsCount);
