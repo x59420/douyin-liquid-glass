@@ -955,6 +955,8 @@ final class DockController {
         }
 
         final int[] expandedTicks = new int[]{0};
+        final int[] diagDumps = new int[]{0};
+        final long[] diagAt = new long[]{SystemClock.uptimeMillis()};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
         final long[] lastClearScanAt = new long[]{0L};
@@ -1106,6 +1108,15 @@ final class DockController {
 
                     View d = dockRef[0];
                     long now = SystemClock.uptimeMillis();
+                    // 临时诊断：每 15 秒打一次当前页面的大视图，共 6 次。
+                    // 目的是抓到「消息」这类列表页里 bottom 停在底栏上沿的那个容器。
+                    if (diagDumps[0] < 6 && now - diagAt[0] >= 15000L) {
+                        diagAt[0] = now;
+                        diagDumps[0]++;
+                        Dydock.log("大视图:=== dump " + diagDumps[0] + " 视频层="
+                                + Shield.hasVideoSurface(content));
+                        dumpBigViews(content);
+                    }
                     if (d == null || !d.isAttachedToWindow()) {
                         // 原生节点不可用时才重新搜索：底栏刚被重建时要在 150ms 内接上，
                         // 否则「接不上 → 判成不在主页面 → 收起」会变成一次闪烁。
