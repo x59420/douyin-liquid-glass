@@ -2347,7 +2347,7 @@ final class DockController {
                 Dydock.log("视频:层 " + v.getWidth() + "x" + v.getHeight()
                         + " top=" + loc[1] + " bottom=" + viewBottom
                         + " 屏高=" + screenH + " 缺口=" + gap);
-                if (gap <= 0 || gap > screenH * 0.12f) return;
+                if (gap <= 0) return;
                 float base;
                 synchronized (VIDEO_BASE_SCALE) {
                     Float saved = VIDEO_BASE_SCALE.get(v);
@@ -2357,12 +2357,18 @@ final class DockController {
                     }
                     base = saved;
                 }
+                // 等比放大铺满（cover）：纵向要补多少就整体放大多少，横向多出来的部分被父容器裁掉。
+                // 这样画面不变形，代价是左右被裁（横屏视频裁得多）。
                 float scale = base * (v.getHeight() + gap) / (float) v.getHeight();
                 if (Math.abs(v.getScaleY() - scale) > 0.002f) {
+                    int[] vloc = new int[2];
+                    v.getLocationInWindow(vloc);
+                    v.setPivotX(v.getWidth() / 2f);
                     v.setPivotY(0f);
+                    v.setScaleX(scale);
                     v.setScaleY(scale);
-                    Dydock.log("视频:纵向补足 " + gap + "px 铺到 Dock 上沿（scaleY="
-                            + String.format(java.util.Locale.US, "%.3f", scale) + "）");
+                    Dydock.log("视频:等比铺满 gap=" + gap + " scale="
+                            + String.format(java.util.Locale.US, "%.3f", scale));
                 }
                 return;
             }
