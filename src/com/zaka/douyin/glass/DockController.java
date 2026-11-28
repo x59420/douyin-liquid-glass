@@ -2182,11 +2182,13 @@ final class DockController {
             int overlayHeight = iso.view.getHeight();
             int navBottom = navigationBarInsetBottom(dock);
             if (overlayHeight > 0 && navBottom > 0) {
-                // NAV_CLEAR_DP：给抖音自己的底部控件（视频进度条、弹幕栏）让出的高度。
-                // 窗口铺到手势条后面之后，这些控件整体下移了 navBottom，
-                // 落点如果还按「贴着导航条」算，Dock 就会正压在它们身上，点不到。
-                int limit = overlayHeight - navBottom
-                        - (int) ((2f + NAV_CLEAR_DP) * density) - pill;
+                // 手势导航下（导航条只有几十像素）Dock 直接贴到屏幕最底：
+                // 只要还按导航条高度让位，Dock 底下就会留出一条 60 多像素的底色 ——
+                // 用户看到的就是「下面还有一栏」。三键导航（导航条很高）仍然让开，
+                // 否则会把返回键盖住。
+                int navReserve = navBottom > 100 ? navBottom : 0;
+                int limit = overlayHeight - navReserve
+                        - (int) (2f * density) - pill;
                 if (top > limit) top = limit;
             }
 
