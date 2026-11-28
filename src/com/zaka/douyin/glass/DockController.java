@@ -2897,7 +2897,15 @@ final class DockController {
                 boolean coversBand = bandCoverage(r, dockRect) >= 0.6f
                         && r.width() >= screenW * 0.7f
                         && r.height() <= screenH * 0.5f;
+                // 渐变遮罩（GradientDrawable）不要清。
+                //
+                // 抖音底栏上方那层「由透明渐变到不透明」的压暗层，本质是让画面和底栏之间
+                // 有个过渡。清掉之后画面在底栏上沿直接切断 —— 就是用户说的「分割感，
+                // 看着不像同一层画面」。保留它，画面是渐隐进去的，接缝就没了。
+                boolean gradientScrim = child.getBackground()
+                        instanceof android.graphics.drawable.GradientDrawable;
                 if ((hasBg || hasFg) && (bigMask || insideBand || coversBand)
+                        && !gradientScrim
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)) {
                     if (hasBg) saveAndClearBackground(child);
