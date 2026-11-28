@@ -2383,6 +2383,75 @@ final class DockController {
     }
 
 
+
+    /** 被接管过的视频层：原 LayoutParams 高度。 */
+    private static final java.util.WeakHashMap<View, int[]> TAKEN_VIDEO =
+            new java.util.WeakHashMap<View, int[]>();
+
+    /**
+     * 「接管」而不是「拉伸」：把视频层自己的 LayoutParams.height 改成 MATCH_PARENT，
+     * 让它铺到屏幕底（含手势条区域），画面由宿主自己按 CENTER_CROP 裁切，我们不动 scale。
+     * 判据不满足就整个放弃，退出/暂停时按原值还原。
+     */
+    static void takeOverVideo(View root, int screenH) {
+        if (root == null || screenH <= 0) return;
+        View video = findVideo(root, screenH, 0);
+        if (video == null) {
+            releaseVideo();
+            return;
+        }
+        try {
+            ViewGroup.LayoutParams lp = video.getLayoutParams();
+            if (lp == null) return;
+            if (lp.height == ViewGroup.LayoutParams.MATCH_PARENT) return;
+            if (!TAKEN_VIDEO.containsKey(video)) {
+                TAKEN_VIDEO.put(video, new int[]{lp.height});
+                lp.height = ViewGroup.LayoutParams.MATCH_PARENT;
+                if (lp instanceof ViewGroup.MarginLayoutParams) {
+                    ((ViewGroup.MarginLayoutParams) lp).bottomMargin = 0;
+                }
+                video.setLayoutParams(lp);
+                Dydock.log("接管:视频层高度=" + lp.height + "（MATCH_PARENT，铺到屏底）");
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static View findVideo(View v, int screenH, int depth) {
+        if (v == null || depth > 28) return null;
+        try {
+            if ((v instanceof android.view.SurfaceView || v instanceof android.view.TextureView)
+                    && v.getWidth() > 0 && v.getHeight() > screenH * 0.25f) {
+                return v;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    View hit = findVideo(g.getChildAt(i), screenH, depth + 1);
+                    if (hit != null) return hit;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    /** 还原所有被接管的视频层。 */
+    static void releaseVideo() {
+        for (java.util.Map.Entry<View, int[]> e : TAKEN_VIDEO.entrySet()) {
+            try {
+                View v = e.getKey();
+                if (v == null) continue;
+                android.view.ViewGroup.LayoutParams lp = v.getLayoutParams();
+                if (lp == null) continue;
+                lp.height = e.getValue()[0];
+                v.setLayoutParams(lp);
+            } catch (Throwable ignored) {
+            }
+        }
+        TAKEN_VIDEO.clear();
+    }
+
     /** 被我们撑满过的页面容器：原 LayoutParams 记下来，退出/关闭时还原。 */
     /** 原值：{height, topMargin, bottomMargin}。原地改 LayoutParams，绝不换对象类型。 */
     private static final java.util.WeakHashMap<View, int[]> EXPANDED_PAGES =
@@ -2642,6 +2711,8 @@ final class DockController {
             try {
                 View rootView = dock.getRootView();
                 expandPageToBottom(rootView, rootView.getHeight(), rootView.getWidth());
+                // 接管视频层本身，让它铺到屏幕底（含手势条区域），不缩放、不变形。
+                takeOverVideo(rootView, rootView.getHeight());
             } catch (Throwable ignored) {
             }
 
