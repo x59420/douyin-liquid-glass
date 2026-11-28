@@ -2310,6 +2310,67 @@ final class DockController {
     private static final int[] BAND_LOG = new int[]{0};
 
 
+
+    /** 视频层原始 scaleY 的登记表（补足时用，页面切走要还原）。 */
+    private static final java.util.WeakHashMap<View, Float> VIDEO_BASE_SCALE =
+            new java.util.WeakHashMap<View, Float>();
+
+    /**
+     * 把视频画面纵向补到 dock 上沿。
+     *
+     * 抖音按比例居中播放，视频下方会留一条底色（纯黑），用户看到的就是「黑层」。
+     * 这里把视频层按「缺口高度」纵向拉伸（只拉纵轴、通常 3%~5%），让它铺到 dock 上沿。
+     * 缺口过大（>12% 屏高）就不动 —— 那种是真的横屏视频，硬拉会变形。
+     */
+    static void stretchVideoToBand(View root, Rect band) {
+        if (root == null || band == null || band.isEmpty()) return;
+        int screenH = root.getHeight();
+        if (screenH <= 0) return;
+        int[] budget = new int[]{6};
+        stretchVideoWalk(root, band, screenH, 0, budget);
+    }
+
+    private static void stretchVideoWalk(View v, Rect band, int screenH, int depth, int[] budget) {
+        if (v == null || depth > 32 || budget[0] <= 0) return;
+        try {
+            boolean isVideo = v instanceof android.view.SurfaceView
+                    || v instanceof android.view.TextureView;
+            if (isVideo && v.getWidth() > 0 && v.getHeight() > 0
+                    && (long) v.getWidth() * v.getHeight() >= (long) v.getRootView().getWidth() * screenH * 20L / 100L) {
+                budget[0]--;
+                int[] loc = new int[2];
+                v.getLocationInWindow(loc);
+                int viewBottom = loc[1] + v.getHeight();
+                int gap = band.top - viewBottom;
+                if (gap <= 0 || gap > screenH * 0.12f) return;
+                float base;
+                synchronized (VIDEO_BASE_SCALE) {
+                    Float saved = VIDEO_BASE_SCALE.get(v);
+                    if (saved == null) {
+                        saved = v.getScaleY();
+                        VIDEO_BASE_SCALE.put(v, saved);
+                    }
+                    base = saved;
+                }
+                float scale = base * (v.getHeight() + gap) / (float) v.getHeight();
+                if (Math.abs(v.getScaleY() - scale) > 0.002f) {
+                    v.setPivotY(0f);
+                    v.setScaleY(scale);
+                    Dydock.log("视频:纵向补足 " + gap + "px 铺到 Dock 上沿（scaleY="
+                            + String.format(java.util.Locale.US, "%.3f", scale) + "）");
+                }
+                return;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    stretchVideoWalk(g.getChildAt(i), band, screenH, depth + 1, budget);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 系统是不是手势导航（Settings.Secure.navigation_mode == 2）。 */
     private static boolean isGestureNav(android.content.Context ctx) {
         try {
@@ -2479,6 +2540,14 @@ final class DockController {
             // 它那一条背后只有一层被清空的容器 + 窗口底色。直接采就是纯黑，玻璃既不透也折射不出东西。
             // 上移一个底栏高度，采到的是紧贴着玻璃上沿那几行内容 —— 视觉上连续，
             // 而且不用动宿主布局，抖音自己的控件（作者信息、弹幕栏）位置一个都不变。
+            // 把视频画面往下补到 Dock 上沿：视频按比例居中播放时会留一条黑边，
+            // 那条黑就是用户一直说的「黑层」。这里只做纵向补足（通常 3%~5%），
+            // 肉眼几乎看不出拉伸，但那条黑会消失。
+            try {
+                stretchVideoToBand(dock.getRootView(), band);
+            } catch (Throwable ignored) {
+            }
+
             Rect sampleRegion = new Rect(regionInWindow);
             if (backdrop != null) {
                 boolean hasVideo = Shield.hasVideoSurface(dock.getRootView());
