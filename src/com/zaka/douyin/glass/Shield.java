@@ -47,6 +47,51 @@ final class Shield {
      * First-pass long-press filter: accept only a large video/feed touch surface in the
      * central playback area. Small buttons and navigation items must not hide the Dock.
      */
+
+    /**
+     * 触摸点是不是落在「正在播放的视频画面」里。
+     *
+     * 长按倍速只在视频区成立；商品页、图文、我的页、消息列表这些界面上按住不该收起 Dock。
+     * 判据：找到面积够大的 SurfaceView / TextureView（≥ 屏高 20%），要求触点落在它的矩形内。
+     */
+    static boolean pointInVideoArea(Activity activity, float rawX, float rawY) {
+        if (activity == null) return false;
+        try {
+            View content = activity.findViewById(android.R.id.content);
+            if (content == null) return false;
+            Rect video = videoRect(content, 0);
+            if (video == null || video.isEmpty()) return false;
+            return video.contains((int) rawX, (int) rawY);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /** 找当前页面里最大的那块视频层矩形（屏幕坐标）。找不到返回 null。 */
+    private static Rect videoRect(View v, int depth) {
+        if (v == null || depth > 28) return null;
+        try {
+            if ((v instanceof android.view.SurfaceView || v instanceof android.view.TextureView)
+                    && v.isShown() && v.getWidth() > 0 && v.getHeight() > 0) {
+                Rect r = rectOf(v);
+                if (r.height() >= v.getRootView().getHeight() * 0.2f) return r;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                Rect best = null;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    Rect r = videoRect(g.getChildAt(i), depth + 1);
+                    if (r != null && (best == null || r.width() * r.height() > best.width() * best.height())) {
+                        best = r;
+                    }
+                }
+                return best;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
     static boolean isVideoLongPressTarget(View view, Activity activity) {
         if (view == null || activity == null || view.getVisibility() != View.VISIBLE
                 || view.getAlpha() < 0.05f || !view.isShown()) return false;
