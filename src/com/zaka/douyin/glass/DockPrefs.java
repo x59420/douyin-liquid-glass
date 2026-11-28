@@ -264,6 +264,7 @@ final class DockPrefs {
             editor.putBoolean(KEY_LOG, remote.getBoolean(KEY_LOG, true));
             editor.putInt(KEY_THEME_MODE, remote.getInt(KEY_THEME_MODE, 0));
             editor.putInt(KEY_GLASS_ALPHA, remote.getInt(KEY_GLASS_ALPHA, 100));
+            editor.putBoolean(KEY_CAPTURE, remote.getBoolean(KEY_CAPTURE, false));
             editor.putBoolean(KEY_HIDE_BG, remote.getBoolean(KEY_HIDE_BG, false));
             editor.putBoolean(KEY_BOTTOM_TRANSPARENT,
                     remote.getBoolean(KEY_BOTTOM_TRANSPARENT, true));

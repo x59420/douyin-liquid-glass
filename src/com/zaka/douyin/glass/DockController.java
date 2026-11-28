@@ -1001,6 +1001,7 @@ final class DockController {
         final int[] diagDumps = new int[]{0};
         final long[] lastReserveAt = new long[]{0L};
         final long[] lastRemaskAt = new long[]{0L};
+        final long[] lastCaptureCheckAt = new long[]{0L};
         final long[] lastSweepAt = new long[]{0L};
         final long[] lastSweepLogAt = new long[]{0L};
         final long[] diagAt = new long[]{SystemClock.uptimeMillis()};
@@ -1164,6 +1165,17 @@ final class DockController {
                         if (now - lastRemaskAt[0] >= 3000L) {
                             lastRemaskAt[0] = now;
                             Dydock.log("底栏:原生底栏又变回可见，重新压成透明");
+                        }
+                    }
+                    if (now - lastCaptureCheckAt[0] >= 2000L) {
+                        lastCaptureCheckAt[0] = now;
+                        try {
+                            if (DockPrefs.captureVideo(act)
+                                    && !VideoCapture.isActive() && !VideoCapture.isPending()) {
+                                Dydock.log("录屏:设置已开启，发起授权");
+                                VideoCapture.request(act);
+                            }
+                        } catch (Throwable ignored) {
                         }
                     }
                     if (now - lastSweepAt[0] >= 300L) {
@@ -3217,15 +3229,15 @@ final class DockController {
                 changed = true;
             }
 
+            // 不再动 decor 的 systemUiVisibility。
+            //
+            // 以前这里会补 LAYOUT_STABLE / LAYOUT_HIDE_NAVIGATION / LAYOUT_FULLSCREEN，
+            // 宿主（抖音）在长按倍速、切页、进出全屏时会整段写回自己的 flags，
+            // 我们又写回去 —— 每来回一次就是一次窗口 relayout，肉眼就是「画面跳一下」。
+            // 现在只保留状态栏 / 导航栏的颜色与对比度，flags 交给宿主自己。
             int flags = decor.getSystemUiVisibility();
             int next = flags;
-            next |= View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
-            // 系统导航栏要真透明，窗口就必须画到手势条后面 —— 这一条绕不过去：
-            // 不开这个 flag 的话 decor 在导航条上沿就截止，那一条永远是窗口底色（黑）。
-            //
-            // 代价是抖音自己的控件会跟着往下移。所以 Dock 的落点上抬了
-            // NAV_CLEAR_DP（见 applyGeometryInBand），把进度条 / 弹幕栏那一带让出来。
-            next |= View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION;
+
 
             boolean hostHidesStatus = hostHidesStatusBar(act);
 
