@@ -2558,6 +2558,11 @@ final class DockController {
                 stretchVideoToBand(dock.getRootView(), band);
             } catch (Throwable ignored) {
             }
+            // 抖音自己的模糊色带：把它纵向铺满，填掉画面到不了的地方。
+            try {
+                ColourBandLease.sync(dock.getRootView(), band);
+            } catch (Throwable ignored) {
+            }
 
             Rect sampleRegion = new Rect(regionInWindow);
             if (backdrop != null) {
