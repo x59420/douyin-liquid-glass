@@ -125,7 +125,9 @@ public final class SettingsSync {
             changed = true;
         }
         if (intent.hasExtra("capture_video")) {
-            DockPrefs.setCaptureVideo(context, intent.getBooleanExtra("capture_video", false));
+            boolean want = intent.getBooleanExtra("capture_video", false);
+            DockPrefs.setCaptureVideo(context, want);
+            if (want) VideoCapture.resetAttempts();
             changed = true;
         }
         if (intent.hasExtra("video_tint")) {

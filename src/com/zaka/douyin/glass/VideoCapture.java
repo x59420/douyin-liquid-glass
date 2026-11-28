@@ -37,6 +37,9 @@ final class VideoCapture {
 
     private static volatile boolean pending;
     private static volatile boolean active;
+    /** 本次进程里已经自动请求过几次：只自动弹一次，避免和用户手上的授权框互相顶掉。 */
+    private static volatile int attempts;
+    private static volatile long lastRequestAt;
     private static volatile MediaProjection projection;
     private static volatile VirtualDisplay display;
     private static volatile ImageReader reader;
@@ -56,6 +59,15 @@ final class VideoCapture {
     /** 从宿主 Activity 发起一次录屏授权。同一时间只允许一个请求在飞。 */
     static void request(Activity activity) {
         if (activity == null || active || pending) return;
+        // 关键：每个进程只自动弹一次。
+        // 之前是「没成功就每 2 秒再弹」，结果第一个授权框还没点完，
+        // 第二个就起来了 —— 前一个被系统当作取消（RESULT_CANCELED），
+        // 于是永远拿不到授权，看起来就是「一直重复弹窗」。
+        if (attempts >= 1) return;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastRequestAt < 10_000L) return;
+        lastRequestAt = now;
+        attempts++;
         try {
             MediaProjectionManager manager = (MediaProjectionManager)
                     activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE);
@@ -67,6 +79,13 @@ final class VideoCapture {
             pending = false;
             Dydock.warnOnce("capture-request", "发起录屏授权失败: " + t);
         }
+    }
+
+    /** 用户在设置里重新打开开关时调用：允许再自动请求一次。 */
+    static void resetAttempts() {
+        attempts = 0;
+        lastRequestAt = 0L;
+        pending = false;
     }
 
     /** GlassEntry 里 Activity.onActivityResult 的回调。 */
