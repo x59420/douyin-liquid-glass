@@ -1127,12 +1127,13 @@ final class DockController {
                         lastReserveAt[0] = now;
                         releaseBottomReservation(content, bandRect[0].height());
                     }
-                    if (diagDumps[0] < 6 && now - diagAt[0] >= 15000L) {
+                    if (diagDumps[0] < 24 && now - diagAt[0] >= 10000L) {
                         diagAt[0] = now;
                         diagDumps[0]++;
-                        Dydock.log("大视图:=== dump " + diagDumps[0] + " 视频层="
-                                + Shield.hasVideoSurface(content));
-                        dumpBigViews(content);
+                        int tabTop = bandRect[0] == null ? 0 : bandRect[0].top;
+                        Dydock.log("边界:=== dump " + diagDumps[0] + " tabTop=" + tabTop
+                                + " 视频层=" + Shield.hasVideoSurface(content));
+                        dumpEdgeViews(content, tabTop);
                     }
                     if (d == null || !d.isAttachedToWindow()) {
                         // 原生节点不可用时才重新搜索：底栏刚被重建时要在 150ms 内接上，
@@ -1869,6 +1870,41 @@ final class DockController {
      * 玻璃层的位置全在宿主这边算：四个 tab 的胶囊 + 右边「＋」两块。
      * 参数沿用 KernelSU FloatingBottomBar：28dp 安全边距、8dp 间距、64dp 高、单格 76dp。
      */
+    /** 只打「底边正好停在底栏上沿」的 View：每次都是它把内容截断。 */
+    static void dumpEdgeViews(View root, int tabTop) {
+        try {
+            if (root == null || tabTop <= 0) return;
+            walkEdgeViews(root, tabTop, 0, new int[]{0});
+        } catch (Throwable t) {
+            Dydock.warnOnce("edge-dump", "边界诊断失败: " + t);
+        }
+    }
+
+    private static void walkEdgeViews(View v, int tabTop, int depth, int[] budget) {
+        if (v == null || depth > 20 || budget[0] >= 12) return;
+        try {
+            if (v.getVisibility() != View.VISIBLE) return;
+            int[] loc = new int[2];
+            v.getLocationInWindow(loc);
+            int bottom = loc[1] + v.getHeight();
+            if (Math.abs(bottom - tabTop) <= 40 && v.getHeight() > tabTop * 0.3f) {
+                Dydock.log("边界:" + v.getClass().getName() + " id=" + idName(v)
+                        + " " + v.getWidth() + "x" + v.getHeight()
+                        + " top=" + loc[1] + " bottom=" + bottom
+                        + " padB=" + v.getPaddingBottom()
+                        + " lp=" + describeLp(v));
+                budget[0]++;
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    walkEdgeViews(g.getChildAt(i), tabTop, depth + 1, budget);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 把「占了半屏以上」的 View 全部打出来：找到底边停在 2613 的那个容器，才知道该改谁。 */
     static void dumpBigViews(View root) {
         try {
