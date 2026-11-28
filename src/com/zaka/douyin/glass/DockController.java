@@ -1731,6 +1731,10 @@ final class DockController {
     private static final java.util.WeakHashMap<View, Integer> SAVED_PAD =
             new java.util.WeakHashMap<View, Integer>();
 
+    /** 第三种「底部预留」：容器高度被算成「屏高 − 底栏高度」，首页/朋友页就是这种。 */
+    private static final java.util.WeakHashMap<View, Integer> SAVED_HEIGHT =
+            new java.util.WeakHashMap<View, Integer>();
+
     /** 同样是「页面底部预留」，但挂成 bottomMargin 的那一批（消息页就是这种）。 */
     private static final java.util.WeakHashMap<View, Integer> SAVED_MARGIN =
             new java.util.WeakHashMap<View, Integer>();
@@ -1743,9 +1747,11 @@ final class DockController {
             if (rootH <= 0) return;
             int changed = clearBottomPad(root, tabHeight, rootH, 0);
             int margins = clearBottomMargin(root, tabHeight, 0);
-            if (changed > 0 || margins > 0) {
+            int heights = stretchShortContainer(root, tabHeight, rootH, root.getWidth(), 0);
+            if (changed > 0 || margins > 0 || heights > 0) {
                 Dydock.log("布局:已清掉 " + changed + " 处 paddingBottom / " + margins
-                        + " 处 bottomMargin（各 " + tabHeight + "px），内容铺到屏幕底");
+                        + " 处 bottomMargin / 补高 " + heights + " 处（各 " + tabHeight
+                        + "px），内容铺到屏幕底");
             }
         } catch (Throwable t) {
             Dydock.warnOnce("bottom-reserve", "清理底部预留失败: " + t);
@@ -1809,6 +1815,40 @@ final class DockController {
         return count;
     }
 
+    /**
+     * 第三种：容器高度本身被算成「屏高 − 底栏高度」（首页 / 朋友页就是这么干的）。
+     * 只认「高度差正好是一个底栏高度、宽度接近整屏」的容器，补高到满屏；
+     * 原值记下来，退出接管时还原。
+     */
+    private static int stretchShortContainer(View v, int tabHeight, int rootH, int rootW, int depth) {
+        if (v == null || depth > 18) return 0;
+        int count = 0;
+        try {
+            int h = v.getHeight();
+            if (Math.abs(h - (rootH - tabHeight)) <= 8 && v.getWidth() >= rootW * 0.9f) {
+                ViewGroup.LayoutParams lp = v.getLayoutParams();
+                if (lp != null) {
+                    synchronized (SAVED_HEIGHT) {
+                        if (!SAVED_HEIGHT.containsKey(v)) SAVED_HEIGHT.put(v, lp.height);
+                    }
+                    lp.height = h + tabHeight;
+                    v.setLayoutParams(lp);
+                    count++;
+                    // 补高之后子节点会跟着重排，这一支不用再往下钻
+                    return count;
+                }
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    count += stretchShortContainer(g.getChildAt(i), tabHeight, rootH, rootW, depth + 1);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return count;
+    }
+
     /** 还原所有被清零的底部预留。 */
     private static void restoreBottomReservation() {
         try {
@@ -1831,6 +1871,23 @@ final class DockController {
                 marginViews = new java.util.ArrayList<View>(SAVED_MARGIN.keySet());
                 margins = new java.util.ArrayList<Integer>(SAVED_MARGIN.values());
                 SAVED_MARGIN.clear();
+            }
+            java.util.ArrayList<View> heightViews;
+            java.util.ArrayList<Integer> heights2;
+            synchronized (SAVED_HEIGHT) {
+                heightViews = new java.util.ArrayList<View>(SAVED_HEIGHT.keySet());
+                heights2 = new java.util.ArrayList<Integer>(SAVED_HEIGHT.values());
+                SAVED_HEIGHT.clear();
+            }
+            for (int i = 0; i < heightViews.size(); i++) {
+                View v = heightViews.get(i);
+                Integer h = heights2.get(i);
+                if (v == null || h == null) continue;
+                ViewGroup.LayoutParams lp = v.getLayoutParams();
+                if (lp != null) {
+                    lp.height = h;
+                    v.setLayoutParams(lp);
+                }
             }
             for (int i = 0; i < marginViews.size(); i++) {
                 View v = marginViews.get(i);

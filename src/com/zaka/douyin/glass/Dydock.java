@@ -27,7 +27,7 @@ import de.robv.android.xposed.XposedBridge;
 public final class Dydock {
 
     public static final String TAG = "dydock";
-    public static final String VER = "0.7.5";
+    public static final String VER = "0.7.6";
     public static final String HOST = "com.ss.android.ugc.aweme";
     public static final String PKG = "com.zaka.douyin.glass";
 
@@ -108,7 +108,10 @@ public final class Dydock {
 
     private static Uri findOrCreateDownloadLog(Context context) {
         ContentResolver resolver = context.getContentResolver();
-        String name = "dydock-diagnostic.log";
+        // 每个会话一个时间戳文件名：重名会被 MediaStore 改名甚至拒绝，
+        // 之前固定名字 + 几十个副本之后日志就彻底不写了（0.7.4/0.7.5 全是瞎跑）。
+        String name = "dydock-" + new java.text.SimpleDateFormat("MMdd-HHmmss", java.util.Locale.US)
+                .format(new java.util.Date()) + ".log";
         String relativePath = Environment.DIRECTORY_DOWNLOADS + "/Dydock/";
         Cursor cursor = null;
         try {
