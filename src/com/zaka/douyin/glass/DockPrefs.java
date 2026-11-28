@@ -140,7 +140,7 @@ final class DockPrefs {
 
     /** 玻璃表面不透明度，0-100。默认 100 = 和以前一模一样，不改外观。 */
     static int glassAlpha(Context context) {
-        return clamp(readInt(context, KEY_GLASS_ALPHA, 65), 0, 100);
+        return clamp(readInt(context, KEY_GLASS_ALPHA, 100), 0, 100);
     }
 
     static void setGlassAlpha(Context context, int value) {
