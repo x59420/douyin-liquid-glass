@@ -2400,11 +2400,8 @@ final class DockController {
                 // 只要还按导航条高度让位，Dock 底下就会留出一条 60 多像素的底色 ——
                 // 用户看到的就是「下面还有一栏」。三键导航（导航条很高）仍然让开，
                 // 否则会把返回键盖住。
-                // 手势导航（navigation_mode=2）下 Dock 贴屏幕最底；三键导航才让开。
-                // 之前用 navBottom>100 猜，MIUI 手势导航的 inset 也可能上百，
-                // 结果 Dock 一直悬在上面，底下那条底色就永远消不掉。
-                int navReserve = isGestureNav(dock.getContext()) ? 0 : navBottom;
-                int limit = overlayHeight - navReserve
+                // 恢复原来的离底距离：永远从系统导航条上沿再往上 2dp。
+                int limit = overlayHeight - navBottom
                         - (int) (2f * density) - pill;
                 if (top > limit) top = limit;
             }
