@@ -949,15 +949,10 @@ final class DockController {
                             // 底栏里面那层「胶囊底板」也要清 —— 用户看到的那块灰色圆角底
                             // 就是它，不在父链上，是在底栏内部当子 View 画的。
                             clearChildBackgrounds(d0, 0);
-                            // 兜底：底栏那条带子里**任何**一层不透明背景都拿掉。
-                            // 抖音的原生黑底有时是底栏旁边的兄弟 View，既不在父链也不在子树里，
-                            // 只清底栏自己那一支就会漏，肉眼看就是「下面还有一层黑」。
-                            if (d0.getWidth() > 0 && d0.getHeight() > 0) {
-                                int[] dl = new int[2];
-                                d0.getLocationInWindow(dl);
-                                int bt = dl[1];
-                                clearOpaqueInBand((ViewGroup) decor, bt, 0, new int[]{80});
-                            }
+                            // 注意：这里**不要**再整树扫一遍清背景。
+                            // 每帧扫 80 个节点 + setBackground 会触发宿主 invalidate/relayout，
+                            // 长按倍速、快速滑动时能看到画面「跳一下」——就是这条引起的。
+                            // 带子里的背景交给轮询里的 stripDockBackground 处理（1.5s 一次，足够了）。
                         }
                     } catch (Throwable ignored) {
                     }
