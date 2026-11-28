@@ -939,6 +939,15 @@ final class DockController {
                             // 底栏里面那层「胶囊底板」也要清 —— 用户看到的那块灰色圆角底
                             // 就是它，不在父链上，是在底栏内部当子 View 画的。
                             clearChildBackgrounds(d0, 0);
+                            // 兜底：底栏那条带子里**任何**一层不透明背景都拿掉。
+                            // 抖音的原生黑底有时是底栏旁边的兄弟 View，既不在父链也不在子树里，
+                            // 只清底栏自己那一支就会漏，肉眼看就是「下面还有一层黑」。
+                            if (d0.getWidth() > 0 && d0.getHeight() > 0) {
+                                int[] dl = new int[2];
+                                d0.getLocationInWindow(dl);
+                                int bt = dl[1];
+                                clearOpaqueInBand((ViewGroup) decor, bt, 0, new int[]{80});
+                            }
                         }
                     } catch (Throwable ignored) {
                     }
@@ -2237,6 +2246,37 @@ final class DockController {
         } catch (Throwable ignored) {
         }
         return n;
+    }
+
+    /**
+     * 清掉「底栏那条带子里」所有不透明（或半透明深色）背景。
+     *
+     * 抖音的原生黑底不一定在底栏子树里 —— 实测它是底栏旁边的一个兄弟 View，
+     * 所以清父链、清子树都会漏。这里按「落在带子里 + 有背景」两个条件扫，
+     * 命中就把 background 置空（原值记下，退出时还原）。
+     */
+    private static void clearOpaqueInBand(ViewGroup parent, int bandTop, int depth, int[] budget) {
+        if (parent == null || depth > 18 || budget[0] <= 0) return;
+        try {
+            int n = parent.getChildCount();
+            for (int i = 0; i < n && budget[0] > 0; i++) {
+                View child = parent.getChildAt(i);
+                if (child == null || child.getVisibility() != View.VISIBLE) continue;
+                budget[0]--;
+                if (isOursView(child)) continue;
+                int[] loc = new int[2];
+                child.getLocationInWindow(loc);
+                int bottom = loc[1] + child.getHeight();
+                boolean inBand = bottom > bandTop && loc[1] < loc[1] + child.getHeight();
+                if (inBand && loc[1] + child.getHeight() > bandTop && child.getBackground() != null) {
+                    saveAndClearBackground(child);
+                }
+                if (child instanceof ViewGroup) {
+                    clearOpaqueInBand((ViewGroup) child, bandTop, depth + 1, budget);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     /** 清掉底栏子树里各层的 background（深度限制 3，只动背景不动内容）。 */
