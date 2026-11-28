@@ -941,8 +941,14 @@ final class DockController {
                             // 它们自己带的 ColorDrawable（深色/黑）就是 Dock 下面那条黑底，
                             // 宿主会在切页/重建时再写回来，所以这里按「非空才清」的方式兜住 ——
                             // 只碰 2 个 View、且清完就是 null，不会整树扫，也不会反复 relayout。
-                            if (d0.getBackground() != null) saveAndClearBackground(d0);
-                            if (shell0 != null && shell0.getBackground() != null) {
+                            // 只清纯色底；渐变（GradientDrawable）是抖音「画面→底栏」的过渡层，
+                            // 清掉它底部就变成死黑——这正是那条黑带的来源。
+                            if (d0.getBackground() != null
+                                    && !(d0.getBackground() instanceof android.graphics.drawable.GradientDrawable)) {
+                                saveAndClearBackground(d0);
+                            }
+                            if (shell0 != null && shell0.getBackground() != null
+                                    && !(shell0.getBackground() instanceof android.graphics.drawable.GradientDrawable)) {
                                 saveAndClearBackground(shell0);
                             }
                         }
