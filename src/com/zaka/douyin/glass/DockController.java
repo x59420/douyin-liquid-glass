@@ -948,9 +948,14 @@ final class DockController {
                             if (d0.getAlpha() > 0.01f) SelfMask.mask(d0);
                             View shell0 = ancestorOfClass(d0, "MainBottomTabContainer", 6);
                             if (shell0 != null && shell0.getAlpha() > 0.01f) SelfMask.mask(shell0);
-                            // 这里只压 alpha（改 alpha 不触发 relayout，最便宜）。
-                            // 背景清理全部交给轮询里的 stripDockBackground —— 每帧 setBackground
-                            // 会让宿主 invalidate/relayout，长按倍速时肉眼就是「画面跳一下」。
+                            // 只维护这两个节点：底栏本体 + 它的外壳容器 MainBottomTabContainer。
+                            // 它们自己带的 ColorDrawable（深色/黑）就是 Dock 下面那条黑底，
+                            // 宿主会在切页/重建时再写回来，所以这里按「非空才清」的方式兜住 ——
+                            // 只碰 2 个 View、且清完就是 null，不会整树扫，也不会反复 relayout。
+                            if (d0.getBackground() != null) saveAndClearBackground(d0);
+                            if (shell0 != null && shell0.getBackground() != null) {
+                                saveAndClearBackground(shell0);
+                            }
                         }
                     } catch (Throwable ignored) {
                     }
