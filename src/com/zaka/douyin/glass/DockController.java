@@ -956,6 +956,7 @@ final class DockController {
 
         final int[] expandedTicks = new int[]{0};
         final int[] diagDumps = new int[]{0};
+        final long[] lastReserveAt = new long[]{0L};
         final long[] diagAt = new long[]{SystemClock.uptimeMillis()};
         final boolean[] overlayTargetVisible = new boolean[]{true};
         final long[] lastFindAt = new long[]{0L};
@@ -1110,6 +1111,12 @@ final class DockController {
                     long now = SystemClock.uptimeMillis();
                     // 临时诊断：每 15 秒打一次当前页面的大视图，共 6 次。
                     // 目的是抓到「消息」这类列表页里 bottom 停在底栏上沿的那个容器。
+                    // 「消息」这类页面是切过去之后才创建的，安装那一刻还不在树上，
+                    // 所以底部预留要周期性复查：命中就清、被宿主改回去就再清一次。
+                    if (bandRect[0] != null && now - lastReserveAt[0] >= 1500L) {
+                        lastReserveAt[0] = now;
+                        releaseBottomReservation(content, bandRect[0].height());
+                    }
                     if (diagDumps[0] < 6 && now - diagAt[0] >= 15000L) {
                         diagAt[0] = now;
                         diagDumps[0]++;
