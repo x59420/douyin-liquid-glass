@@ -1136,9 +1136,15 @@ final class DockController {
                     }
                     // 「消息」这类页面是切过去之后才创建的，安装那一刻还不在树上，
                     // 所以底部预留要周期性复查：命中就清、被宿主改回去就再清一次。
-                    if (bandRect[0] != null && now - lastReserveAt[0] >= 1500L) {
+                    if (now - lastReserveAt[0] >= 1500L) {
                         lastReserveAt[0] = now;
-                        releaseBottomReservation(content, bandRect[0].height());
+                        // 用**原生底栏自己的高度**（159px）当基准，不能用 bandRect 的高度：
+                        // 原生底栏被我们压成 alpha=0 之后，band 会退回按胶囊高度算的兜底值（208px），
+                        // 拿 208 去匹配 159 的下边距就永远匹配不上 —— 列表又会被压在底栏上沿。
+                        int nativeH = d != null && d.getHeight() > 0
+                                ? d.getHeight()
+                                : (bandRect[0] == null ? 0 : bandRect[0].height());
+                        if (nativeH > 0) releaseBottomReservation(content, nativeH);
                     }
                     if (diagDumps[0] < 24 && now - diagAt[0] >= 10000L) {
                         diagAt[0] = now;
