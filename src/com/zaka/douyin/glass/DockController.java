@@ -2612,13 +2612,11 @@ final class DockController {
             // 抖音那层「画面往底栏过渡」的背景就挂在页面这棵树上，清掉之后
             // 底下没有东西可透，露出来必然是纯黑（翻页中途那条黑带也是这么来的）。
             // window 背景仍然设透明 —— 系统导航条那一条要靠它才透得出来。
-            // window 背景没有 getter，只能用标记保证只设一次。
-            if (!WINDOW_BG_CLEARED.containsKey(act)) {
-                window.setBackgroundDrawable(
-                        new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
-                WINDOW_BG_CLEARED.put(act, Boolean.TRUE);
-                changed = true;
-            }
+            // 不再把 window 背景设成透明。
+            //
+            // 设成透明之后，页面没画到的地方（视频下方的底栏区 / 手势条那条）= 透明窗口 +
+            // 后面什么都没有 = 死黑，比抖音自己的深色底更难看。导航条那条的透明由
+            // setNavigationBarColor(TRANSPARENT) + 关对比度强制负责，不依赖窗口底色。
         } catch (Throwable ignored) {
         }
         return changed;
