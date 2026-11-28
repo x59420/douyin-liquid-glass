@@ -321,6 +321,8 @@ final class DockController {
         }
         if (action == android.view.MotionEvent.ACTION_DOWN) {
             if (!Shield.isVideoLongPressTarget(view, act)) return;
+            // 触点必须落在视频画面里：商品页 / 图文 / 列表 / 我的页按住不该收起 Dock。
+            if (!Shield.pointInVideoArea(act, event.getRawX(), event.getRawY())) return;
             synchronized (PRESS) {
                 PRESS.put(act, new long[]{android.os.SystemClock.uptimeMillis(),
                         (long) event.getRawX(), (long) event.getRawY()});
