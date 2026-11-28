@@ -2578,9 +2578,9 @@ final class DockController {
         // 3) 底栏下面压着视频的时候，把窗口 / 内容树自己那层不透明底也去掉。
         //    视频是 SurfaceView，像素在窗口「下面」；窗口或内容树只要有一层不透明底挡着，
         //    视频就透不到底栏这一条来 —— 这就是「底部背景怎么都透明不了」的硬原因。
-        if (Shield.hasVideoSurface(root)) {
-            if (clearWindowBackdrop(dock)) cleared++;
-        }
+        // 无条件清：用户要的是「底栏那条带子纯透明」，不管有没有视频，
+        // 窗口 / 内容树只要留一层不透明底，那条带子就永远是黑的。
+        if (clearWindowBackdrop(dock)) cleared++;
 
         if (cleared > 0) {
             Dydock.log("底栏:已去掉 " + cleared + " 层原生底栏 / 边缘遮罩的背景");
@@ -3081,6 +3081,17 @@ final class DockController {
             android.view.Window window = act.getWindow();
             View decor = window.getDecorView();
             if (decor == null) return false;
+            // 窗口自身背景设成纯透明：不然那条带子透出来的是「窗口底色」（黑）
+            try {
+                if (!(window.getDecorView().getBackground() instanceof android.graphics.drawable.ColorDrawable)
+                        || ((android.graphics.drawable.ColorDrawable) window.getDecorView().getBackground()).getColor() != android.graphics.Color.TRANSPARENT) {
+                    window.setBackgroundDrawable(
+                            new android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT));
+                    changed = true;
+                }
+            } catch (Throwable ignored) {
+            }
+
             int flags = decor.getSystemUiVisibility();
             if ((flags & View.SYSTEM_UI_FLAG_FULLSCREEN) != 0) return true;
             if ((window.getAttributes().flags

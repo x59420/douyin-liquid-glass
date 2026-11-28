@@ -459,7 +459,7 @@ private fun GlassSurface(
                     native.restoreToCount(save)
                 }
             } catch (_: Throwable) {
-                drawRect(color = Color(0xFF1C1D22), size = size)
+                // 纯透明：不垫任何颜色，让窗口后面的东西直接透出来
             }
         } else if (frame != null && size.width > 0f && size.height > 0f) {
             drawImage(
@@ -476,7 +476,7 @@ private fun GlassSurface(
             // 以前这里什么都不画，玻璃背后就是宿主的窗口底色 —— 看起来就是「一片黑」。
             // 垫一层之后，玻璃自己的模糊和折射还在，观感是磨砂深灰，不是死黑。
             // 有画面的正常情况完全走上面那条分支，外观一点不变。
-            drawRect(color = Color(0xFF1C1D22), size = size)
+            // 纯透明：不垫任何颜色
         }
     })
     val density = LocalDensity.current
