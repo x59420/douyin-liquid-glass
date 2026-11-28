@@ -2256,6 +2256,8 @@ final class DockController {
      * 命中就把 background 置空（原值记下，退出时还原）。
      */
     private static void clearOpaqueInBand(ViewGroup parent, int bandTop, int depth, int[] budget) {
+        int[] bandLogCount = BAND_LOG;
+
         if (parent == null || depth > 18 || budget[0] <= 0) return;
         try {
             int n = parent.getChildCount();
@@ -2269,6 +2271,13 @@ final class DockController {
                 int bottom = loc[1] + child.getHeight();
                 boolean inBand = bottom > bandTop && loc[1] < loc[1] + child.getHeight();
                 if (inBand && loc[1] + child.getHeight() > bandTop && child.getBackground() != null) {
+                    if (bandLogCount[0] < 12) {
+                        bandLogCount[0]++;
+                        Dydock.log("带子:清掉 " + child.getClass().getSimpleName()
+                                + " id=" + idName(child)
+                                + " [" + loc[1] + "," + (loc[1] + child.getHeight()) + "]"
+                                + " bg=" + child.getBackground().getClass().getSimpleName());
+                    }
                     saveAndClearBackground(child);
                 }
                 if (child instanceof ViewGroup) {
@@ -2293,6 +2302,9 @@ final class DockController {
         } catch (Throwable ignored) {
         }
     }
+
+    /** 带子清理日志的计数（只打前 12 条，别把日志刷爆）。 */
+    private static final int[] BAND_LOG = new int[]{0};
 
     /** 系统是不是手势导航（Settings.Secure.navigation_mode == 2）。 */
     private static boolean isGestureNav(android.content.Context ctx) {
