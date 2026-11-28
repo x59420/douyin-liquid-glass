@@ -936,6 +936,9 @@ final class DockController {
                                 android.view.ViewParent parent = v.getParent();
                                 v = parent instanceof View ? (View) parent : null;
                             }
+                            // 底栏里面那层「胶囊底板」也要清 —— 用户看到的那块灰色圆角底
+                            // 就是它，不在父链上，是在底栏内部当子 View 画的。
+                            clearChildBackgrounds(d0, 0);
                         }
                     } catch (Throwable ignored) {
                     }
@@ -2135,6 +2138,21 @@ final class DockController {
         } catch (Throwable ignored) {
         }
         return n;
+    }
+
+    /** 清掉底栏子树里各层的 background（深度限制 3，只动背景不动内容）。 */
+    private static void clearChildBackgrounds(View v, int depth) {
+        if (v == null || depth > 3) return;
+        try {
+            if (depth > 0 && v.getBackground() != null) saveAndClearBackground(v);
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    clearChildBackgrounds(g.getChildAt(i), depth + 1);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     /** 沿父链找类名包含某段的祖先（抖音的底栏外壳是 MainBottomTabContainer）。 */
