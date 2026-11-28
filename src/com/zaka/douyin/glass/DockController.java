@@ -2084,97 +2084,12 @@ final class DockController {
         }
     }
 
-    /**
-     * 把视频层等比放大到铺满整屏（cover），让它一直画到屏幕最底。
-     *
-     * 背景：16:9 / 4:3 的视频放在 20:9 的屏幕上，抖音按「完整显示」缩放，
-     * 上下就会留黑边；底栏被我们藏起来之后那条黑边正好露在 Dock 底下，
-     * 看着就是「Dock 下面还有一条黑」。
-     *
-     * 做法：按 max(屏宽/视宽, 屏高/视高) 等比放大，再平移到屏幕中心 ——
-     * 画面永远铺满、不变形，多出来的部分被父容器裁掉（和「全屏观看」一个道理）。
-     * 原值记在 SAVED_VIDEO_SCALE 里，退出接管或页面切走时还原。
-     */
-    private static final java.util.WeakHashMap<View, float[]> SAVED_VIDEO_SCALE =
-            new java.util.WeakHashMap<View, float[]>();
+    
 
-    static void fillVideoToScreen(View root) {
-        if (root == null) return;
-        try {
-            int w = root.getWidth();
-            int h = root.getHeight();
-            if (w <= 0 || h <= 0) return;
-            applyVideoFill(root, w, h, 0, new int[]{0});
-        } catch (Throwable t) {
-            Dydock.warnOnce("video-fill", "视频铺满失败: " + t);
-        }
-    }
-
-    private static void applyVideoFill(View v, int screenW, int screenH, int depth, int[] budget) {
-        if (v == null || depth > 32 || budget[0] >= 4) return;
-        try {
-            boolean isVideo = v instanceof android.view.SurfaceView
-                    || v instanceof android.view.TextureView;
-            if (isVideo && v.getWidth() > 0 && v.getHeight() > 0
-                    && (long) v.getWidth() * v.getHeight() >= (long) screenW * screenH * 20L / 100L) {
-                float k = Math.max(screenW / (float) v.getWidth(), screenH / (float) v.getHeight());
-                if (k > 1.001f) {
-                    synchronized (SAVED_VIDEO_SCALE) {
-                        if (!SAVED_VIDEO_SCALE.containsKey(v)) {
-                            SAVED_VIDEO_SCALE.put(v, new float[]{
-                                    v.getScaleX(), v.getScaleY(),
-                                    v.getTranslationX(), v.getTranslationY()});
-                        }
-                    }
-                    int[] loc = new int[2];
-                    v.getLocationInWindow(loc);
-                    float cx = loc[0] + v.getWidth() / 2f;
-                    float cy = loc[1] + v.getHeight() / 2f;
-                    v.setPivotX(v.getWidth() / 2f);
-                    v.setPivotY(v.getHeight() / 2f);
-                    v.setScaleX(k);
-                    v.setScaleY(k);
-                    v.setTranslationX(screenW / 2f - cx);
-                    v.setTranslationY(screenH / 2f - cy);
-                    budget[0]++;
-                    Dydock.log("视频:已等比放大 " + String.format(java.util.Locale.US, "%.2f", k)
-                            + " 倍铺满屏幕（" + v.getWidth() + "x" + v.getHeight()
-                            + " → " + screenW + "x" + screenH + "）");
-                }
-                return;
-            }
-            if (v instanceof ViewGroup) {
-                ViewGroup g = (ViewGroup) v;
-                for (int i = 0; i < g.getChildCount(); i++) {
-                    applyVideoFill(g.getChildAt(i), screenW, screenH, depth + 1, budget);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-    }
+    
 
     /** 还原被放大的视频层。 */
-    static void restoreVideoFill() {
-        try {
-            java.util.ArrayList<View> views;
-            java.util.ArrayList<float[]> vals;
-            synchronized (SAVED_VIDEO_SCALE) {
-                views = new java.util.ArrayList<View>(SAVED_VIDEO_SCALE.keySet());
-                vals = new java.util.ArrayList<float[]>(SAVED_VIDEO_SCALE.values());
-                SAVED_VIDEO_SCALE.clear();
-            }
-            for (int i = 0; i < views.size(); i++) {
-                View v = views.get(i);
-                float[] s = vals.get(i);
-                if (v == null || s == null) continue;
-                v.setScaleX(s[0]);
-                v.setScaleY(s[1]);
-                v.setTranslationX(s[2]);
-                v.setTranslationY(s[3]);
-            }
-        } catch (Throwable ignored) {
-        }
-    }
+    
 
     /** 一次性把「内容 / 底栏 / 底栏祖先链」的布局参数打进日志，用来判断该动谁。 */
     static void dumpLayoutChain(Activity act, View dock, View content) {
@@ -2315,75 +2230,11 @@ final class DockController {
 
 
     /** 视频层原始 scaleY 的登记表（补足时用，页面切走要还原）。 */
-    private static final java.util.WeakHashMap<View, Float> VIDEO_BASE_SCALE =
-            new java.util.WeakHashMap<View, Float>();
+    
 
-    /**
-     * 把视频画面纵向补到 dock 上沿。
-     *
-     * 抖音按比例居中播放，视频下方会留一条底色（纯黑），用户看到的就是「黑层」。
-     * 这里把视频层按「缺口高度」纵向拉伸（只拉纵轴、通常 3%~5%），让它铺到 dock 上沿。
-     * 缺口过大（>12% 屏高）就不动 —— 那种是真的横屏视频，硬拉会变形。
-     */
-    static void stretchVideoToBand(View root, Rect band) {
-        if (root == null || band == null || band.isEmpty()) return;
-        int screenH = root.getHeight();
-        if (screenH <= 0) return;
-        int[] budget = new int[]{6};
-        stretchVideoWalk(root, band, screenH, 0, budget);
-    }
+    
 
-    private static void stretchVideoWalk(View v, Rect band, int screenH, int depth, int[] budget) {
-        if (v == null || depth > 32 || budget[0] <= 0) return;
-        try {
-            boolean isVideo = v instanceof android.view.SurfaceView
-                    || v instanceof android.view.TextureView;
-            if (isVideo && v.getWidth() > 0 && v.getHeight() > 0
-                    && (long) v.getWidth() * v.getHeight() >= (long) v.getRootView().getWidth() * screenH * 20L / 100L) {
-                budget[0]--;
-                int[] loc = new int[2];
-                v.getLocationInWindow(loc);
-                int viewBottom = loc[1] + v.getHeight();
-                // 补到屏幕最底，而不是只补到 Dock 上沿 ——
-                // Dock 下面那截（离底间距 + 系统手势条）否则还是没人画，就是那条通栏黑。
-                int gap = screenH - viewBottom;
-                Dydock.log("视频:层 " + v.getWidth() + "x" + v.getHeight()
-                        + " top=" + loc[1] + " bottom=" + viewBottom
-                        + " 屏高=" + screenH + " 缺口=" + gap);
-                if (gap <= 0) return;
-                float base;
-                synchronized (VIDEO_BASE_SCALE) {
-                    Float saved = VIDEO_BASE_SCALE.get(v);
-                    if (saved == null) {
-                        saved = v.getScaleY();
-                        VIDEO_BASE_SCALE.put(v, saved);
-                    }
-                    base = saved;
-                }
-                // 等比放大铺满（cover）：纵向要补多少就整体放大多少，横向多出来的部分被父容器裁掉。
-                // 这样画面不变形，代价是左右被裁（横屏视频裁得多）。
-                float scale = base * (v.getHeight() + gap) / (float) v.getHeight();
-                if (Math.abs(v.getScaleY() - scale) > 0.002f) {
-                    int[] vloc = new int[2];
-                    v.getLocationInWindow(vloc);
-                    v.setPivotX(v.getWidth() / 2f);
-                    v.setPivotY(0f);
-                    v.setScaleX(scale);
-                    v.setScaleY(scale);
-                    Dydock.log("视频:等比铺满 gap=" + gap + " scale="
-                            + String.format(java.util.Locale.US, "%.3f", scale));
-                }
-                return;
-            }
-            if (v instanceof ViewGroup) {
-                ViewGroup g = (ViewGroup) v;
-                for (int i = 0; i < g.getChildCount(); i++) {
-                    stretchVideoWalk(g.getChildAt(i), band, screenH, depth + 1, budget);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-    }
+    
 
 
 
@@ -2701,15 +2552,13 @@ final class DockController {
             // 把视频画面往下补到 Dock 上沿：视频按比例居中播放时会留一条黑边，
             // 那条黑就是用户一直说的「黑层」。这里只做纵向补足（通常 3%~5%），
             // 肉眼几乎看不出拉伸，但那条黑会消失。
-            try {
-                stretchVideoToBand(dock.getRootView(), band);
-            } catch (Throwable ignored) {
-            }
-            // 抖音自己的模糊色带：把它纵向铺满，填掉画面到不了的地方。
-            try {
-                ColourBandLease.sync(dock.getRootView(), band);
-            } catch (Throwable ignored) {
-            }
+            // 不要再缩放/放大视频层。
+            // 缩放会在页面切换、长按、宿主自己改布局时留下残留（画面偶尔被放大、
+            // 长按时画面跳一下）。铺满改由 LayoutParams 接管（takeOverVideo）来做，
+            // 那条路不改 scale，也就没有残留。
+            // stretchVideoToBand(dock.getRootView(), band);
+            // 色带接管也停掉：它会缩放那张 CENTER_CROP 的位图，
+            // 一旦匹配到的其实是视频封面，就表现为「画面突然被放大」。
             // 底部布局接管（PDDLG 那套）：撑页面 + 清底栏预留 + 关毛玻璃带。
             //
             // 关键：绝不能在这里直接 setLayoutParams —— 这段跑在 onPreDraw 里，
