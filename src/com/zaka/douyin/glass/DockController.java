@@ -1694,6 +1694,10 @@ final class DockController {
     private static final java.util.WeakHashMap<View, Integer> SAVED_PAD =
             new java.util.WeakHashMap<View, Integer>();
 
+    /** 同样是「页面底部预留」，但挂成 bottomMargin 的那一批（消息页就是这种）。 */
+    private static final java.util.WeakHashMap<View, Integer> SAVED_MARGIN =
+            new java.util.WeakHashMap<View, Integer>();
+
     /** 清掉页面上「等于底栏高度」的底部预留，让内容铺到屏幕底。 */
     private static void releaseBottomReservation(View root, int tabHeight) {
         if (root == null || tabHeight <= 0) return;
@@ -1701,9 +1705,10 @@ final class DockController {
             int rootH = root.getHeight();
             if (rootH <= 0) return;
             int changed = clearBottomPad(root, tabHeight, rootH, 0);
-            if (changed > 0) {
-                Dydock.log("布局:已清掉 " + changed + " 处底部预留 " + tabHeight
-                        + "px，内容铺到屏幕底");
+            int margins = clearBottomMargin(root, tabHeight, 0);
+            if (changed > 0 || margins > 0) {
+                Dydock.log("布局:已清掉 " + changed + " 处 paddingBottom / " + margins
+                        + " 处 bottomMargin（各 " + tabHeight + "px），内容铺到屏幕底");
             }
         } catch (Throwable t) {
             Dydock.warnOnce("bottom-reserve", "清理底部预留失败: " + t);
@@ -1733,6 +1738,40 @@ final class DockController {
         return count;
     }
 
+    /**
+     * 清掉「等于底栏高度」的 bottomMargin。
+     *
+     * 消息页的实测数据（0.6.9 的大视图快照）：
+     *   FrameLayout 1280x2461 top=152 bottom=2613 lp=LayoutParams{-1x-1} margin[0,0,0,159]
+     * 就是这 159px 的下边距把整页压在底栏上沿，列表因此画不到屏幕底。
+     */
+    private static int clearBottomMargin(View v, int tabHeight, int depth) {
+        if (v == null || depth > 18) return 0;
+        int count = 0;
+        try {
+            ViewGroup.LayoutParams lp = v.getLayoutParams();
+            if (lp instanceof ViewGroup.MarginLayoutParams) {
+                ViewGroup.MarginLayoutParams m = (ViewGroup.MarginLayoutParams) lp;
+                if (m.bottomMargin >= tabHeight - 8 && m.bottomMargin <= tabHeight + 8) {
+                    synchronized (SAVED_MARGIN) {
+                        if (!SAVED_MARGIN.containsKey(v)) SAVED_MARGIN.put(v, m.bottomMargin);
+                    }
+                    m.bottomMargin = 0;
+                    v.setLayoutParams(m);
+                    count++;
+                }
+            }
+            if (v instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) v;
+                for (int i = 0; i < g.getChildCount(); i++) {
+                    count += clearBottomMargin(g.getChildAt(i), tabHeight, depth + 1);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return count;
+    }
+
     /** 还原所有被清零的底部预留。 */
     private static void restoreBottomReservation() {
         try {
@@ -1748,6 +1787,23 @@ final class DockController {
                 Integer pad = pads.get(i);
                 if (v == null || pad == null) continue;
                 v.setPadding(v.getPaddingLeft(), v.getPaddingTop(), v.getPaddingRight(), pad);
+            }
+            java.util.ArrayList<View> marginViews;
+            java.util.ArrayList<Integer> margins;
+            synchronized (SAVED_MARGIN) {
+                marginViews = new java.util.ArrayList<View>(SAVED_MARGIN.keySet());
+                margins = new java.util.ArrayList<Integer>(SAVED_MARGIN.values());
+                SAVED_MARGIN.clear();
+            }
+            for (int i = 0; i < marginViews.size(); i++) {
+                View v = marginViews.get(i);
+                Integer margin = margins.get(i);
+                if (v == null || margin == null) continue;
+                ViewGroup.LayoutParams lp = v.getLayoutParams();
+                if (lp instanceof ViewGroup.MarginLayoutParams) {
+                    ((ViewGroup.MarginLayoutParams) lp).bottomMargin = margin;
+                    v.setLayoutParams(lp);
+                }
             }
         } catch (Throwable ignored) {
         }
