@@ -2483,7 +2483,9 @@ final class DockController {
             // 画面能铺到底的页面，这层和画面同色几乎看不出来；
             // 画面铺不到底的页面（16:9 视频的黑边），它就替那条黑边「续」成同一色调。
             if (backdrop != null) {
-                iso.setBand(band.top, backdrop.uiTintColor());
+                // 填充带已撤：抖音页面自己有「画面往底栏过渡」的渐变层，
+                // 我们再画一条固定在窗口上的色带反而翻页时不跟手。
+                // iso.setBand(band.top, backdrop.uiTintColor());
             }
         } catch (Throwable t) {
             Dydock.warnOnce("iso-geometry", "玻璃定位失败: " + t);
@@ -2544,7 +2546,9 @@ final class DockController {
         //    只把底栏设成 GONE 是拿不掉这层的 —— 玻璃隔着它采样就是一块黑。
         View v = dock;
         // 12 层：抖音 41 把底栏外面又套了几层容器，6 层够不到真正铺底的那一层。
-        for (int i = 0; i < 12 && v != null; i++) {
+        // 只走 3 层：够拿到底栏壳和里面的胶囊底板；再往上就是页面容器了，
+        // 清掉它等于删了抖音自己的页面底色（整屏变黑、翻页也不跟手），不能碰。
+        for (int i = 0; i < 3 && v != null; i++) {
             if (clearBandBackground(v, screenW, screenH, dockRect)) cleared++;
             ViewParent parent = v.getParent();
             v = parent instanceof View ? (View) parent : null;
@@ -2720,6 +2724,8 @@ final class DockController {
         try {
             if (v == null || isOursView(v)) return false;
             // 抖音的底栏渐变有时候不挂在 background 上，而是 foreground（叠在子内容上面那一层）。
+            // 渐变层是抖音自己画的「画面往底栏过渡」，留着它底部才是一整块，不能清。
+            if (v.getBackground() instanceof android.graphics.drawable.GradientDrawable) return false;
             boolean hasBg = v.getBackground() != null;
             boolean hasFg = hasForeground(v);
             if (!hasBg && !hasFg) return false;
@@ -2850,7 +2856,8 @@ final class DockController {
                 boolean coversBand = bandCoverage(r, dockRect) >= 0.6f
                         && r.width() >= screenW * 0.7f
                         && r.height() <= screenH * 0.5f;
-                if ((hasBg || hasFg) && (bigMask || insideBand || coversBand)
+                boolean gradientScrim = child.getBackground() instanceof android.graphics.drawable.GradientDrawable;
+                if ((hasBg || hasFg) && !gradientScrim && (bigMask || insideBand || coversBand)
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)) {
                     if (hasBg) saveAndClearBackground(child);
@@ -2871,7 +2878,7 @@ final class DockController {
                 boolean flatStrip = (coversBand || bigMask || insideBand)
                         && dockRect.height() > 0
                         && r.height() <= (int) (dockRect.height() * 1.8f);
-                if (!hasBg && !hasFg && flatStrip
+                if (!hasBg && !hasFg && !gradientScrim && flatStrip
                         && !Shield.hasVideoSurface(child)
                         && !hasVisibleTextIn(child, 0)
                         && !hasClickableIn(child, 0)
