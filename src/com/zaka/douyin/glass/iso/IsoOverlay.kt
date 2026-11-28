@@ -459,9 +459,10 @@ private fun GlassSurface(
                     native.restoreToCount(save)
                 }
             } catch (_: Throwable) {
-                // 兜底底色改成半透明：视频页拿不到像素时，下面就是视频 Surface，
-                // 不透明填充会盖出一整块黑（用户看到的「里面还有一层黑」就是它）。
-                drawRect(color = Color(0x2A1C1D22), size = size)
+                // 干脆什么都不画：视频页拿不到像素时，玻璃背后就是视频 Surface 本身。
+                // 之前垫 0xFF/0x2A 的深色都会在 Dock 区域糊出一层黑底
+                //（玻璃区域带 40dp padding，铺得比胶囊大一圈，肉眼就是「底下还有一层黑」）。
+                // 什么都不垫，视频原样透出来，玻璃只留边缘/高光/折射。
             }
         } else if (frame != null && size.width > 0f && size.height > 0f) {
             drawImage(
@@ -478,7 +479,7 @@ private fun GlassSurface(
             // 以前这里什么都不画，玻璃背后就是宿主的窗口底色 —— 看起来就是「一片黑」。
             // 垫一层之后，玻璃自己的模糊和折射还在，观感是磨砂深灰，不是死黑。
             // 有画面的正常情况完全走上面那条分支，外观一点不变。
-            drawRect(color = Color(0x2A1C1D22), size = size)
+            // 同上：不再垫底色，直接让窗口下面的内容透出来。
         }
     })
     val density = LocalDensity.current
