@@ -2479,6 +2479,12 @@ final class DockController {
                 backdrop.setRegion(sampleRegion);
             }
             iso.setGeometry(region, tabsRect, plusRect);
+            // 底部填充带：从底栏上沿一直到屏幕底，用内容主色铺一层（顶部渐隐）。
+            // 画面能铺到底的页面，这层和画面同色几乎看不出来；
+            // 画面铺不到底的页面（16:9 视频的黑边），它就替那条黑边「续」成同一色调。
+            if (backdrop != null) {
+                iso.setBand(band.top, backdrop.uiTintColor());
+            }
         } catch (Throwable t) {
             Dydock.warnOnce("iso-geometry", "玻璃定位失败: " + t);
         }

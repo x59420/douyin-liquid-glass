@@ -131,6 +131,9 @@ class IsoOverlay private constructor(
     private var region by mutableStateOf(Rect())
     private var tabsRect by mutableStateOf(Rect())
     private var plusRect by mutableStateOf(Rect())
+    /** 底部填充带：从 bandTop 到屏幕底，用主色铺一层，顶部渐隐，消掉「底栏那块是另一层」的感觉。 */
+    private var bandTop by mutableIntStateOf(0)
+    private var bandColor by mutableIntStateOf(0)
     /** 宿主采来的背景帧。用 State 而不是普通变量：玻璃在绘制阶段读它，换帧就自动重录。 */
     private val backdropImage = mutableStateOf<ImageBitmap?>(null)
     private var labels by mutableStateOf<List<String>>(emptyList())
@@ -252,6 +255,12 @@ class IsoOverlay private constructor(
     }
 
     /** 宿主算好的位置（都在覆盖层自己的坐标系里）。 */
+    fun setBand(topPx: Int, color: Int) {
+        if (disposed) return
+        if (bandTop != topPx) bandTop = topPx
+        if (bandColor != color) bandColor = color
+    }
+
     fun setGeometry(region: Rect, tabs: Rect, plus: Rect) {
         if (disposed) return
         this.region = Rect(region)
@@ -495,6 +504,25 @@ private fun GlassSurface(
             .fillMaxSize()
             .onGloballyPositioned { onDrawn() }
     ) {
+        if (bandTop > 0 && bandColor != 0) {
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                val top = bandTop.toFloat().coerceIn(0f, size.height)
+                val fade = 48.dp.toPx()
+                val c = Color(bandColor)
+                drawRect(
+                    brush = androidx.compose.ui.graphics.Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        (fade / (size.height - top).coerceAtLeast(1f)).coerceIn(0f, 1f) to c,
+                        1f to c,
+                        startY = top,
+                        endY = size.height,
+                    ),
+                    topLeft = androidx.compose.ui.geometry.Offset(0f, top),
+                    size = androidx.compose.ui.geometry.Size(size.width, size.height - top),
+                )
+            }
+        }
+
         if (region.width() > 0 && region.height() > 0) {
             Box(
                 modifier = Modifier

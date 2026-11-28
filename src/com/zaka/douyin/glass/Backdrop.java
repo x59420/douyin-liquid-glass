@@ -245,6 +245,9 @@ public final class Backdrop {
 
     int luma() { return meanLuma; }
 
+    /** 内容树的主色（给底部填充带用：画面到不了的地方用它铺，视觉上连着）。 */
+    int uiTintColor() { return uiTint; }
+
     /**
      * 这一帧采出来是不是整片发黑。
      *
