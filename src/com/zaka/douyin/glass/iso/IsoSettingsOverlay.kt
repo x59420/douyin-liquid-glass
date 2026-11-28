@@ -197,9 +197,12 @@ private class IsoSettingsState(context: Context) : SettingsModel {
     }
 
     override fun setVideoTint(value: Boolean) {
-
-    override fun setCaptureVideo(value: Boolean) { captureVideo.value = value; persistAndPush() }
         videoTint.value = value
+        persistAndPush()
+    }
+
+    override fun setCaptureVideo(value: Boolean) {
+        captureVideo.value = value
         persistAndPush()
     }
 
